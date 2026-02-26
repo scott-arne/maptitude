@@ -540,7 +540,7 @@ static const ScatteringFactorEntry SCATTERING_TABLE[] = {
 static constexpr size_t SCATTERING_TABLE_SIZE =
     sizeof(SCATTERING_TABLE) / sizeof(SCATTERING_TABLE[0]);
 
-const CromerMannCoeffs* GetScatteringFactors(
+const CromerMannCoeffs* get_scattering_factors(
     unsigned int atomic_number, int formal_charge) {
     // First try exact match
     for (size_t i = 0; i < SCATTERING_TABLE_SIZE; ++i) {
@@ -563,7 +563,7 @@ const CromerMannCoeffs* GetScatteringFactors(
     return nullptr;
 }
 
-const ScatteringFactorEntry* GetScatteringFactorTable(size_t& count) {
+const ScatteringFactorEntry* get_scattering_factor_table(size_t& count) {
     count = SCATTERING_TABLE_SIZE;
     return SCATTERING_TABLE;
 }

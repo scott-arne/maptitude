@@ -12,8 +12,8 @@ namespace Maptitude {
  * @brief Radial sampling strategy for Q-score computation.
  */
 enum class RadialSampling {
-    Fixed,     ///< Fixed radial step and max radius
-    Adaptive   ///< Grid-spacing and atom-radius dependent
+    FIXED,     ///< Fixed radial step and max radius
+    ADAPTIVE   ///< Grid-spacing and atom-radius dependent
 };
 
 /**
@@ -23,7 +23,7 @@ enum class RadialSampling {
  * QScoreOptions opts;
  * opts.SetSigma(0.6);
  * opts.SetNumPoints(8);
- * auto result = QScore(mol, grid, resolution, nullptr, opts);
+ * auto result = qscore(mol, grid, resolution, nullptr, opts);
  * @endcode
  */
 class QScoreOptions {
@@ -56,7 +56,7 @@ private:
     unsigned int num_points_ = 8;                     ///< Points per radial shell
     bool normalize_map_ = true;                       ///< Normalize map before scoring
     bool isolate_points_ = true;                      ///< Exclude shell points near neighbor atoms
-    RadialSampling radial_sampling_ = RadialSampling::Fixed;  ///< Radial sampling strategy
+    RadialSampling radial_sampling_ = RadialSampling::FIXED;  ///< Radial sampling strategy
 };
 
 }  // namespace Maptitude

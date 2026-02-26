@@ -125,8 +125,8 @@ def test_mapop_enum():
     """Test MapOp enum values."""
     from maptitude import MapOp
 
-    assert MapOp.Add != MapOp.Subtract
-    assert MapOp.Min != MapOp.Max
+    assert MapOp.ADD != MapOp.SUBTRACT
+    assert MapOp.MIN != MapOp.MAX
 
 
 def test_density_score_result_tostring():
@@ -143,9 +143,9 @@ def test_density_score_result_tostring():
 
 def test_scattering_factor_carbon():
     """Test scattering factor lookup for carbon."""
-    from maptitude import GetScatteringFactors
+    from maptitude import get_scattering_factors
 
-    coeffs = GetScatteringFactors(6, 0)
+    coeffs = get_scattering_factors(6, 0)
     assert coeffs is not None
     f0 = coeffs.Evaluate(0.0)
     assert abs(f0 - 6.0) < 0.3
@@ -153,18 +153,18 @@ def test_scattering_factor_carbon():
 
 def test_scattering_factor_table_size():
     """Test that the full scattering factor table is loaded."""
-    from maptitude import GetScatteringFactorTable
+    from maptitude import get_scattering_factor_table
 
-    table, count = GetScatteringFactorTable()
+    table, count = get_scattering_factor_table()
     assert count == 209
 
 
 def test_scattering_factor_fallback():
     """Test that unknown charge falls back to neutral."""
-    from maptitude import GetScatteringFactors
+    from maptitude import get_scattering_factors
 
-    neutral = GetScatteringFactors(6, 0)
-    fallback = GetScatteringFactors(6, 5)
+    neutral = get_scattering_factors(6, 0)
+    fallback = get_scattering_factors(6, 5)
     assert neutral is not None
     assert fallback is not None
     assert abs(neutral.Evaluate(0.1) - fallback.Evaluate(0.1)) < 1e-10
@@ -185,10 +185,20 @@ def test_density_scorer_rscc():
     coords = oechem.OEFloatArray([0.0, 0.0, 0.0])
     mol.SetCoords(atom, coords)
 
-    # Create a simple grid
-    grid = oegrid.OEScalarGrid(10, 10, 10, -5.0, -5.0, -5.0, 1.0)
+    # Create observed and calculated grids
+    obs_grid = oegrid.OEScalarGrid(10, 10, 10, -5.0, -5.0, -5.0, 1.0)
+    calc_grid = oegrid.OEScalarGrid(10, 10, 10, -5.0, -5.0, -5.0, 1.0)
 
-    result = rscc(mol, grid, 2.0)
+    # Fill both grids with a Gaussian centered at the atom
+    import math
+    for i in range(obs_grid.GetSize()):
+        fx, fy, fz = obs_grid.ElementToSpatialCoord(i)
+        r2 = fx**2 + fy**2 + fz**2
+        val = math.exp(-r2 / 2.0)
+        obs_grid[i] = val
+        calc_grid[i] = val
+
+    result = rscc(mol, obs_grid, 2.0, calc_grid=calc_grid)
     assert hasattr(result, "overall")
 
 

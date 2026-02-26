@@ -20,10 +20,10 @@ namespace Maptitude {
  * @brief Supported grid combination operations.
  */
 enum class MapOp {
-    Add,       ///< Element-wise addition
-    Subtract,  ///< Element-wise subtraction
-    Min,       ///< Element-wise minimum
-    Max        ///< Element-wise maximum
+    ADD,       ///< Element-wise addition
+    SUBTRACT,  ///< Element-wise subtraction
+    MIN,       ///< Element-wise minimum
+    MAX        ///< Element-wise maximum
 };
 
 /**
@@ -34,7 +34,7 @@ enum class MapOp {
  * @param grid Grid to scale (modified in place).
  * @param factor Scale factor.
  */
-void ScaleMap(OESystem::OEScalarGrid& grid, double factor);
+void scale_map(OESystem::OEScalarGrid& grid, double factor);
 
 /**
  * @brief Combine two grids element-wise.
@@ -48,7 +48,7 @@ void ScaleMap(OESystem::OEScalarGrid& grid, double factor);
  * @return New grid with combined values. Caller owns the pointer.
  * @throws GridError if grids have incompatible dimensions.
  */
-OESystem::OEScalarGrid* CombineMaps(
+OESystem::OEScalarGrid* combine_maps(
     const OESystem::OEScalarGrid& lhs,
     const OESystem::OEScalarGrid& rhs,
     MapOp op);
@@ -65,7 +65,7 @@ OESystem::OEScalarGrid* CombineMaps(
  * @return New grid with calculated density. Caller owns the pointer.
  * @throws GridError if grids have incompatible dimensions.
  */
-OESystem::OEScalarGrid* DiffToCalc(
+OESystem::OEScalarGrid* diff_to_calc(
     const OESystem::OEScalarGrid& obs_grid,
     const OESystem::OEScalarGrid& diff_grid);
 
@@ -91,7 +91,7 @@ OESystem::OEScalarGrid* DiffToCalc(
  * @param padding Extra margin around atoms (Angstroms).
  * @return New padded grid if needed (caller owns), or nullptr if original suffices.
  */
-OESystem::OEScalarGrid* WrapAndPadGrid(
+OESystem::OEScalarGrid* wrap_and_pad_grid(
     const OESystem::OEScalarGrid& grid,
     OEChem::OEMolBase& mol,
     double cell_a, double cell_b, double cell_c,

@@ -13,7 +13,9 @@
 #include "maptitude/Grid.h"
 #include "maptitude/DensityScoreResult.h"
 #include "maptitude/QScoreOptions.h"
-#include "maptitude/RSCCOptions.h"
+#include "maptitude/RsccOptions.h"
+#include "maptitude/RsrOptions.h"
+#include "maptitude/CoverageOptions.h"
 #include "maptitude/DensityCalculator.h"
 #include "maptitude/Metric.h"
 #include "maptitude/GridOps.h"
@@ -414,10 +416,10 @@ static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
 namespace Maptitude {
 
 enum class MapOp {
-    Add,
-    Subtract,
-    Min,
-    Max
+    ADD,
+    SUBTRACT,
+    MIN,
+    MAX
 };
 
 // ============================================================================
@@ -491,8 +493,8 @@ struct SymOp {
 // RadialSampling enum + QScoreOptions class
 // ============================================================================
 enum class RadialSampling {
-    Fixed,
-    Adaptive
+    FIXED,
+    ADAPTIVE
 };
 
 class QScoreOptions {
@@ -514,15 +516,16 @@ public:
 };
 
 // ============================================================================
-// AtomRadius enum + RSCCOptions class
+// AtomRadius enum + RsccOptions / RsrOptions / CoverageOptions classes
 // ============================================================================
 enum class AtomRadius {
-    Fixed,
-    Scaled,
-    Binned
+    FIXED,
+    SCALED,
+    BINNED,
+    ADAPTIVE
 };
 
-class RSCCOptions {
+class RsccOptions {
 public:
     void SetAtomRadiusMethod(AtomRadius method);
     AtomRadius GetAtomRadiusMethod() const;
@@ -530,6 +533,22 @@ public:
     double GetFixedAtomRadius() const;
     void SetAtomRadiusScaling(double scaling);
     double GetAtomRadiusScaling() const;
+};
+
+class RsrOptions {
+public:
+    void SetAtomRadiusMethod(AtomRadius method);
+    AtomRadius GetAtomRadiusMethod() const;
+    void SetFixedAtomRadius(double radius);
+    double GetFixedAtomRadius() const;
+    void SetAtomRadiusScaling(double scaling);
+    double GetAtomRadiusScaling() const;
+};
+
+class CoverageOptions {
+public:
+    void SetSigma(double sigma);
+    double GetSigma() const;
 };
 
 // ============================================================================
@@ -558,29 +577,48 @@ struct GridParams {
 // ============================================================================
 // Grid utility functions
 // ============================================================================
-GridParams GetGridParams(const OESystem::OEScalarGrid& grid);
-double InterpolateDensity(const OESystem::OEScalarGrid& grid,
+GridParams get_grid_params(const OESystem::OEScalarGrid& grid);
+double interpolate_density(const OESystem::OEScalarGrid& grid,
                           double x, double y, double z,
                           double default_value = 0.0);
-std::vector<double> InterpolateDensityBatch(
+std::vector<double> interpolate_density_batch(
     const OESystem::OEScalarGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
     double default_value = 0.0);
-std::vector<unsigned int> GetAtomGridPoints(
+std::vector<unsigned int> get_atom_grid_points(
     const OESystem::OEScalarGrid& grid,
     double x, double y, double z, double radius);
-double InterpolateDensityPeriodic(
+double interpolate_density_periodic(
     const OESystem::OEScalarGrid& grid,
     double x, double y, double z,
     double cell_a, double cell_b, double cell_c,
     double default_value = 0.0);
-std::vector<double> InterpolateDensityPeriodicBatch(
+std::vector<double> interpolate_density_periodic_batch(
     const OESystem::OEScalarGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
     double cell_a, double cell_b, double cell_c,
     double default_value = 0.0);
+
+// ============================================================================
+// Scattering factor types and functions
+// ============================================================================
+struct CromerMannCoeffs {
+    std::array<double, 4> a;
+    std::array<double, 4> b;
+    double c;
+    double Evaluate(double s_squared) const;
+};
+
+struct ScatteringFactorEntry {
+    uint8_t atomic_number;
+    int8_t formal_charge;
+    CromerMannCoeffs coeffs;
+};
+
+const CromerMannCoeffs* get_scattering_factors(
+    unsigned int atomic_number, int formal_charge = 0);
 
 // ============================================================================
 // DensityCalculator class
@@ -604,58 +642,74 @@ public:
 // ============================================================================
 // Density scoring functions
 // ============================================================================
-DensityScoreResult RSCC(
+DensityScoreResult rscc(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
     const OESystem::OEScalarGrid* calc_grid = nullptr,
-    const RSCCOptions& options = RSCCOptions());
+    const RsccOptions& options = RsccOptions());
 
-DensityScoreResult RSR(
+DensityScoreResult rsr(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
-    const OESystem::OEScalarGrid* calc_grid = nullptr);
+    const OESystem::OEScalarGrid* calc_grid = nullptr,
+    const RsrOptions& options = RsrOptions());
 
-DensityScoreResult QScore(
+DensityScoreResult qscore(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
     const QScoreOptions& options = QScoreOptions());
 
-DensityScoreResult EDIAm(
+DensityScoreResult ediam(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr);
 
-DensityScoreResult Coverage(
+DensityScoreResult coverage(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
-    double sigma = 1.0,
-    const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr);
+    const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
+    const CoverageOptions& options = CoverageOptions());
 
 // ============================================================================
 // Grid operations
 // ============================================================================
-void ScaleMap(OESystem::OEScalarGrid& grid, double factor);
-OESystem::OEScalarGrid* CombineMaps(
+void scale_map(OESystem::OEScalarGrid& grid, double factor);
+OESystem::OEScalarGrid* combine_maps(
     const OESystem::OEScalarGrid& lhs,
     const OESystem::OEScalarGrid& rhs,
     MapOp op);
-OESystem::OEScalarGrid* DiffToCalc(
+OESystem::OEScalarGrid* diff_to_calc(
     const OESystem::OEScalarGrid& obs_grid,
     const OESystem::OEScalarGrid& diff_grid);
-OESystem::OEScalarGrid* WrapAndPadGrid(
+OESystem::OEScalarGrid* wrap_and_pad_grid(
     const OESystem::OEScalarGrid& grid,
     OEChem::OEMolBase& mol,
     double cell_a, double cell_b, double cell_c,
     double padding = 3.0);
 
 }  // namespace Maptitude
+
+// ============================================================================
+// Inline helper: get_scattering_factor_table as a vector
+// ============================================================================
+%inline %{
+namespace Maptitude {
+std::vector<Maptitude::ScatteringFactorEntry> _get_scattering_factor_table_vec() {
+    size_t count = 0;
+    const ScatteringFactorEntry* table = get_scattering_factor_table(count);
+    return std::vector<ScatteringFactorEntry>(table, table + count);
+}
+}
+%}
+
+%template(ScatteringFactorEntryVector) std::vector<Maptitude::ScatteringFactorEntry>;
 
 // ============================================================================
 // Python extensions for Residue
@@ -722,9 +776,9 @@ radial_sampling = property(GetRadialSampling, SetRadialSampling)
 }
 
 // ============================================================================
-// Python properties for RSCCOptions
+// Python properties for RsccOptions
 // ============================================================================
-%extend Maptitude::RSCCOptions {
+%extend Maptitude::RsccOptions {
 %pythoncode %{
 atom_radius_method = property(GetAtomRadiusMethod, SetAtomRadiusMethod)
 fixed_atom_radius = property(GetFixedAtomRadius, SetFixedAtomRadius)
@@ -733,9 +787,41 @@ atom_radius_scaling = property(GetAtomRadiusScaling, SetAtomRadiusScaling)
 }
 
 // ============================================================================
+// Python properties for RsrOptions
+// ============================================================================
+%extend Maptitude::RsrOptions {
+%pythoncode %{
+atom_radius_method = property(GetAtomRadiusMethod, SetAtomRadiusMethod)
+fixed_atom_radius = property(GetFixedAtomRadius, SetFixedAtomRadius)
+atom_radius_scaling = property(GetAtomRadiusScaling, SetAtomRadiusScaling)
+%}
+}
+
+// ============================================================================
+// Python properties for CoverageOptions
+// ============================================================================
+%extend Maptitude::CoverageOptions {
+%pythoncode %{
+sigma = property(GetSigma, SetSigma)
+%}
+}
+
+// ============================================================================
 // Module-level Python convenience functions
 // ============================================================================
 %pythoncode %{
+# Save references to SWIG-generated C++ wrappers before overriding
+_cpp_rscc = rscc
+_cpp_rsr = rsr
+_cpp_qscore = qscore
+_cpp_ediam = ediam
+_cpp_coverage = coverage
+_cpp_scale_map = scale_map
+_cpp_combine_maps = combine_maps
+_cpp_diff_to_calc = diff_to_calc
+_cpp_wrap_and_pad_grid = wrap_and_pad_grid
+
+
 def fc_density(obj, obs_grid, resolution, cell, mask=None,
                k_sol=0.35, b_sol=46.0, symops=None,
                include_h=False, n_scale_shells=1):
@@ -777,24 +863,25 @@ def rscc(obj, grid, resolution, mask=None, calc_grid=None,
     :param mask: Optional atom predicate.
     :param calc_grid: Optional pre-computed calculated density.
     :param atom_radius: Atom radius method (str or AtomRadius enum value).
-    :param options: RSCCOptions configuration object.
+    :param options: RsccOptions configuration object.
     :returns: DensityScoreResult with RSCC values.
     """
     if options is None:
-        options = RSCCOptions()
+        options = RsccOptions()
     if atom_radius is not None:
         if isinstance(atom_radius, str):
             _radius_map = {
-                "fixed": AtomRadius_Fixed,
-                "scaled": AtomRadius_Scaled,
-                "binned": AtomRadius_Binned,
+                "fixed": AtomRadius_FIXED,
+                "scaled": AtomRadius_SCALED,
+                "binned": AtomRadius_BINNED,
             }
             atom_radius = _radius_map[atom_radius.lower()]
         options.SetAtomRadiusMethod(atom_radius)
-    return RSCC(obj, grid, resolution, mask, calc_grid, options)
+    return _cpp_rscc(obj, grid, resolution, mask, calc_grid, options)
 
 
-def rsr(obj, grid, resolution, mask=None, calc_grid=None):
+def rsr(obj, grid, resolution, mask=None, calc_grid=None,
+        atom_radius=None, options=None):
     """Real-Space R-Factor.
 
     :param obj: Input molecule.
@@ -802,9 +889,23 @@ def rsr(obj, grid, resolution, mask=None, calc_grid=None):
     :param resolution: Resolution in Angstroms.
     :param mask: Optional atom predicate.
     :param calc_grid: Optional pre-computed calculated density.
+    :param atom_radius: Atom radius method (str or AtomRadius enum value).
+    :param options: RsrOptions configuration object.
     :returns: DensityScoreResult with RSR values.
     """
-    return RSR(obj, grid, resolution, mask, calc_grid)
+    if options is None:
+        options = RsrOptions()
+    if atom_radius is not None:
+        if isinstance(atom_radius, str):
+            _radius_map = {
+                "fixed": AtomRadius_FIXED,
+                "scaled": AtomRadius_SCALED,
+                "binned": AtomRadius_BINNED,
+                "adaptive": AtomRadius_ADAPTIVE,
+            }
+            atom_radius = _radius_map[atom_radius.lower()]
+        options.SetAtomRadiusMethod(atom_radius)
+    return _cpp_rsr(obj, grid, resolution, mask, calc_grid, options)
 
 
 def qscore(obj, grid, resolution, mask=None, options=None):
@@ -819,7 +920,7 @@ def qscore(obj, grid, resolution, mask=None, options=None):
     """
     if options is None:
         options = QScoreOptions()
-    return QScore(obj, grid, resolution, mask, options)
+    return _cpp_qscore(obj, grid, resolution, mask, options)
 
 
 def ediam(obj, grid, resolution, mask=None):
@@ -831,19 +932,24 @@ def ediam(obj, grid, resolution, mask=None):
     :param mask: Optional atom predicate.
     :returns: DensityScoreResult with EDIAm values in [0, 1].
     """
-    return EDIAm(obj, grid, resolution, mask)
+    return _cpp_ediam(obj, grid, resolution, mask)
 
 
-def coverage(obj, grid, sigma=1.0, mask=None):
+def coverage(obj, grid, sigma=1.0, mask=None, options=None):
     """Coverage: fraction of atoms observed in density.
 
     :param obj: Input molecule.
     :param grid: Observed electron density map.
     :param sigma: Number of standard deviations above mean.
     :param mask: Optional atom predicate.
+    :param options: CoverageOptions configuration object.
     :returns: DensityScoreResult with coverage fractions.
     """
-    return Coverage(obj, grid, sigma, mask)
+    if options is None:
+        options = CoverageOptions()
+    if sigma != 1.0:
+        options.SetSigma(sigma)
+    return _cpp_coverage(obj, grid, mask, options)
 
 
 def parse_symop(s):
@@ -870,7 +976,7 @@ def scale_map(grid, factor):
     :param grid: Grid to scale (modified in place).
     :param factor: Scale factor.
     """
-    ScaleMap(grid, factor)
+    _cpp_scale_map(grid, factor)
 
 
 def combine_maps(lhs, rhs, op):
@@ -878,10 +984,10 @@ def combine_maps(lhs, rhs, op):
 
     :param lhs: Left-hand side grid.
     :param rhs: Right-hand side grid.
-    :param op: MapOp enum value (Add, Subtract, Min, Max).
+    :param op: MapOp enum value (ADD, SUBTRACT, MIN, MAX).
     :returns: New OEScalarGrid with combined values.
     """
-    return CombineMaps(lhs, rhs, op)
+    return _cpp_combine_maps(lhs, rhs, op)
 
 
 def diff_to_calc(obs_grid, diff_grid):
@@ -891,7 +997,7 @@ def diff_to_calc(obs_grid, diff_grid):
     :param diff_grid: Difference density map (mFo-DFc).
     :returns: New OEScalarGrid with calculated density.
     """
-    return DiffToCalc(obs_grid, diff_grid)
+    return _cpp_diff_to_calc(obs_grid, diff_grid)
 
 
 def wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0):
@@ -905,8 +1011,17 @@ def wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0):
     :param padding: Extra margin around atoms (Angstroms).
     :returns: Grid covering all atom coordinates (original or padded).
     """
-    result = WrapAndPadGrid(grid, mol, cell_a, cell_b, cell_c, padding)
+    result = _cpp_wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding)
     return result if result is not None else grid
+
+
+def get_scattering_factor_table():
+    """Get the full scattering factor table.
+
+    :returns: Tuple of (table_entries, count).
+    """
+    entries = _get_scattering_factor_table_vec()
+    return entries, len(entries)
 
 
 __version__ = "0.1.0"

@@ -12,8 +12,8 @@ using namespace Maptitude;
 
 // Placeholder: verify MapOp enum values compile
 TEST(GridOpsTest, MapOpEnumValues) {
-    EXPECT_NE(static_cast<int>(MapOp::Add), static_cast<int>(MapOp::Subtract));
-    EXPECT_NE(static_cast<int>(MapOp::Min), static_cast<int>(MapOp::Max));
+    EXPECT_NE(static_cast<int>(MapOp::ADD), static_cast<int>(MapOp::SUBTRACT));
+    EXPECT_NE(static_cast<int>(MapOp::MIN), static_cast<int>(MapOp::MAX));
 }
 
 // --- Helper: create a small grid with a known pattern ---
@@ -40,17 +40,17 @@ TEST(GridOpsTest, InterpolateDensityPeriodicWraps) {
     double cell_a = 10.0, cell_b = 10.0, cell_c = 10.0;
 
     // Query at (2, 3, 4) directly
-    double val_direct = InterpolateDensityPeriodic(
+    double val_direct = interpolate_density_periodic(
         grid, 2.0, 3.0, 4.0, cell_a, cell_b, cell_c);
 
     // Query at (2+10, 3+10, 4+10) should wrap to the same point
-    double val_wrapped = InterpolateDensityPeriodic(
+    double val_wrapped = interpolate_density_periodic(
         grid, 12.0, 13.0, 14.0, cell_a, cell_b, cell_c);
 
     EXPECT_NEAR(val_direct, val_wrapped, 1e-4);
 
     // Query at (2+20, 3+30, 4+40) — multiple periods
-    double val_multi = InterpolateDensityPeriodic(
+    double val_multi = interpolate_density_periodic(
         grid, 22.0, 33.0, 44.0, cell_a, cell_b, cell_c);
 
     EXPECT_NEAR(val_direct, val_multi, 1e-4);
@@ -61,17 +61,17 @@ TEST(GridOpsTest, InterpolateDensityPeriodicNegativeWrap) {
     double cell_a = 10.0, cell_b = 10.0, cell_c = 10.0;
 
     // Query at (5, 5, 5) directly
-    double val_direct = InterpolateDensityPeriodic(
+    double val_direct = interpolate_density_periodic(
         grid, 5.0, 5.0, 5.0, cell_a, cell_b, cell_c);
 
     // Query at (5-10, 5-10, 5-10) = (-5, -5, -5) should wrap back
-    double val_neg = InterpolateDensityPeriodic(
+    double val_neg = interpolate_density_periodic(
         grid, -5.0, -5.0, -5.0, cell_a, cell_b, cell_c);
 
     EXPECT_NEAR(val_direct, val_neg, 1e-4);
 
     // Query at (5-20, 5-30, 5-40) — multiple negative periods
-    double val_multi_neg = InterpolateDensityPeriodic(
+    double val_multi_neg = interpolate_density_periodic(
         grid, -15.0, -25.0, -35.0, cell_a, cell_b, cell_c);
 
     EXPECT_NEAR(val_direct, val_multi_neg, 1e-4);
@@ -87,7 +87,7 @@ TEST(GridOpsTest, InterpolateDensityPeriodicBatchConsistency) {
         -5.0, -5.0, -5.0   // negative wrap
     };
 
-    auto results = InterpolateDensityPeriodicBatch(
+    auto results = interpolate_density_periodic_batch(
         grid, points, 3, cell_a, cell_b, cell_c);
 
     ASSERT_EQ(results.size(), 3u);
@@ -97,7 +97,7 @@ TEST(GridOpsTest, InterpolateDensityPeriodicBatchConsistency) {
 
     // Each should match single-point call
     for (size_t i = 0; i < 3; ++i) {
-        double single = InterpolateDensityPeriodic(
+        double single = interpolate_density_periodic(
             grid, points[i*3], points[i*3+1], points[i*3+2],
             cell_a, cell_b, cell_c);
         EXPECT_NEAR(results[i], single, 1e-10);
@@ -124,7 +124,7 @@ TEST(GridOpsTest, WrapAndPadGridNoShiftNeeded) {
     // Molecule centroid at (5, 5, 5) — right at grid center, within padding
     auto mol = MakeTestMol(5.0, 5.0, 5.0);
 
-    OESystem::OEScalarGrid* result = WrapAndPadGrid(
+    OESystem::OEScalarGrid* result = wrap_and_pad_grid(
         grid, mol, 10.0, 10.0, 10.0, 3.0);
 
     // Atom is well within grid, no padding needed → nullptr
@@ -144,7 +144,7 @@ TEST(GridOpsTest, WrapAndPadGridShiftsCoordinates) {
     // Molecule at (25, 35, 45) — far from grid center, needs shifting
     auto mol = MakeTestMol(25.0, 35.0, 45.0);
 
-    OESystem::OEScalarGrid* result = WrapAndPadGrid(
+    OESystem::OEScalarGrid* result = wrap_and_pad_grid(
         grid, mol, 10.0, 10.0, 10.0, 3.0);
 
     // After shifting, atom should be near grid center
@@ -180,7 +180,7 @@ TEST(GridOpsTest, WrapAndPadGridCreatesPaddedGrid) {
     // Molecule at (2, 2, 2) with padding 5.0 will exceed the 5x5x5 grid
     auto mol = MakeTestMol(2.0, 2.0, 2.0);
 
-    OESystem::OEScalarGrid* result = WrapAndPadGrid(
+    OESystem::OEScalarGrid* result = wrap_and_pad_grid(
         grid, mol, 5.0, 5.0, 5.0, 5.0);  // large padding forces pad
 
     // Padded grid should have been created
@@ -194,7 +194,7 @@ TEST(GridOpsTest, WrapAndPadGridCreatesPaddedGrid) {
     // Values in the padded grid should be ~42.0 (filled from periodic sampling)
     float sx, sy, sz;
     result->ElementToSpatialCoord(0, sx, sy, sz);
-    double val = InterpolateDensityPeriodic(
+    double val = interpolate_density_periodic(
         grid, sx, sy, sz, 5.0, 5.0, 5.0);
     EXPECT_NEAR((*result)[0], static_cast<float>(val), 0.1);
 

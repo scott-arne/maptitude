@@ -1,5 +1,5 @@
 /**
- * @file RSCCOptions.h
+ * @file RsccOptions.h
  * @brief Configuration options for RSCC atom radius computation.
  */
 
@@ -9,25 +9,25 @@
 namespace Maptitude {
 
 /**
- * @brief Atom radius strategy for RSCC integration sphere.
+ * @brief Atom radius computation method for density scoring.
  */
 enum class AtomRadius {
-    Fixed,    ///< Same radius for all atoms
-    Scaled,   ///< atom->GetRadius() * scaling factor
-    Binned    ///< Resolution-dependent bin (Phenix/CCTBX)
+    FIXED,     ///< Same radius for all atoms
+    SCALED,    ///< atom->GetRadius() * scaling factor
+    BINNED,    ///< Resolution-dependent bin (Phenix/CCTBX)
+    ADAPTIVE   ///< B-factor and resolution dependent (Tickle 2012)
 };
 
 /**
  * @brief Configuration for RSCC density scoring.
  *
  * @code
- * RSCCOptions opts;
- * opts.SetAtomRadiusMethod(AtomRadius::Fixed);
- * opts.SetFixedAtomRadius(2.0);
- * auto result = RSCC(mol, grid, resolution, nullptr, nullptr, opts);
+ * RsccOptions opts;
+ * opts.SetAtomRadiusMethod(AtomRadius::BINNED);
+ * auto result = rscc(mol, grid, resolution, nullptr, nullptr, opts);
  * @endcode
  */
-class RSCCOptions {
+class RsccOptions {
 public:
     void SetAtomRadiusMethod(AtomRadius method) { method_ = method; }
     AtomRadius GetAtomRadiusMethod() const { return method_; }
@@ -39,7 +39,7 @@ public:
     double GetAtomRadiusScaling() const { return scaling_; }
 
 private:
-    AtomRadius method_ = AtomRadius::Binned;
+    AtomRadius method_ = AtomRadius::BINNED;
     double fixed_radius_ = 1.5;
     double scaling_ = 1.0;
 };

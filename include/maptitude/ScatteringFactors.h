@@ -55,7 +55,7 @@ struct ScatteringFactorEntry {
  * @param formal_charge Formal charge (default: 0).
  * @return Pointer to coefficients, or nullptr if not found.
  */
-const CromerMannCoeffs* GetScatteringFactors(
+const CromerMannCoeffs* get_scattering_factors(
     unsigned int atomic_number, int formal_charge = 0);
 
 /**
@@ -64,7 +64,7 @@ const CromerMannCoeffs* GetScatteringFactors(
  * @param count Output: number of entries in the table.
  * @return Pointer to the first entry.
  */
-const ScatteringFactorEntry* GetScatteringFactorTable(size_t& count);
+const ScatteringFactorEntry* get_scattering_factor_table(size_t& count);
 
 }  // namespace Maptitude
 

@@ -16,7 +16,7 @@ namespace Maptitude {
  *
  * @code
  * try {
- *     auto result = RSCC(mol, grid, resolution);
+ *     auto result = rscc(mol, grid, resolution);
  * } catch (const StructureError& e) {
  *     std::cerr << "Structure error: " << e.what() << "\n";
  * }

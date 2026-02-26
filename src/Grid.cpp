@@ -6,7 +6,7 @@
 
 namespace Maptitude {
 
-GridParams GetGridParams(const OESystem::OEScalarGrid& grid) {
+GridParams get_grid_params(const OESystem::OEScalarGrid& grid) {
     float fx, fy, fz;
     grid.ElementToSpatialCoord(0, fx, fy, fz);
     return GridParams{
@@ -20,7 +20,7 @@ GridParams GetGridParams(const OESystem::OEScalarGrid& grid) {
     };
 }
 
-std::vector<double> GridToVector(const OESystem::OEScalarGrid& grid) {
+std::vector<double> grid_to_vector(const OESystem::OEScalarGrid& grid) {
     size_t size = grid.GetSize();
     std::vector<double> result(size);
     for (size_t i = 0; i < size; ++i) {
@@ -29,14 +29,14 @@ std::vector<double> GridToVector(const OESystem::OEScalarGrid& grid) {
     return result;
 }
 
-void VectorToGrid(const std::vector<double>& values, OESystem::OEScalarGrid& grid) {
+void vector_to_grid(const std::vector<double>& values, OESystem::OEScalarGrid& grid) {
     size_t size = grid.GetSize();
     for (size_t i = 0; i < size && i < values.size(); ++i) {
         grid[static_cast<unsigned int>(i)] = static_cast<float>(values[i]);
     }
 }
 
-double InterpolateDensity(const OESystem::OEScalarGrid& grid,
+double interpolate_density(const OESystem::OEScalarGrid& grid,
                           double x, double y, double z,
                           double default_value) {
     if (!grid.IsInGrid(static_cast<float>(x),
@@ -55,21 +55,21 @@ double InterpolateDensity(const OESystem::OEScalarGrid& grid,
             static_cast<float>(default_value)));
 }
 
-std::vector<double> InterpolateDensityBatch(
+std::vector<double> interpolate_density_batch(
     const OESystem::OEScalarGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
     double default_value) {
     std::vector<double> result(num_points);
     for (size_t i = 0; i < num_points; ++i) {
-        result[i] = InterpolateDensity(
+        result[i] = interpolate_density(
             grid, points[i * 3], points[i * 3 + 1], points[i * 3 + 2],
             default_value);
     }
     return result;
 }
 
-double InterpolateDensityPeriodic(
+double interpolate_density_periodic(
     const OESystem::OEScalarGrid& grid,
     double x, double y, double z,
     double cell_a, double cell_b, double cell_c,
@@ -88,10 +88,10 @@ double InterpolateDensityPeriodic(
     double wz = orig_z + std::fmod(z - orig_z, cell_c);
     if (wz < orig_z) wz += cell_c;
 
-    return InterpolateDensity(grid, wx, wy, wz, default_value);
+    return interpolate_density(grid, wx, wy, wz, default_value);
 }
 
-std::vector<double> InterpolateDensityPeriodicBatch(
+std::vector<double> interpolate_density_periodic_batch(
     const OESystem::OEScalarGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
@@ -99,14 +99,14 @@ std::vector<double> InterpolateDensityPeriodicBatch(
     double default_value) {
     std::vector<double> result(num_points);
     for (size_t i = 0; i < num_points; ++i) {
-        result[i] = InterpolateDensityPeriodic(
+        result[i] = interpolate_density_periodic(
             grid, points[i * 3], points[i * 3 + 1], points[i * 3 + 2],
             cell_a, cell_b, cell_c, default_value);
     }
     return result;
 }
 
-std::vector<unsigned int> GetAtomGridPoints(
+std::vector<unsigned int> get_atom_grid_points(
     const OESystem::OEScalarGrid& grid,
     double x, double y, double z, double radius) {
     std::vector<unsigned int> result;

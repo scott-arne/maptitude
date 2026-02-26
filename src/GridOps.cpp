@@ -10,14 +10,14 @@
 
 namespace Maptitude {
 
-void ScaleMap(OESystem::OEScalarGrid& grid, double factor) {
+void scale_map(OESystem::OEScalarGrid& grid, double factor) {
     unsigned int size = grid.GetSize();
     for (unsigned int i = 0; i < size; ++i) {
         grid[i] = static_cast<float>(grid[i] * factor);
     }
 }
 
-OESystem::OEScalarGrid* CombineMaps(
+OESystem::OEScalarGrid* combine_maps(
     const OESystem::OEScalarGrid& lhs,
     const OESystem::OEScalarGrid& rhs,
     MapOp op) {
@@ -40,16 +40,16 @@ OESystem::OEScalarGrid* CombineMaps(
         float combined = 0.0f;
 
         switch (op) {
-            case MapOp::Add:
+            case MapOp::ADD:
                 combined = lval + rval;
                 break;
-            case MapOp::Subtract:
+            case MapOp::SUBTRACT:
                 combined = lval - rval;
                 break;
-            case MapOp::Min:
+            case MapOp::MIN:
                 combined = std::min(lval, rval);
                 break;
-            case MapOp::Max:
+            case MapOp::MAX:
                 combined = std::max(lval, rval);
                 break;
         }
@@ -60,7 +60,7 @@ OESystem::OEScalarGrid* CombineMaps(
     return result;
 }
 
-OESystem::OEScalarGrid* DiffToCalc(
+OESystem::OEScalarGrid* diff_to_calc(
     const OESystem::OEScalarGrid& obs_grid,
     const OESystem::OEScalarGrid& diff_grid) {
     if (obs_grid.GetXDim() != diff_grid.GetXDim() ||
@@ -81,7 +81,7 @@ OESystem::OEScalarGrid* DiffToCalc(
     return result;
 }
 
-OESystem::OEScalarGrid* WrapAndPadGrid(
+OESystem::OEScalarGrid* wrap_and_pad_grid(
     const OESystem::OEScalarGrid& grid,
     OEChem::OEMolBase& mol,
     double cell_a, double cell_b, double cell_c,

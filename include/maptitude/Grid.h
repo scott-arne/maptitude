@@ -36,7 +36,7 @@ struct GridParams {
  * @param grid Input grid.
  * @return GridParams describing the grid geometry.
  */
-GridParams GetGridParams(const OESystem::OEScalarGrid& grid);
+GridParams get_grid_params(const OESystem::OEScalarGrid& grid);
 
 /**
  * @brief Copy grid values to a flat vector (z-fastest order).
@@ -44,7 +44,7 @@ GridParams GetGridParams(const OESystem::OEScalarGrid& grid);
  * @param grid Input grid.
  * @return Vector of grid values.
  */
-std::vector<double> GridToVector(const OESystem::OEScalarGrid& grid);
+std::vector<double> grid_to_vector(const OESystem::OEScalarGrid& grid);
 
 /**
  * @brief Copy values from a flat vector back into a grid.
@@ -52,7 +52,7 @@ std::vector<double> GridToVector(const OESystem::OEScalarGrid& grid);
  * @param values Input values (must match grid size).
  * @param grid Output grid (modified in place).
  */
-void VectorToGrid(const std::vector<double>& values, OESystem::OEScalarGrid& grid);
+void vector_to_grid(const std::vector<double>& values, OESystem::OEScalarGrid& grid);
 
 /**
  * @brief Trilinear interpolation at a Cartesian point.
@@ -64,9 +64,9 @@ void VectorToGrid(const std::vector<double>& values, OESystem::OEScalarGrid& gri
  * @param default_value Value to return if point is outside grid.
  * @return Interpolated density value.
  */
-double InterpolateDensity(const OESystem::OEScalarGrid& grid,
-                          double x, double y, double z,
-                          double default_value = 0.0);
+double interpolate_density(const OESystem::OEScalarGrid& grid,
+                           double x, double y, double z,
+                           double default_value = 0.0);
 
 /**
  * @brief Batch trilinear interpolation at multiple points.
@@ -77,7 +77,7 @@ double InterpolateDensity(const OESystem::OEScalarGrid& grid,
  * @param default_value Value for out-of-bounds points.
  * @return Vector of interpolated values.
  */
-std::vector<double> InterpolateDensityBatch(
+std::vector<double> interpolate_density_batch(
     const OESystem::OEScalarGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
@@ -99,7 +99,7 @@ std::vector<double> InterpolateDensityBatch(
  * @param default_value Value to return if point is still outside grid after wrapping.
  * @return Interpolated density value.
  */
-double InterpolateDensityPeriodic(
+double interpolate_density_periodic(
     const OESystem::OEScalarGrid& grid,
     double x, double y, double z,
     double cell_a, double cell_b, double cell_c,
@@ -117,7 +117,7 @@ double InterpolateDensityPeriodic(
  * @param default_value Value for out-of-bounds points after wrapping.
  * @return Vector of interpolated values.
  */
-std::vector<double> InterpolateDensityPeriodicBatch(
+std::vector<double> interpolate_density_periodic_batch(
     const OESystem::OEScalarGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
@@ -137,7 +137,7 @@ std::vector<double> InterpolateDensityPeriodicBatch(
  * @param radius Search radius in Angstroms.
  * @return Vector of grid element indices.
  */
-std::vector<unsigned int> GetAtomGridPoints(
+std::vector<unsigned int> get_atom_grid_points(
     const OESystem::OEScalarGrid& grid,
     double x, double y, double z, double radius);
 

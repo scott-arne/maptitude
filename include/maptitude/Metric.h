@@ -12,7 +12,9 @@
 
 #include "maptitude/DensityScoreResult.h"
 #include "maptitude/QScoreOptions.h"
-#include "maptitude/RSCCOptions.h"
+#include "maptitude/RsccOptions.h"
+#include "maptitude/RsrOptions.h"
+#include "maptitude/CoverageOptions.h"
 
 namespace OEChem {
 class OEMolBase;
@@ -42,13 +44,13 @@ namespace Maptitude {
  * @param calc_grid Optional pre-computed calculated density.
  * @return DensityScoreResult with RSCC values.
  */
-DensityScoreResult RSCC(
+DensityScoreResult rscc(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
     const OESystem::OEScalarGrid* calc_grid = nullptr,
-    const RSCCOptions& options = RSCCOptions());
+    const RsccOptions& options = RsccOptions());
 
 /**
  * @brief Real-Space R-Factor.
@@ -63,12 +65,13 @@ DensityScoreResult RSCC(
  * @param calc_grid Optional pre-computed calculated density.
  * @return DensityScoreResult with RSR values.
  */
-DensityScoreResult RSR(
+DensityScoreResult rsr(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
-    const OESystem::OEScalarGrid* calc_grid = nullptr);
+    const OESystem::OEScalarGrid* calc_grid = nullptr,
+    const RsrOptions& options = RsrOptions());
 
 /**
  * @brief Q-Score (Pintilie et al., 2020).
@@ -83,7 +86,7 @@ DensityScoreResult RSR(
  * @param options Q-score configuration.
  * @return DensityScoreResult with Q-score values.
  */
-DensityScoreResult QScore(
+DensityScoreResult qscore(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
@@ -102,7 +105,7 @@ DensityScoreResult QScore(
  * @param mask Optional atom predicate.
  * @return DensityScoreResult with EDIAm values in [0, 1].
  */
-DensityScoreResult EDIAm(
+DensityScoreResult ediam(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
@@ -120,11 +123,11 @@ DensityScoreResult EDIAm(
  * @param mask Optional atom predicate.
  * @return DensityScoreResult with coverage fractions.
  */
-DensityScoreResult Coverage(
+DensityScoreResult coverage(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
-    double sigma = 1.0,
-    const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr);
+    const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
+    const CoverageOptions& options = CoverageOptions());
 
 }  // namespace Maptitude
 

@@ -14,7 +14,7 @@
  * auto grid = calc.Calculate(mol, obs_grid, resolution);
  *
  * // Score fit to density
- * auto result = Maptitude::RSCC(mol, obs_grid, resolution);
+ * auto result = Maptitude::rscc(mol, obs_grid, resolution);
  * @endcode
  */
 
@@ -43,7 +43,9 @@ struct UnitCell;
 struct SymOp;
 struct DensityScoreResult;
 class QScoreOptions;
-class RSCCOptions;
+class RsccOptions;
+class RsrOptions;
+class CoverageOptions;
 
 }  // namespace Maptitude
 
@@ -55,7 +57,9 @@ class RSCCOptions;
 #include "maptitude/Grid.h"
 #include "maptitude/DensityScoreResult.h"
 #include "maptitude/QScoreOptions.h"
-#include "maptitude/RSCCOptions.h"
+#include "maptitude/RsccOptions.h"
+#include "maptitude/RsrOptions.h"
+#include "maptitude/CoverageOptions.h"
 #include "maptitude/DensityCalculator.h"
 #include "maptitude/Metric.h"
 #include "maptitude/GridOps.h"

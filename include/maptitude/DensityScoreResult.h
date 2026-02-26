@@ -18,7 +18,7 @@ namespace Maptitude {
  * Contains the overall score plus per-residue and per-atom breakdowns.
  *
  * @code
- * auto result = RSCC(mol, grid, resolution);
+ * auto result = rscc(mol, grid, resolution);
  * std::cout << "Overall RSCC: " << result.overall << "\n";
  *
  * for (const auto& [res, score] : result.by_residue) {

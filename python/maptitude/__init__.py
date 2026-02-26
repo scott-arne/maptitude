@@ -81,54 +81,54 @@ from .maptitude import (
     UnitCell,
     SymOp,
     QScoreOptions,
-    RSCCOptions,
+    RsccOptions,
+    RsrOptions,
+    CoverageOptions,
     DensityScoreResult,
     GridParams,
-    MapOp_Add,
-    MapOp_Subtract,
-    MapOp_Min,
-    MapOp_Max,
-    AtomRadius_Fixed,
-    AtomRadius_Scaled,
-    AtomRadius_Binned,
-    RadialSampling_Fixed,
-    RadialSampling_Adaptive,
+    MapOp_ADD,
+    MapOp_SUBTRACT,
+    MapOp_MIN,
+    MapOp_MAX,
+    AtomRadius_FIXED,
+    AtomRadius_SCALED,
+    AtomRadius_BINNED,
+    AtomRadius_ADAPTIVE,
+    RadialSampling_FIXED,
+    RadialSampling_ADAPTIVE,
 
     # Classes
     DensityCalculator,
 
     # Density scoring functions
-    RSCC,
-    RSR,
-    QScore,
-    EDIAm,
-    Coverage,
-
-    # Grid utility functions
-    GetGridParams,
-    InterpolateDensity,
-    InterpolateDensityBatch,
-    InterpolateDensityPeriodic,
-    InterpolateDensityPeriodicBatch,
-    GetAtomGridPoints,
-    ScaleMap,
-    CombineMaps,
-    DiffToCalc,
-    WrapAndPadGrid,
-
-    # Convenience functions
-    fc_density,
     rscc,
     rsr,
     qscore,
     ediam,
     coverage,
-    parse_symop,
-    parse_symops,
+
+    # Grid utility functions
+    get_grid_params,
+    interpolate_density,
+    interpolate_density_batch,
+    interpolate_density_periodic,
+    interpolate_density_periodic_batch,
+    get_atom_grid_points,
     scale_map,
     combine_maps,
     diff_to_calc,
     wrap_and_pad_grid,
+
+    # Scattering factor types and functions
+    CromerMannCoeffs,
+    ScatteringFactorEntry,
+    get_scattering_factors,
+    get_scattering_factor_table,
+
+    # Convenience functions
+    fc_density,
+    parse_symop,
+    parse_symops,
 
     # Container types
     DoubleVector,
@@ -139,23 +139,24 @@ from .maptitude import (
 
 class MapOp:
     """Grid combination operations."""
-    Add = MapOp_Add
-    Subtract = MapOp_Subtract
-    Min = MapOp_Min
-    Max = MapOp_Max
+    ADD = MapOp_ADD
+    SUBTRACT = MapOp_SUBTRACT
+    MIN = MapOp_MIN
+    MAX = MapOp_MAX
 
 
 class AtomRadius:
-    """Atom radius methods for RSCC scoring."""
-    Fixed = AtomRadius_Fixed
-    Scaled = AtomRadius_Scaled
-    Binned = AtomRadius_Binned
+    """Atom radius methods for density scoring."""
+    FIXED = AtomRadius_FIXED
+    SCALED = AtomRadius_SCALED
+    BINNED = AtomRadius_BINNED
+    ADAPTIVE = AtomRadius_ADAPTIVE
 
 
 class RadialSampling:
     """Radial sampling strategies for Q-score computation."""
-    Fixed = RadialSampling_Fixed
-    Adaptive = RadialSampling_Adaptive
+    FIXED = RadialSampling_FIXED
+    ADAPTIVE = RadialSampling_ADAPTIVE
 
 
 __all__ = [
@@ -166,7 +167,9 @@ __all__ = [
     "UnitCell",
     "SymOp",
     "QScoreOptions",
-    "RSCCOptions",
+    "RsccOptions",
+    "RsrOptions",
+    "CoverageOptions",
     "AtomRadius",
     "RadialSampling",
     "DensityScoreResult",
@@ -175,33 +178,27 @@ __all__ = [
     # Classes
     "DensityCalculator",
     # Density scoring functions
-    "RSCC",
-    "RSR",
-    "QScore",
-    "EDIAm",
-    "Coverage",
-    # Grid utilities
-    "GetGridParams",
-    "InterpolateDensity",
-    "InterpolateDensityBatch",
-    "InterpolateDensityPeriodic",
-    "InterpolateDensityPeriodicBatch",
-    "GetAtomGridPoints",
-    "ScaleMap",
-    "CombineMaps",
-    "DiffToCalc",
-    "WrapAndPadGrid",
-    # Convenience functions
-    "fc_density",
     "rscc",
     "rsr",
     "qscore",
     "ediam",
     "coverage",
-    "parse_symop",
-    "parse_symops",
+    # Grid utilities
+    "get_grid_params",
+    "interpolate_density",
+    "interpolate_density_batch",
+    "interpolate_density_periodic",
+    "interpolate_density_periodic_batch",
+    "get_atom_grid_points",
     "scale_map",
     "combine_maps",
     "diff_to_calc",
     "wrap_and_pad_grid",
+    # Scattering factors
+    "get_scattering_factors",
+    "get_scattering_factor_table",
+    # Convenience functions
+    "fc_density",
+    "parse_symop",
+    "parse_symops",
 ]

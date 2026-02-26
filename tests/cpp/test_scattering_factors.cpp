@@ -7,29 +7,29 @@
 using namespace Maptitude;
 
 TEST(ScatteringFactorsTest, CarbonExists) {
-    auto* coeffs = GetScatteringFactors(6, 0);
+    auto* coeffs = get_scattering_factors(6, 0);
     ASSERT_NE(coeffs, nullptr);
 }
 
 TEST(ScatteringFactorsTest, HydrogenExists) {
-    auto* coeffs = GetScatteringFactors(1, 0);
+    auto* coeffs = get_scattering_factors(1, 0);
     ASSERT_NE(coeffs, nullptr);
 }
 
 TEST(ScatteringFactorsTest, OxygenExists) {
-    auto* coeffs = GetScatteringFactors(8, 0);
+    auto* coeffs = get_scattering_factors(8, 0);
     ASSERT_NE(coeffs, nullptr);
 }
 
 TEST(ScatteringFactorsTest, NitrogenExists) {
-    auto* coeffs = GetScatteringFactors(7, 0);
+    auto* coeffs = get_scattering_factors(7, 0);
     ASSERT_NE(coeffs, nullptr);
 }
 
 TEST(ScatteringFactorsTest, IronChargeStates) {
-    auto* fe0 = GetScatteringFactors(26, 0);
-    auto* fe2 = GetScatteringFactors(26, 2);
-    auto* fe3 = GetScatteringFactors(26, 3);
+    auto* fe0 = get_scattering_factors(26, 0);
+    auto* fe2 = get_scattering_factors(26, 2);
+    auto* fe3 = get_scattering_factors(26, 3);
 
     ASSERT_NE(fe0, nullptr);
     ASSERT_NE(fe2, nullptr);
@@ -38,8 +38,8 @@ TEST(ScatteringFactorsTest, IronChargeStates) {
 
 TEST(ScatteringFactorsTest, FallbackToNeutral) {
     // Request a charge state that doesn't exist for carbon
-    auto* coeffs = GetScatteringFactors(6, 3);
-    auto* neutral = GetScatteringFactors(6, 0);
+    auto* coeffs = get_scattering_factors(6, 3);
+    auto* neutral = get_scattering_factors(6, 0);
 
     // Should fall back to neutral
     ASSERT_NE(coeffs, nullptr);
@@ -48,12 +48,12 @@ TEST(ScatteringFactorsTest, FallbackToNeutral) {
 
 TEST(ScatteringFactorsTest, NonexistentElement) {
     // Element 200 doesn't exist
-    auto* coeffs = GetScatteringFactors(200, 0);
+    auto* coeffs = get_scattering_factors(200, 0);
     EXPECT_EQ(coeffs, nullptr);
 }
 
 TEST(ScatteringFactorsTest, EvaluateAtZero) {
-    auto* coeffs = GetScatteringFactors(6, 0);  // Carbon
+    auto* coeffs = get_scattering_factors(6, 0);  // Carbon
     ASSERT_NE(coeffs, nullptr);
 
     // At s^2 = 0, f0 = c + sum(a_i) = total number of electrons approximately
@@ -62,7 +62,7 @@ TEST(ScatteringFactorsTest, EvaluateAtZero) {
 }
 
 TEST(ScatteringFactorsTest, EvaluateDecaysWithS) {
-    auto* coeffs = GetScatteringFactors(6, 0);  // Carbon
+    auto* coeffs = get_scattering_factors(6, 0);  // Carbon
     ASSERT_NE(coeffs, nullptr);
 
     double f_low = coeffs->Evaluate(0.01);
@@ -74,7 +74,7 @@ TEST(ScatteringFactorsTest, EvaluateDecaysWithS) {
 
 TEST(ScatteringFactorsTest, TableNotEmpty) {
     size_t count = 0;
-    auto* table = GetScatteringFactorTable(count);
+    auto* table = get_scattering_factor_table(count);
     ASSERT_NE(table, nullptr);
     EXPECT_GT(count, 0u);
 }
@@ -83,7 +83,7 @@ TEST(ScatteringFactorsTest, TableNotEmpty) {
 
 TEST(ScatteringFactorsTest, FullTableHas209Entries) {
     size_t count = 0;
-    GetScatteringFactorTable(count);
+    get_scattering_factor_table(count);
     EXPECT_EQ(count, 209u);
 }
 
@@ -91,7 +91,7 @@ TEST(ScatteringFactorsTest, AllCommonElementsExist) {
     // Elements commonly found in macromolecular structures
     unsigned int elements[] = {1, 6, 7, 8, 15, 16, 11, 12, 17, 19, 20, 26, 30};
     for (unsigned int z : elements) {
-        auto* coeffs = GetScatteringFactors(z, 0);
+        auto* coeffs = get_scattering_factors(z, 0);
         EXPECT_NE(coeffs, nullptr) << "Missing neutral atom Z=" << z;
     }
 }
@@ -99,7 +99,7 @@ TEST(ScatteringFactorsTest, AllCommonElementsExist) {
 TEST(ScatteringFactorsTest, AllElementsZ1to98HaveNeutral) {
     // Elements Z=1..98 should all have neutral entries
     size_t count = 0;
-    auto* table = GetScatteringFactorTable(count);
+    auto* table = get_scattering_factor_table(count);
 
     std::set<unsigned int> z_values;
     for (size_t i = 0; i < count; ++i) {
@@ -115,7 +115,7 @@ TEST(ScatteringFactorsTest, AllElementsZ1to98HaveNeutral) {
 }
 
 TEST(ScatteringFactorsTest, HydrogenAnionExists) {
-    auto* coeffs = GetScatteringFactors(1, -1);
+    auto* coeffs = get_scattering_factors(1, -1);
     ASSERT_NE(coeffs, nullptr);
     // H- has 2 electrons
     double f0 = coeffs->Evaluate(0.0);
@@ -123,7 +123,7 @@ TEST(ScatteringFactorsTest, HydrogenAnionExists) {
 }
 
 TEST(ScatteringFactorsTest, OxygenAnionExists) {
-    auto* coeffs = GetScatteringFactors(8, -1);
+    auto* coeffs = get_scattering_factors(8, -1);
     ASSERT_NE(coeffs, nullptr);
     // O- has 9 electrons
     double f0 = coeffs->Evaluate(0.0);
@@ -131,7 +131,7 @@ TEST(ScatteringFactorsTest, OxygenAnionExists) {
 }
 
 TEST(ScatteringFactorsTest, ChlorineAnionExists) {
-    auto* coeffs = GetScatteringFactors(17, -1);
+    auto* coeffs = get_scattering_factors(17, -1);
     ASSERT_NE(coeffs, nullptr);
     // Cl- has 18 electrons
     double f0 = coeffs->Evaluate(0.0);
@@ -157,7 +157,7 @@ TEST(ScatteringFactorsTest, ElectronCountAtZero) {
     };
 
     for (const auto& tc : cases) {
-        auto* coeffs = GetScatteringFactors(tc.z, 0);
+        auto* coeffs = get_scattering_factors(tc.z, 0);
         ASSERT_NE(coeffs, nullptr) << "Z=" << tc.z;
         double f0 = coeffs->Evaluate(0.0);
         EXPECT_NEAR(f0, tc.expected_electrons, tc.tolerance)
@@ -167,7 +167,7 @@ TEST(ScatteringFactorsTest, ElectronCountAtZero) {
 
 TEST(ScatteringFactorsTest, EvaluateAlwaysPositiveAtLowS) {
     size_t count = 0;
-    auto* table = GetScatteringFactorTable(count);
+    auto* table = get_scattering_factor_table(count);
     for (size_t i = 0; i < count; ++i) {
         double f0 = table[i].coeffs.Evaluate(0.01);
         EXPECT_GT(f0, 0.0)

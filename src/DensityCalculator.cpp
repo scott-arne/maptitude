@@ -156,7 +156,7 @@ static void InterpolateUCToGrid(
     double a, double b, double c,
     const OESystem::OEScalarGrid& out_template,
     OESystem::OEScalarGrid& out_grid) {
-    GridParams gp = GetGridParams(out_template);
+    GridParams gp = get_grid_params(out_template);
 
     for (unsigned int iz = 0; iz < gp.z_dim; ++iz) {
         double z = gp.z_origin + iz * gp.spacing;
@@ -255,13 +255,13 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         int charge = atom->GetFormalCharge();
 
         // Look up scattering factors (fall back to neutral)
-        const CromerMannCoeffs* cm = GetScatteringFactors(z_num, charge);
+        const CromerMannCoeffs* cm = get_scattering_factors(z_num, charge);
         if (!cm) continue;
 
         // Get effective key for type indexing
         unsigned int eff_z = z_num;
         int eff_charge = charge;
-        if (!GetScatteringFactors(z_num, charge)) {
+        if (!get_scattering_factors(z_num, charge)) {
             eff_charge = 0;
         }
 
@@ -296,7 +296,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // f_s_table[refl_idx * n_types + type_idx]
     std::vector<double> f_s_table(n_refl * n_types);
     for (size_t ti = 0; ti < n_types; ++ti) {
-        const auto* cm = GetScatteringFactors(
+        const auto* cm = get_scattering_factors(
             unique_keys[ti].first, unique_keys[ti].second);
         for (size_t ri = 0; ri < n_refl; ++ri) {
             f_s_table[ri * n_types + ti] = cm->Evaluate(miller[ri].stol2);
@@ -469,7 +469,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         fftw_complex* obs_in = fftw_alloc_complex(grid_size);
         fftw_complex* Fobs_3d = fftw_alloc_complex(grid_size);
 
-        GridParams obs_gp = GetGridParams(obs_grid);
+        GridParams obs_gp = get_grid_params(obs_grid);
         for (int i = 0; i < nx; ++i) {
             double x = obs_grid.GetXMin() + (static_cast<double>(i) / nx) * a;
             for (int j = 0; j < ny; ++j) {
@@ -479,7 +479,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
                     double z = obs_grid.GetZMin() +
                                (static_cast<double>(k) / nz) * c;
                     size_t flat = i * ny * nz + j * nz + k;
-                    obs_in[flat][0] = InterpolateDensity(
+                    obs_in[flat][0] = interpolate_density(
                         obs_grid, x, y, z, 0.0);
                     obs_in[flat][1] = 0.0;
                 }

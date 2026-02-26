@@ -20,7 +20,7 @@ struct MapStats {
     double max_val = 0.0;
 };
 
-inline MapStats ComputeMapStats(const double* values, size_t count) {
+inline MapStats compute_map_stats(const double* values, size_t count) {
     MapStats stats;
     if (count == 0) return stats;
 
@@ -44,15 +44,15 @@ inline MapStats ComputeMapStats(const double* values, size_t count) {
     return stats;
 }
 
-inline MapStats ComputeMapStats(const std::vector<double>& values) {
-    return ComputeMapStats(values.data(), values.size());
+inline MapStats compute_map_stats(const std::vector<double>& values) {
+    return compute_map_stats(values.data(), values.size());
 }
 
 // ---- Map normalization for Q-score (MinMaxD algorithm, Pintilie 2020) ----
 
-inline void GetMapNormalization(const double* values, size_t count,
-                                double& A, double& B) {
-    MapStats stats = ComputeMapStats(values, count);
+inline void get_map_normalization(const double* values, size_t count,
+                                  double& A, double& B) {
+    MapStats stats = compute_map_stats(values, count);
     double max_d = std::min(stats.mean + stats.stddev * 10.0, stats.max_val);
     double min_d = std::max(stats.mean - stats.stddev * 1.0, stats.min_val);
     A = max_d - min_d;
@@ -61,8 +61,8 @@ inline void GetMapNormalization(const double* values, size_t count,
 
 // ---- Pearson correlation ----
 
-inline double PearsonCorrelation(const std::vector<double>& x,
-                                 const std::vector<double>& y) {
+inline double pearson_correlation(const std::vector<double>& x,
+                                  const std::vector<double>& y) {
     size_t n = x.size();
     if (n < 2 || y.size() != n)
         return std::numeric_limits<double>::quiet_NaN();
@@ -92,13 +92,13 @@ inline double PearsonCorrelation(const std::vector<double>& x,
 
 // ---- EDIAm sigmoid ----
 
-inline double EDIAmSigmoid(double x) {
+inline double ediam_sigmoid(double x) {
     return 1.0 / (1.0 + std::exp(-4.0 * (x - 1.0)));
 }
 
 // ---- Adaptive scoring radius (Tickle 2012 linear model) ----
 
-inline double ScoringRadius(double bfactor, double resolution) {
+inline double scoring_radius(double bfactor, double resolution) {
     constexpr double DEFAULT_BFACTOR = 20.0;
     constexpr double MAX_RADIUS = 2.7;
     if (bfactor <= 0.0) bfactor = DEFAULT_BFACTOR;
@@ -109,7 +109,7 @@ inline double ScoringRadius(double bfactor, double resolution) {
 
 // ---- Binned atom radius (Phenix/CCTBX resolution-dependent bins) ----
 
-inline double BinnedAtomRadius(double resolution) {
+inline double binned_atom_radius(double resolution) {
     if (resolution < 1.0)       return 1.0;
     else if (resolution < 2.0)  return 1.5;
     else if (resolution < 4.0)  return 2.0;
@@ -118,7 +118,7 @@ inline double BinnedAtomRadius(double resolution) {
 
 // ---- Fibonacci sphere points (Pintilie 2020 SpherePts algorithm) ----
 
-inline std::vector<std::array<double, 3>> FibonacciSpherePoints(
+inline std::vector<std::array<double, 3>> fibonacci_sphere_points(
     double cx, double cy, double cz, double radius, int n) {
     if (n < 1) return {};
     if (n == 1) {

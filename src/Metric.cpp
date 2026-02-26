@@ -18,31 +18,31 @@ namespace Maptitude {
 
 // Import detail helpers into this TU
 using detail::MapStats;
-using detail::PearsonCorrelation;
-using detail::EDIAmSigmoid;
-using detail::FibonacciSpherePoints;
+using detail::pearson_correlation;
+using detail::ediam_sigmoid;
+using detail::fibonacci_sphere_points;
 
 // ---- OE-aware wrappers around detail helpers ----
 
-static MapStats ComputeMapStats(const OESystem::OEScalarGrid& grid) {
+static MapStats compute_map_stats(const OESystem::OEScalarGrid& grid) {
     unsigned int size = grid.GetSize();
     if (size == 0) return {};
     std::vector<double> values(size);
     for (unsigned int i = 0; i < size; ++i) {
         values[i] = grid[i];
     }
-    return detail::ComputeMapStats(values);
+    return detail::compute_map_stats(values);
 }
 
-static void GetMapNormalization(const OESystem::OEScalarGrid& grid,
-                                double& A, double& B) {
+static void get_map_normalization(const OESystem::OEScalarGrid& grid,
+                                  double& A, double& B) {
     unsigned int size = grid.GetSize();
     if (size == 0) { A = 1.0; B = 0.0; return; }
     std::vector<double> values(size);
     for (unsigned int i = 0; i < size; ++i) {
         values[i] = grid[i];
     }
-    detail::GetMapNormalization(values.data(), values.size(), A, B);
+    detail::get_map_normalization(values.data(), values.size(), A, B);
 }
 
 // ---- Helper: collect atoms grouped by residue ----
@@ -78,9 +78,9 @@ static void GetAtomCoords(const OEChem::OEMolBase& mol,
 
 // ---- Helper: adaptive scoring radius (OE-aware wrapper) ----
 
-static double ScoringRadius(const OEChem::OEAtomBase& atom, double resolution) {
+static double scoring_radius(const OEChem::OEAtomBase& atom, double resolution) {
     OEChem::OEResidue res = OEChem::OEAtomGetResidue(&atom);
-    return detail::ScoringRadius(res.GetBFactor(), resolution);
+    return detail::scoring_radius(res.GetBFactor(), resolution);
 }
 
 // ---- Helper: assign Bondi VDW radii if missing ----
@@ -94,13 +94,13 @@ static void PrepareStructure(OEChem::OEMolBase& mol) {
 
 // ==== Density scoring functions ====
 
-DensityScoreResult RSCC(
+DensityScoreResult rscc(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const OESystem::OEScalarGrid* calc_grid,
-    const RSCCOptions& options) {
+    const RsccOptions& options) {
     if (resolution <= 0.0) {
         throw GridError("Resolution must be positive");
     }
@@ -137,20 +137,20 @@ DensityScoreResult RSCC(
 
             double radius;
             switch (options.GetAtomRadiusMethod()) {
-                case AtomRadius::Fixed:
+                case AtomRadius::FIXED:
                     radius = options.GetFixedAtomRadius();
                     break;
-                case AtomRadius::Scaled:
+                case AtomRadius::SCALED:
                     radius = atom->GetRadius() * options.GetAtomRadiusScaling();
                     if (radius < 0.1) radius = 1.5;
                     break;
-                case AtomRadius::Binned:
+                case AtomRadius::BINNED:
                 default:
-                    radius = detail::BinnedAtomRadius(resolution);
+                    radius = detail::binned_atom_radius(resolution);
                     break;
             }
 
-            auto pts = GetAtomGridPoints(grid, x, y, z, radius);
+            auto pts = get_atom_grid_points(grid, x, y, z, radius);
             if (pts.empty()) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
@@ -168,7 +168,7 @@ DensityScoreResult RSCC(
 
             // Per-atom RSCC
             result.by_atom[atom->GetIdx()] =
-                PearsonCorrelation(obs_vals, calc_vals);
+                pearson_correlation(obs_vals, calc_vals);
 
             res_obs.insert(res_obs.end(), obs_vals.begin(), obs_vals.end());
             res_calc.insert(res_calc.end(),
@@ -177,7 +177,7 @@ DensityScoreResult RSCC(
 
         // Per-residue RSCC over union of grid points
         if (!res_obs.empty()) {
-            result.by_residue[res] = PearsonCorrelation(res_obs, res_calc);
+            result.by_residue[res] = pearson_correlation(res_obs, res_calc);
             all_obs.insert(all_obs.end(), res_obs.begin(), res_obs.end());
             all_calc.insert(all_calc.end(),
                 res_calc.begin(), res_calc.end());
@@ -189,7 +189,7 @@ DensityScoreResult RSCC(
 
     // Overall RSCC
     if (!all_obs.empty()) {
-        result.overall = PearsonCorrelation(all_obs, all_calc);
+        result.overall = pearson_correlation(all_obs, all_calc);
     } else {
         result.overall = std::numeric_limits<double>::quiet_NaN();
     }
@@ -197,12 +197,13 @@ DensityScoreResult RSCC(
     return result;
 }
 
-DensityScoreResult RSR(
+DensityScoreResult rsr(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
-    const OESystem::OEScalarGrid* calc_grid) {
+    const OESystem::OEScalarGrid* calc_grid,
+    const RsrOptions& options) {
     if (resolution <= 0.0) {
         throw GridError("Resolution must be positive");
     }
@@ -235,8 +236,24 @@ DensityScoreResult RSR(
                 continue;
             }
 
-            double radius = ScoringRadius(*atom, resolution);
-            auto pts = GetAtomGridPoints(grid, x, y, z, radius);
+            double radius;
+            switch (options.GetAtomRadiusMethod()) {
+                case AtomRadius::FIXED:
+                    radius = options.GetFixedAtomRadius();
+                    break;
+                case AtomRadius::SCALED:
+                    radius = atom->GetRadius() * options.GetAtomRadiusScaling();
+                    if (radius < 0.1) radius = 1.5;
+                    break;
+                case AtomRadius::BINNED:
+                    radius = detail::binned_atom_radius(resolution);
+                    break;
+                case AtomRadius::ADAPTIVE:
+                default:
+                    radius = scoring_radius(*atom, resolution);
+                    break;
+            }
+            auto pts = get_atom_grid_points(grid, x, y, z, radius);
             if (pts.empty()) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
@@ -303,7 +320,7 @@ DensityScoreResult RSR(
     return result;
 }
 
-DensityScoreResult QScore(
+DensityScoreResult qscore(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
@@ -322,7 +339,7 @@ DensityScoreResult QScore(
     // Map normalization
     double A, B;
     if (options.GetNormalizeMap()) {
-        GetMapNormalization(grid, A, B);
+        get_map_normalization(grid, A, B);
     } else {
         A = 1.0;
         B = 0.0;
@@ -337,11 +354,11 @@ DensityScoreResult QScore(
 
     // Pre-compute unit sphere offsets for fixed mode
     std::unordered_map<int, std::vector<std::array<double, 3>>> unit_spheres;
-    if (options.GetRadialSampling() == RadialSampling::Fixed) {
+    if (options.GetRadialSampling() == RadialSampling::FIXED) {
         double R = options.GetRadialStep();
         while (R < options.GetMaxRadius() + 0.01) {
             int rkey = static_cast<int>(std::round(R * 1e6));
-            unit_spheres[rkey] = FibonacciSpherePoints(
+            unit_spheres[rkey] = fibonacci_sphere_points(
                 0.0, 0.0, 0.0, R, options.GetNumPoints());
             R += options.GetRadialStep();
         }
@@ -349,7 +366,7 @@ DensityScoreResult QScore(
 
     // Pre-compute reference Gaussian values per shell
     std::unordered_map<int, double> ref_by_shell;
-    if (options.GetRadialSampling() == RadialSampling::Fixed) {
+    if (options.GetRadialSampling() == RadialSampling::FIXED) {
         double R = options.GetRadialStep();
         while (R < options.GetMaxRadius() + 0.01) {
             int rkey = static_cast<int>(std::round(R * 1e6));
@@ -387,7 +404,7 @@ DensityScoreResult QScore(
 
             // Determine radial parameters
             double step, max_r;
-            if (options.GetRadialSampling() == RadialSampling::Adaptive) {
+            if (options.GetRadialSampling() == RadialSampling::ADAPTIVE) {
                 step = std::min(static_cast<double>(grid_spacing),
                                 resolution / MIN_SHELLS);
                 max_r = atom->GetRadius() * 2.0;
@@ -425,7 +442,7 @@ DensityScoreResult QScore(
                             {x + off[0], y + off[1], z + off[2]});
                     }
                 } else {
-                    shell_pts = FibonacciSpherePoints(
+                    shell_pts = fibonacci_sphere_points(
                         x, y, z, R, options.GetNumPoints());
                 }
 
@@ -454,7 +471,7 @@ DensityScoreResult QScore(
                     if (filtered.size() < options.GetNumPoints()) {
                         for (int attempt = 1; attempt < 50; ++attempt) {
                             int n_gen = options.GetNumPoints() + attempt * 2;
-                            auto retry_pts = FibonacciSpherePoints(
+                            auto retry_pts = fibonacci_sphere_points(
                                 x, y, z, R, n_gen);
                             filtered.clear();
                             for (const auto& pt : retry_pts) {
@@ -505,7 +522,7 @@ DensityScoreResult QScore(
             std::vector<double> map_vals;
             std::vector<double> map_refs;
             for (size_t i = 0; i < sample_x.size(); ++i) {
-                double val = InterpolateDensity(
+                double val = interpolate_density(
                     grid, sample_x[i], sample_y[i], sample_z[i],
                     std::numeric_limits<double>::quiet_NaN());
                 if (!std::isnan(val)) {
@@ -517,7 +534,7 @@ DensityScoreResult QScore(
             // Pearson correlation between observed and reference profiles
             double q;
             if (map_vals.size() >= 3) {
-                q = PearsonCorrelation(map_vals, map_refs);
+                q = pearson_correlation(map_vals, map_refs);
             } else {
                 q = std::numeric_limits<double>::quiet_NaN();
             }
@@ -550,7 +567,7 @@ DensityScoreResult QScore(
     return result;
 }
 
-DensityScoreResult EDIAm(
+DensityScoreResult ediam(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
@@ -587,10 +604,10 @@ DensityScoreResult EDIAm(
 
             // Sample at atom center
             std::vector<double> sigmoid_vals;
-            double rho = InterpolateDensity(grid, x, y, z,
+            double rho = interpolate_density(grid, x, y, z,
                                             std::numeric_limits<double>::quiet_NaN());
             if (!std::isnan(rho) && rho_expected > 0.0) {
-                sigmoid_vals.push_back(EDIAmSigmoid(rho / rho_expected));
+                sigmoid_vals.push_back(ediam_sigmoid(rho / rho_expected));
             }
 
             // Sample at bond midpoints to heavy neighbors
@@ -605,11 +622,11 @@ DensityScoreResult EDIAm(
                 double my = (y + ny) / 2.0;
                 double mz = (z + nz) / 2.0;
 
-                double mid_rho = InterpolateDensity(grid, mx, my, mz,
+                double mid_rho = interpolate_density(grid, mx, my, mz,
                     std::numeric_limits<double>::quiet_NaN());
                 if (!std::isnan(mid_rho) && rho_expected > 0.0) {
                     sigmoid_vals.push_back(
-                        EDIAmSigmoid(mid_rho / rho_expected));
+                        ediam_sigmoid(mid_rho / rho_expected));
                 }
             }
 
@@ -648,18 +665,19 @@ DensityScoreResult EDIAm(
     return result;
 }
 
-DensityScoreResult Coverage(
+DensityScoreResult coverage(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
-    double sigma,
-    const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask) {
+    const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
+    const CoverageOptions& options) {
     PrepareStructure(mol);
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
     if (residue_atoms.empty()) {
         throw StructureError("No scorable heavy atoms after applying mask");
     }
 
-    MapStats stats = ComputeMapStats(grid);
+    double sigma = options.GetSigma();
+    MapStats stats = compute_map_stats(grid);
     double threshold = stats.mean + sigma * stats.stddev;
 
     DensityScoreResult result;
@@ -680,7 +698,7 @@ DensityScoreResult Coverage(
                 continue;
             }
 
-            double rho = InterpolateDensity(grid, x, y, z);
+            double rho = interpolate_density(grid, x, y, z);
             if (std::isnan(rho)) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
