@@ -9,6 +9,7 @@
 #ifndef MAPTITUDE_SPATIALINDEX_H
 #define MAPTITUDE_SPATIALINDEX_H
 
+#include <cstddef>
 #include <memory>
 #include <vector>
 

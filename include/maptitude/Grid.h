@@ -9,6 +9,7 @@
 #ifndef MAPTITUDE_GRID_H
 #define MAPTITUDE_GRID_H
 
+#include <cstddef>
 #include <vector>
 
 namespace OESystem {

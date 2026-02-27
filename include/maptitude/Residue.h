@@ -6,6 +6,7 @@
 #ifndef MAPTITUDE_RESIDUE_H
 #define MAPTITUDE_RESIDUE_H
 
+#include <cstddef>
 #include <functional>
 #include <string>
 
