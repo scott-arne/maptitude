@@ -30,7 +30,7 @@ inline MapStats compute_map_stats(const double* values, size_t count) {
     stats.max_val = std::numeric_limits<double>::lowest();
 
     for (size_t i = 0; i < count; ++i) {
-        double v = values[i];
+        const double v = values[i];
         sum += v;
         sum2 += v * v;
         if (v < stats.min_val) stats.min_val = v;
@@ -38,7 +38,7 @@ inline MapStats compute_map_stats(const double* values, size_t count) {
     }
 
     stats.mean = sum / static_cast<double>(count);
-    double variance = (sum2 / static_cast<double>(count)) -
+    const double variance = (sum2 / static_cast<double>(count)) -
                       (stats.mean * stats.mean);
     stats.stddev = (variance > 0.0) ? std::sqrt(variance) : 0.0;
     return stats;
@@ -52,9 +52,9 @@ inline MapStats compute_map_stats(const std::vector<double>& values) {
 
 inline void get_map_normalization(const double* values, size_t count,
                                   double& A, double& B) {
-    MapStats stats = compute_map_stats(values, count);
-    double max_d = std::min(stats.mean + stats.stddev * 10.0, stats.max_val);
-    double min_d = std::max(stats.mean - stats.stddev * 1.0, stats.min_val);
+    const MapStats stats = compute_map_stats(values, count);
+    const double max_d = std::min(stats.mean + stats.stddev * 10.0, stats.max_val);
+    const double min_d = std::max(stats.mean - stats.stddev * 1.0, stats.min_val);
     A = max_d - min_d;
     B = min_d;
 }
@@ -63,7 +63,7 @@ inline void get_map_normalization(const double* values, size_t count,
 
 inline double pearson_correlation(const std::vector<double>& x,
                                   const std::vector<double>& y) {
-    size_t n = x.size();
+    const size_t n = x.size();
     if (n < 2 || y.size() != n)
         return std::numeric_limits<double>::quiet_NaN();
 
@@ -72,13 +72,13 @@ inline double pearson_correlation(const std::vector<double>& x,
         sum_x += x[i];
         sum_y += y[i];
     }
-    double mean_x = sum_x / static_cast<double>(n);
-    double mean_y = sum_y / static_cast<double>(n);
+    const double mean_x = sum_x / static_cast<double>(n);
+    const double mean_y = sum_y / static_cast<double>(n);
 
     double sum_xy = 0.0, sum_xx = 0.0, sum_yy = 0.0;
     for (size_t i = 0; i < n; ++i) {
-        double dx = x[i] - mean_x;
-        double dy = y[i] - mean_y;
+        const double dx = x[i] - mean_x;
+        const double dy = y[i] - mean_y;
         sum_xy += dx * dy;
         sum_xx += dx * dx;
         sum_yy += dy * dy;
@@ -136,14 +136,14 @@ inline std::vector<std::array<double, 3>> fibonacci_sphere_points(
         if (k == 1 || k == n) {
             thetas[k - 1] = 0.0;
         } else {
-            double inc = 3.6 / std::sqrt(n * (1.0 - h * h));
+            const double inc = 3.6 / std::sqrt(n * (1.0 - h * h));
             thetas[k - 1] = std::fmod(thetas[k - 2] + inc, TWO_PI);
         }
     }
 
     std::vector<std::array<double, 3>> pts(n);
     for (int i = 0; i < n; ++i) {
-        double sin_phi = std::sin(phis[i]);
+        const double sin_phi = std::sin(phis[i]);
         pts[i] = {
             cx + radius * sin_phi * std::cos(thetas[i]),
             cy + radius * sin_phi * std::sin(thetas[i]),

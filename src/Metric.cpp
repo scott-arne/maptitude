@@ -25,7 +25,7 @@ using detail::fibonacci_sphere_points;
 // ---- OE-aware wrappers around detail helpers ----
 
 static MapStats compute_map_stats(const OESystem::OEScalarGrid& grid) {
-    unsigned int size = grid.GetSize();
+    const unsigned int size = grid.GetSize();
     if (size == 0) return {};
     std::vector<double> values(size);
     for (unsigned int i = 0; i < size; ++i) {
@@ -36,7 +36,7 @@ static MapStats compute_map_stats(const OESystem::OEScalarGrid& grid) {
 
 static void get_map_normalization(const OESystem::OEScalarGrid& grid,
                                   double& A, double& B) {
-    unsigned int size = grid.GetSize();
+    const unsigned int size = grid.GetSize();
     if (size == 0) { A = 1.0; B = 0.0; return; }
     std::vector<double> values(size);
     for (unsigned int i = 0; i < size; ++i) {
@@ -57,7 +57,7 @@ CollectAtomsByResidue(
         if (atom->GetAtomicNum() == 1) continue;
         if (mask && !(*mask)(*atom)) continue;
 
-        Residue res = Residue::FromAtom(*atom);
+        const Residue res = Residue::FromAtom(*atom);
         result[res].push_back(&(*atom));
     }
 
@@ -78,8 +78,8 @@ static void GetAtomCoords(const OEChem::OEMolBase& mol,
 
 // ---- Helper: adaptive scoring radius (OE-aware wrapper) ----
 
-static double scoring_radius(const OEChem::OEAtomBase& atom, double resolution) {
-    OEChem::OEResidue res = OEChem::OEAtomGetResidue(&atom);
+static double scoring_radius(const OEChem::OEAtomBase& atom, const double resolution) {
+    const OEChem::OEResidue res = OEChem::OEAtomGetResidue(&atom);
     return detail::scoring_radius(res.GetBFactor(), resolution);
 }
 
@@ -97,7 +97,7 @@ static void PrepareStructure(OEChem::OEMolBase& mol) {
 DensityScoreResult rscc(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
-    double resolution,
+    const double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const OESystem::OEScalarGrid* calc_grid,
     const RsccOptions& options) {
@@ -344,7 +344,7 @@ DensityScoreResult qscore(
         A = 1.0;
         B = 0.0;
     }
-    double sigma = options.GetSigma();
+    const double sigma = options.GetSigma();
 
     // Build spatial index for point isolation
     std::unique_ptr<SpatialIndex> spatial_idx;
@@ -359,7 +359,7 @@ DensityScoreResult qscore(
         while (R < options.GetMaxRadius() + 0.01) {
             int rkey = static_cast<int>(std::round(R * 1e6));
             unit_spheres[rkey] = fibonacci_sphere_points(
-                0.0, 0.0, 0.0, R, options.GetNumPoints());
+                0.0, 0.0, 0.0, R, static_cast<int>(options.GetNumPoints()));
             R += options.GetRadialStep();
         }
     }
@@ -382,7 +382,7 @@ DensityScoreResult qscore(
     }
 
     constexpr int MIN_SHELLS = 7;
-    double grid_spacing = grid.GetSpacing();
+    const double grid_spacing = grid.GetSpacing();
 
     DensityScoreResult result;
     std::vector<double> all_q;
@@ -418,7 +418,7 @@ DensityScoreResult qscore(
             std::vector<double> ref_vals;
 
             // Center point: replicate num_points times for equal weighting
-            double ref_at_center = options.GetNormalizeMap() ? (A + B) : 1.0;
+            const double ref_at_center = options.GetNormalizeMap() ? (A + B) : 1.0;
             for (unsigned int p = 0; p < options.GetNumPoints(); ++p) {
                 sample_x.push_back(x);
                 sample_y.push_back(y);
@@ -429,7 +429,7 @@ DensityScoreResult qscore(
             // Radial shells
             double R = step;
             while (R < max_r + 0.01) {
-                int rkey = static_cast<int>(std::round(R * 1e6));
+                const int rkey = static_cast<int>(std::round(R * 1e6));
 
                 // Generate sphere points
                 std::vector<std::array<double, 3>> shell_pts;
@@ -443,13 +443,13 @@ DensityScoreResult qscore(
                     }
                 } else {
                     shell_pts = fibonacci_sphere_points(
-                        x, y, z, R, options.GetNumPoints());
+                        x, y, z, R, static_cast<int>(options.GetNumPoints()));
                 }
 
                 // Point isolation: remove points closer to neighbor atoms
                 if (options.GetIsolatePoints() && spatial_idx) {
-                    double threshold = 0.9 * R;
-                    unsigned int target_idx = atom->GetIdx();
+                    const double threshold = 0.9 * R;
+                    const unsigned int target_idx = atom->GetIdx();
 
                     std::vector<std::array<double, 3>> filtered;
                     for (const auto& pt : shell_pts) {
@@ -468,9 +468,9 @@ DensityScoreResult qscore(
                     }
 
                     // Retry with more points if too few survived
-                    if (filtered.size() < options.GetNumPoints()) {
+                    if (filtered.size() < static_cast<size_t>(options.GetNumPoints())) {
                         for (int attempt = 1; attempt < 50; ++attempt) {
-                            int n_gen = options.GetNumPoints() + attempt * 2;
+                            const int n_gen = static_cast<int>(options.GetNumPoints()) + attempt * 2;
                             auto retry_pts = fibonacci_sphere_points(
                                 x, y, z, R, n_gen);
                             filtered.clear();
@@ -488,7 +488,7 @@ DensityScoreResult qscore(
                                     filtered.push_back(pt);
                                 }
                             }
-                            if (filtered.size() >= options.GetNumPoints()) break;
+                            if (filtered.size() >= static_cast<size_t>(options.GetNumPoints())) break;
                         }
                     }
                     shell_pts = std::move(filtered);
@@ -522,7 +522,7 @@ DensityScoreResult qscore(
             std::vector<double> map_vals;
             std::vector<double> map_refs;
             for (size_t i = 0; i < sample_x.size(); ++i) {
-                double val = interpolate_density(
+                const double val = interpolate_density(
                     grid, sample_x[i], sample_y[i], sample_z[i],
                     std::numeric_limits<double>::quiet_NaN());
                 if (!std::isnan(val)) {
@@ -548,7 +548,7 @@ DensityScoreResult qscore(
         // Per-residue: mean of atom Q-scores
         if (!res_q.empty()) {
             result.by_residue[res] = std::accumulate(
-                res_q.begin(), res_q.end(), 0.0) / res_q.size();
+                res_q.begin(), res_q.end(), 0.0) / static_cast<double>(res_q.size());
             all_q.insert(all_q.end(), res_q.begin(), res_q.end());
         } else {
             result.by_residue[res] =
@@ -559,7 +559,7 @@ DensityScoreResult qscore(
     // Overall: mean of all atom Q-scores
     if (!all_q.empty()) {
         result.overall = std::accumulate(
-            all_q.begin(), all_q.end(), 0.0) / all_q.size();
+            all_q.begin(), all_q.end(), 0.0) / static_cast<double>(all_q.size());
     } else {
         result.overall = std::numeric_limits<double>::quiet_NaN();
     }
@@ -570,7 +570,7 @@ DensityScoreResult qscore(
 DensityScoreResult ediam(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
-    double resolution,
+    const double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask) {
     if (resolution <= 0.0) {
         throw GridError("Resolution must be positive");
@@ -582,7 +582,7 @@ DensityScoreResult ediam(
         throw StructureError("No scorable heavy atoms after applying mask");
     }
 
-    double rho_expected = 1.5 / (resolution * resolution);
+    const double rho_expected = 1.5 / (resolution * resolution);
 
     DensityScoreResult result;
     std::vector<double> all_scores;
@@ -604,8 +604,8 @@ DensityScoreResult ediam(
 
             // Sample at atom center
             std::vector<double> sigmoid_vals;
-            double rho = interpolate_density(grid, x, y, z,
-                                            std::numeric_limits<double>::quiet_NaN());
+            const double rho = interpolate_density(grid, x, y, z,
+                                                  std::numeric_limits<double>::quiet_NaN());
             if (!std::isnan(rho) && rho_expected > 0.0) {
                 sigmoid_vals.push_back(ediam_sigmoid(rho / rho_expected));
             }
@@ -618,11 +618,11 @@ DensityScoreResult ediam(
 
                 double nx, ny, nz;
                 GetAtomCoords(mol, *nbr, nx, ny, nz);
-                double mx = (x + nx) / 2.0;
-                double my = (y + ny) / 2.0;
-                double mz = (z + nz) / 2.0;
+                const double mx = (x + nx) / 2.0;
+                const double my = (y + ny) / 2.0;
+                const double mz = (z + nz) / 2.0;
 
-                double mid_rho = interpolate_density(grid, mx, my, mz,
+                const double mid_rho = interpolate_density(grid, mx, my, mz,
                     std::numeric_limits<double>::quiet_NaN());
                 if (!std::isnan(mid_rho) && rho_expected > 0.0) {
                     sigmoid_vals.push_back(
@@ -633,7 +633,7 @@ DensityScoreResult ediam(
             double score;
             if (!sigmoid_vals.empty()) {
                 score = std::accumulate(sigmoid_vals.begin(),
-                    sigmoid_vals.end(), 0.0) / sigmoid_vals.size();
+                    sigmoid_vals.end(), 0.0) / static_cast<double>(sigmoid_vals.size());
             } else {
                 score = std::numeric_limits<double>::quiet_NaN();
             }
@@ -646,7 +646,7 @@ DensityScoreResult ediam(
 
         if (!res_scores.empty()) {
             result.by_residue[res] = std::accumulate(res_scores.begin(),
-                res_scores.end(), 0.0) / res_scores.size();
+                res_scores.end(), 0.0) / static_cast<double>(res_scores.size());
             all_scores.insert(all_scores.end(),
                 res_scores.begin(), res_scores.end());
         } else {
@@ -657,7 +657,7 @@ DensityScoreResult ediam(
 
     if (!all_scores.empty()) {
         result.overall = std::accumulate(all_scores.begin(),
-            all_scores.end(), 0.0) / all_scores.size();
+            all_scores.end(), 0.0) / static_cast<double>(all_scores.size());
     } else {
         result.overall = std::numeric_limits<double>::quiet_NaN();
     }
@@ -676,9 +676,9 @@ DensityScoreResult coverage(
         throw StructureError("No scorable heavy atoms after applying mask");
     }
 
-    double sigma = options.GetSigma();
-    MapStats stats = compute_map_stats(grid);
-    double threshold = stats.mean + sigma * stats.stddev;
+    const double sigma = options.GetSigma();
+    const MapStats stats = compute_map_stats(grid);
+    const double threshold = stats.mean + sigma * stats.stddev;
 
     DensityScoreResult result;
     std::vector<double> all_scores;
@@ -698,21 +698,21 @@ DensityScoreResult coverage(
                 continue;
             }
 
-            double rho = interpolate_density(grid, x, y, z);
+            const double rho = interpolate_density(grid, x, y, z);
             if (std::isnan(rho)) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
                 continue;
             }
 
-            double score = (rho >= threshold) ? 1.0 : 0.0;
+            const double score = (rho >= threshold) ? 1.0 : 0.0;
             result.by_atom[atom->GetIdx()] = score;
             res_scores.push_back(score);
         }
 
         if (!res_scores.empty()) {
-            double res_mean = std::accumulate(res_scores.begin(),
-                res_scores.end(), 0.0) / res_scores.size();
+            const double res_mean = std::accumulate(res_scores.begin(),
+                res_scores.end(), 0.0) / static_cast<double>(res_scores.size());
             result.by_residue[res] = res_mean;
             all_scores.insert(all_scores.end(),
                 res_scores.begin(), res_scores.end());
@@ -724,7 +724,7 @@ DensityScoreResult coverage(
 
     if (!all_scores.empty()) {
         result.overall = std::accumulate(all_scores.begin(),
-            all_scores.end(), 0.0) / all_scores.size();
+            all_scores.end(), 0.0) / static_cast<double>(all_scores.size());
     } else {
         result.overall = std::numeric_limits<double>::quiet_NaN();
     }

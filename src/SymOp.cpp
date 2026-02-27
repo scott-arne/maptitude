@@ -11,19 +11,18 @@ namespace Maptitude {
 namespace {
 
 // Parse a single component of a symmetry operator (e.g., "-x", "y+1/2", "z+1/4")
-void ParseComponent(const std::string& component, int row, std::array<double, 9>& R,
+void ParseComponent(const std::string& component, const int row, std::array<double, 9>& R,
                     std::array<double, 3>& t) {
     std::string s = component;
     // Remove whitespace
     s.erase(std::remove(s.begin(), s.end(), ' '), s.end());
 
-    double coeff = 0.0;
     double trans = 0.0;
     size_t pos = 0;
     double sign = 1.0;
 
     while (pos < s.size()) {
-        char ch = s[pos];
+        const char ch = s[pos];
 
         if (ch == '+') {
             sign = 1.0;
@@ -46,11 +45,11 @@ void ParseComponent(const std::string& component, int row, std::array<double, 9>
         } else if (std::isdigit(ch) || ch == '.') {
             // Parse a number - could be a fraction numerator or decimal
             size_t end;
-            double num = std::stod(s.substr(pos), &end);
+            const double num = std::stod(s.substr(pos), &end);
             pos += end;
             if (pos < s.size() && s[pos] == '/') {
                 ++pos;
-                double denom = std::stod(s.substr(pos), &end);
+                const double denom = std::stod(s.substr(pos), &end);
                 pos += end;
                 trans += sign * num / denom;
             } else {
@@ -69,7 +68,7 @@ void ParseComponent(const std::string& component, int row, std::array<double, 9>
 }  // namespace
 
 SymOp::SymOp(std::array<double, 9> rotation, std::array<double, 3> translation)
-    : R(std::move(rotation)), t(std::move(translation)) {}
+    : R(rotation), t(translation) {}
 
 SymOp SymOp::Parse(const std::string& triplet) {
     // Split by comma
@@ -102,9 +101,9 @@ std::vector<SymOp> SymOp::ParseAll(const std::string& text) {
 
     while (std::getline(iss, line)) {
         // Trim whitespace
-        size_t start = line.find_first_not_of(" \t\r\n");
+        const size_t start = line.find_first_not_of(" \t\r\n");
         if (start == std::string::npos) continue;
-        size_t end = line.find_last_not_of(" \t\r\n");
+        const size_t end = line.find_last_not_of(" \t\r\n");
         line = line.substr(start, end - start + 1);
 
         if (line.empty()) continue;
@@ -113,9 +112,9 @@ std::vector<SymOp> SymOp::ParseAll(const std::string& text) {
         std::istringstream line_stream(line);
         std::string op_str;
         while (std::getline(line_stream, op_str, ';')) {
-            size_t s = op_str.find_first_not_of(" \t");
+            const size_t s = op_str.find_first_not_of(" \t");
             if (s == std::string::npos) continue;
-            size_t e = op_str.find_last_not_of(" \t");
+            const size_t e = op_str.find_last_not_of(" \t");
             op_str = op_str.substr(s, e - s + 1);
             if (!op_str.empty()) {
                 result.push_back(Parse(op_str));
@@ -126,7 +125,7 @@ std::vector<SymOp> SymOp::ParseAll(const std::string& text) {
     return result;
 }
 
-std::array<double, 3> SymOp::Apply(double u, double v, double w) const {
+std::array<double, 3> SymOp::Apply(const double u, const double v, const double w) const {
     return {
         R[0] * u + R[1] * v + R[2] * w + t[0],
         R[3] * u + R[4] * v + R[5] * w + t[1],
@@ -144,7 +143,7 @@ std::string SymOp::ToString() const {
         bool first = true;
 
         for (int col = 0; col < 3; ++col) {
-            double val = R[row * 3 + col];
+            const double val = R[row * 3 + col];
             if (std::abs(val) < 1e-10) continue;
 
             if (val > 0 && !first) oss << "+";
@@ -161,12 +160,12 @@ std::string SymOp::ToString() const {
         if (std::abs(t[row]) > 1e-10) {
             if (t[row] > 0 && !first) oss << "+";
             // Try to express as fraction
-            double frac = t[row];
+            const double frac = t[row];
             bool found_frac = false;
             for (int denom = 2; denom <= 12; ++denom) {
-                double numer = frac * denom;
+                const double numer = frac * denom;
                 if (std::abs(numer - std::round(numer)) < 1e-8) {
-                    int n = static_cast<int>(std::round(numer));
+                    const int n = static_cast<int>(std::round(numer));
                     oss << n << "/" << denom;
                     found_frac = true;
                     break;

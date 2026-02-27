@@ -10,8 +10,8 @@
 
 namespace Maptitude {
 
-void scale_map(OESystem::OEScalarGrid& grid, double factor) {
-    unsigned int size = grid.GetSize();
+void scale_map(OESystem::OEScalarGrid& grid, const double factor) {
+    const unsigned int size = grid.GetSize();
     for (unsigned int i = 0; i < size; ++i) {
         grid[i] = static_cast<float>(grid[i] * factor);
     }
@@ -20,7 +20,7 @@ void scale_map(OESystem::OEScalarGrid& grid, double factor) {
 OESystem::OEScalarGrid* combine_maps(
     const OESystem::OEScalarGrid& lhs,
     const OESystem::OEScalarGrid& rhs,
-    MapOp op) {
+    const MapOp op) {
     if (lhs.GetXDim() != rhs.GetXDim() ||
         lhs.GetYDim() != rhs.GetYDim() ||
         lhs.GetZDim() != rhs.GetZDim()) {
@@ -32,11 +32,11 @@ OESystem::OEScalarGrid* combine_maps(
     }
 
     auto* result = new OESystem::OEScalarGrid(lhs);
-    unsigned int size = result->GetSize();
+    const unsigned int size = result->GetSize();
 
     for (unsigned int i = 0; i < size; ++i) {
-        float lval = lhs[i];
-        float rval = rhs[i];
+        const float lval = lhs[i];
+        const float rval = rhs[i];
         float combined = 0.0f;
 
         switch (op) {
@@ -70,11 +70,11 @@ OESystem::OEScalarGrid* diff_to_calc(
     }
 
     auto* result = new OESystem::OEScalarGrid(obs_grid);
-    unsigned int size = result->GetSize();
+    const unsigned int size = result->GetSize();
 
     for (unsigned int i = 0; i < size; ++i) {
         // rho_calc = rho_obs - 2 * rho_diff
-        float calc = obs_grid[i] - 2.0f * diff_grid[i];
+        const float calc = obs_grid[i] - 2.0f * diff_grid[i];
         (*result)[i] = calc;
     }
 
@@ -84,9 +84,9 @@ OESystem::OEScalarGrid* diff_to_calc(
 OESystem::OEScalarGrid* wrap_and_pad_grid(
     const OESystem::OEScalarGrid& grid,
     OEChem::OEMolBase& mol,
-    double cell_a, double cell_b, double cell_c,
-    double padding) {
-    double sp = grid.GetSpacing();
+    const double cell_a, const double cell_b, const double cell_c,
+    const double padding) {
+    const double sp = grid.GetSpacing();
 
     // Compute heavy-atom centroid
     double cx = 0.0, cy = 0.0, cz = 0.0;
@@ -106,13 +106,13 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
     cz /= n;
 
     // Shift centroid to grid centre using integer unit-cell vectors
-    double grid_xmid = grid.GetXMin() + (grid.GetXDim() - 1) * sp / 2.0;
-    double grid_ymid = grid.GetYMin() + (grid.GetYDim() - 1) * sp / 2.0;
-    double grid_zmid = grid.GetZMin() + (grid.GetZDim() - 1) * sp / 2.0;
+    const double grid_xmid = grid.GetXMin() + (grid.GetXDim() - 1) * sp / 2.0;
+    const double grid_ymid = grid.GetYMin() + (grid.GetYDim() - 1) * sp / 2.0;
+    const double grid_zmid = grid.GetZMin() + (grid.GetZDim() - 1) * sp / 2.0;
 
-    double shift_x = (cell_a > 0) ? std::round((grid_xmid - cx) / cell_a) * cell_a : 0.0;
-    double shift_y = (cell_b > 0) ? std::round((grid_ymid - cy) / cell_b) * cell_b : 0.0;
-    double shift_z = (cell_c > 0) ? std::round((grid_zmid - cz) / cell_c) * cell_c : 0.0;
+    const double shift_x = (cell_a > 0) ? std::round((grid_xmid - cx) / cell_a) * cell_a : 0.0;
+    const double shift_y = (cell_b > 0) ? std::round((grid_ymid - cy) / cell_b) * cell_b : 0.0;
+    const double shift_z = (cell_c > 0) ? std::round((grid_zmid - cz) / cell_c) * cell_c : 0.0;
 
     if (std::abs(shift_x) > 0.01 || std::abs(shift_y) > 0.01 || std::abs(shift_z) > 0.01) {
         for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
@@ -145,14 +145,14 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
         max_z = std::max(max_z, static_cast<double>(coords[2]));
     }
 
-    double grid_xmin = grid.GetXMin();
-    double grid_ymin = grid.GetYMin();
-    double grid_zmin = grid.GetZMin();
-    double grid_xmax = grid_xmin + (grid.GetXDim() - 1) * sp;
-    double grid_ymax = grid_ymin + (grid.GetYDim() - 1) * sp;
-    double grid_zmax = grid_zmin + (grid.GetZDim() - 1) * sp;
+    const double grid_xmin = grid.GetXMin();
+    const double grid_ymin = grid.GetYMin();
+    const double grid_zmin = grid.GetZMin();
+    const double grid_xmax = grid_xmin + (grid.GetXDim() - 1) * sp;
+    const double grid_ymax = grid_ymin + (grid.GetYDim() - 1) * sp;
+    const double grid_zmax = grid_zmin + (grid.GetZDim() - 1) * sp;
 
-    bool needs_pad =
+    const bool needs_pad =
         (min_x - padding < grid_xmin) ||
         (max_x + padding > grid_xmax) ||
         (min_y - padding < grid_ymin) ||
@@ -169,11 +169,11 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
     };
     auto* padded = new OESystem::OEScalarGrid(minmax, sp);
 
-    double orig_xmin = grid.GetXMin();
-    double orig_ymin = grid.GetYMin();
-    double orig_zmin = grid.GetZMin();
+    const double orig_xmin = grid.GetXMin();
+    const double orig_ymin = grid.GetYMin();
+    const double orig_zmin = grid.GetZMin();
 
-    unsigned int size = padded->GetSize();
+    const unsigned int size = padded->GetSize();
     for (unsigned int i = 0; i < size; ++i) {
         float sx, sy, sz;
         padded->ElementToSpatialCoord(i, sx, sy, sz);

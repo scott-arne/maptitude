@@ -12,9 +12,9 @@ struct PointCloud {
     std::vector<double> coords;  // Flat: x0,y0,z0, x1,y1,z1, ...
     size_t num_points = 0;
 
-    inline size_t kdtree_get_point_count() const { return num_points; }
+    size_t kdtree_get_point_count() const { return num_points; }
 
-    inline double kdtree_get_pt(const size_t idx, const size_t dim) const {
+    double kdtree_get_pt(const size_t idx, const size_t dim) const {
         return coords[idx * 3 + dim];
     }
 
@@ -35,7 +35,7 @@ struct SpatialIndex::Impl {
 SpatialIndex::SpatialIndex(OEChem::OEMolBase& mol)
     : pimpl_(std::make_unique<Impl>()) {
     // Count atoms and allocate
-    unsigned int n = mol.NumAtoms();
+    const unsigned int n = mol.NumAtoms();
     pimpl_->cloud.coords.reserve(n * 3);
     pimpl_->atom_indices.reserve(n);
 
@@ -58,9 +58,9 @@ SpatialIndex::SpatialIndex(OEChem::OEMolBase& mol)
 SpatialIndex::~SpatialIndex() = default;
 
 std::vector<unsigned int> SpatialIndex::FindWithinRadius(
-    double x, double y, double z, double radius) const {
+    const double x, const double y, const double z, const double radius) const {
     double query_pt[3] = {x, y, z};
-    double search_radius_sq = radius * radius;
+    const double search_radius_sq = radius * radius;
 
     nanoflann::SearchParameters params;
     params.sorted = false;
@@ -78,9 +78,9 @@ std::vector<unsigned int> SpatialIndex::FindWithinRadius(
 }
 
 std::vector<unsigned int> SpatialIndex::FindWithinRadius(
-    const OEChem::OEAtomBase& atom, double radius) const {
+    const OEChem::OEAtomBase& atom, const double radius) const {
     // Look up stored coordinates by atom index
-    unsigned int target_idx = atom.GetIdx();
+    const unsigned int target_idx = atom.GetIdx();
     for (size_t i = 0; i < pimpl_->atom_indices.size(); ++i) {
         if (pimpl_->atom_indices[i] == target_idx) {
             return FindWithinRadius(

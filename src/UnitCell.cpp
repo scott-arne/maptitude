@@ -9,25 +9,24 @@ namespace {
 constexpr double DEG_TO_RAD = M_PI / 180.0;
 }
 
-UnitCell::UnitCell(double a, double b, double c,
-                   double alpha, double beta, double gamma)
+UnitCell::UnitCell(const double a, const double b, const double c,
+                   const double alpha, const double beta, const double gamma)
     : a(a), b(b), c(c), alpha(alpha), beta(beta), gamma(gamma) {}
 
 double UnitCell::Volume() const {
-    double ca = std::cos(alpha * DEG_TO_RAD);
-    double cb = std::cos(beta * DEG_TO_RAD);
-    double cg = std::cos(gamma * DEG_TO_RAD);
+    const double ca = std::cos(alpha * DEG_TO_RAD);
+    const double cb = std::cos(beta * DEG_TO_RAD);
+    const double cg = std::cos(gamma * DEG_TO_RAD);
     return a * b * c * std::sqrt(1.0 - ca * ca - cb * cb - cg * cg + 2.0 * ca * cb * cg);
 }
 
 std::array<double, 9> UnitCell::OrthogonalizationMatrix() const {
-    double ca = std::cos(alpha * DEG_TO_RAD);
-    double cb = std::cos(beta * DEG_TO_RAD);
-    double cg = std::cos(gamma * DEG_TO_RAD);
-    double sg = std::sin(gamma * DEG_TO_RAD);
+    const double ca = std::cos(alpha * DEG_TO_RAD);
+    const double cb = std::cos(beta * DEG_TO_RAD);
+    const double cg = std::cos(gamma * DEG_TO_RAD);
+    const double sg = std::sin(gamma * DEG_TO_RAD);
 
-    double vol = Volume();
-    double omega = vol / (a * b * c);
+    const double vol = Volume();
 
     // Row-major 3x3 matrix: fractional -> Cartesian
     return {
@@ -38,12 +37,12 @@ std::array<double, 9> UnitCell::OrthogonalizationMatrix() const {
 }
 
 std::array<double, 9> UnitCell::DeorthogonalizationMatrix() const {
-    double ca = std::cos(alpha * DEG_TO_RAD);
-    double cb = std::cos(beta * DEG_TO_RAD);
-    double cg = std::cos(gamma * DEG_TO_RAD);
-    double sg = std::sin(gamma * DEG_TO_RAD);
+    const double ca = std::cos(alpha * DEG_TO_RAD);
+    const double cb = std::cos(beta * DEG_TO_RAD);
+    const double cg = std::cos(gamma * DEG_TO_RAD);
+    const double sg = std::sin(gamma * DEG_TO_RAD);
 
-    double vol = Volume();
+    const double vol = Volume();
 
     // Inverse of orthogonalization matrix: Cartesian -> fractional
     return {
@@ -54,8 +53,8 @@ std::array<double, 9> UnitCell::DeorthogonalizationMatrix() const {
 }
 
 std::array<double, 3> UnitCell::CartesianToFractional(
-    double x, double y, double z) const {
-    auto M = DeorthogonalizationMatrix();
+    const double x, const double y, const double z) const {
+    const auto M = DeorthogonalizationMatrix();
     return {
         M[0] * x + M[1] * y + M[2] * z,
         M[3] * x + M[4] * y + M[5] * z,
@@ -64,8 +63,8 @@ std::array<double, 3> UnitCell::CartesianToFractional(
 }
 
 std::array<double, 3> UnitCell::FractionalToCartesian(
-    double u, double v, double w) const {
-    auto M = OrthogonalizationMatrix();
+    const double u, const double v, const double w) const {
+    const auto M = OrthogonalizationMatrix();
     return {
         M[0] * u + M[1] * v + M[2] * w,
         M[3] * u + M[4] * v + M[5] * w,

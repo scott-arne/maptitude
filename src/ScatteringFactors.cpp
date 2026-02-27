@@ -1,10 +1,11 @@
 #include "maptitude/ScatteringFactors.h"
 
 #include <cmath>
+#include <iterator>
 
 namespace Maptitude {
 
-double CromerMannCoeffs::Evaluate(double s_squared) const {
+double CromerMannCoeffs::Evaluate(const double s_squared) const {
     double result = c;
     for (int i = 0; i < 4; ++i) {
         result += a[i] * std::exp(-b[i] * s_squared);
@@ -537,25 +538,24 @@ static const ScatteringFactorEntry SCATTERING_TABLE[] = {
     {98, 0, {{36.9185, 25.1995, 18.3317, 4.24391}, {0.437533, 3.00775, 12.4044, 83.7881}, 13.2674}},
 };
 
-static constexpr size_t SCATTERING_TABLE_SIZE =
-    sizeof(SCATTERING_TABLE) / sizeof(SCATTERING_TABLE[0]);
+static constexpr size_t SCATTERING_TABLE_SIZE = std::size(SCATTERING_TABLE);
 
 const CromerMannCoeffs* get_scattering_factors(
-    unsigned int atomic_number, int formal_charge) {
+    const unsigned int atomic_number, const int formal_charge) {
     // First try exact match
-    for (size_t i = 0; i < SCATTERING_TABLE_SIZE; ++i) {
-        if (SCATTERING_TABLE[i].atomic_number == atomic_number &&
-            SCATTERING_TABLE[i].formal_charge == formal_charge) {
-            return &SCATTERING_TABLE[i].coeffs;
+    for (const auto& entry : SCATTERING_TABLE) {
+        if (entry.atomic_number == atomic_number &&
+            entry.formal_charge == formal_charge) {
+            return &entry.coeffs;
         }
     }
 
     // Fall back to neutral atom
     if (formal_charge != 0) {
-        for (size_t i = 0; i < SCATTERING_TABLE_SIZE; ++i) {
-            if (SCATTERING_TABLE[i].atomic_number == atomic_number &&
-                SCATTERING_TABLE[i].formal_charge == 0) {
-                return &SCATTERING_TABLE[i].coeffs;
+        for (const auto& entry : SCATTERING_TABLE) {
+            if (entry.atomic_number == atomic_number &&
+                entry.formal_charge == 0) {
+                return &entry.coeffs;
             }
         }
     }

@@ -57,21 +57,21 @@ struct MillerIndex {
 // ---- Miller index generation ----
 
 static std::vector<MillerIndex> GenerateMillerIndices(
-    double a, double b, double c, double resolution) {
-    double s_max = 1.0 / resolution;
-    double s_max2 = s_max * s_max;
-    int h_max = static_cast<int>(std::ceil(a * s_max));
-    int k_max = static_cast<int>(std::ceil(b * s_max));
-    int l_max = static_cast<int>(std::ceil(c * s_max));
+    const double a, const double b, const double c, const double resolution) {
+    const double s_max = 1.0 / resolution;
+    const double s_max2 = s_max * s_max;
+    const int h_max = static_cast<int>(std::ceil(a * s_max));
+    const int k_max = static_cast<int>(std::ceil(b * s_max));
+    const int l_max = static_cast<int>(std::ceil(c * s_max));
 
     std::vector<MillerIndex> indices;
     for (int h = -h_max; h <= h_max; ++h) {
         for (int k = -k_max; k <= k_max; ++k) {
             for (int l = -l_max; l <= l_max; ++l) {
                 if (h == 0 && k == 0 && l == 0) continue;
-                double s2 = (h * h) / (a * a) +
-                             (k * k) / (b * b) +
-                             (l * l) / (c * c);
+                const double s2 = (h * h) / (a * a) +
+                                   (k * k) / (b * b) +
+                                   (l * l) / (c * c);
                 if (s2 <= s_max2) {
                     indices.push_back({h, k, l, s2 / 4.0});
                 }
@@ -86,8 +86,8 @@ static std::vector<MillerIndex> GenerateMillerIndices(
 static std::vector<double> BuildSolventMask(
     OEChem::OEMolBase& mol,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
-    double a, double b, double c,
-    int nx, int ny, int nz,
+    const double a, const double b, const double c,
+    const int nx, const int ny, const int nz,
     const std::vector<SymOp>& symops) {
     std::vector<double> sol_mask(nx * ny * nz, 1.0);
 
@@ -103,40 +103,40 @@ static std::vector<double> BuildSolventMask(
         if (mask && !(*mask)(*atom)) continue;
 
         mol.GetCoords(&(*atom), coords);
-        double xf = coords[0] / a;
-        double yf = coords[1] / b;
-        double zf = coords[2] / c;
+        const double xf = coords[0] / a;
+        const double yf = coords[1] / b;
+        const double zf = coords[2] / c;
 
         double vdw = atom->GetRadius();
         if (vdw <= 0.0) vdw = 1.7;
-        double r_excl = vdw + PROBE_RADIUS;
-        double r_excl2 = r_excl * r_excl;
+        const double r_excl = vdw + PROBE_RADIUS;
+        const double r_excl2 = r_excl * r_excl;
 
         for (const auto& op : symops) {
             // Apply symmetry: r_sym = R * frac + t
-            double sx = op.R[0] * xf + op.R[1] * yf + op.R[2] * zf + op.t[0];
-            double sy = op.R[3] * xf + op.R[4] * yf + op.R[5] * zf + op.t[1];
-            double sz = op.R[6] * xf + op.R[7] * yf + op.R[8] * zf + op.t[2];
+            const double sx = op.R[0] * xf + op.R[1] * yf + op.R[2] * zf + op.t[0];
+            const double sy = op.R[3] * xf + op.R[4] * yf + op.R[5] * zf + op.t[1];
+            const double sz = op.R[6] * xf + op.R[7] * yf + op.R[8] * zf + op.t[2];
 
             for (int i = 0; i < nx; ++i) {
                 double dx = fi[i] - sx;
                 dx -= std::round(dx);
-                double dx_cart = dx * a;
+                const double dx_cart = dx * a;
 
                 for (int j = 0; j < ny; ++j) {
                     double dy = fj[j] - sy;
                     dy -= std::round(dy);
-                    double dy_cart = dy * b;
+                    const double dy_cart = dy * b;
 
-                    double dxy2 = dx_cart * dx_cart + dy_cart * dy_cart;
+                    const double dxy2 = dx_cart * dx_cart + dy_cart * dy_cart;
                     if (dxy2 > r_excl2) continue;
 
                     for (int k = 0; k < nz; ++k) {
                         double dz = fk[k] - sz;
                         dz -= std::round(dz);
-                        double dz_cart = dz * c;
+                        const double dz_cart = dz * c;
 
-                        double dist2 = dxy2 + dz_cart * dz_cart;
+                        const double dist2 = dxy2 + dz_cart * dz_cart;
                         if (dist2 <= r_excl2) {
                             sol_mask[i * ny * nz + j * nz + k] = 0.0;
                         }
@@ -152,45 +152,45 @@ static std::vector<double> BuildSolventMask(
 // ---- Trilinear interpolation from UC grid to output grid ----
 
 static void InterpolateUCToGrid(
-    const double* rho_3d, int nx, int ny, int nz,
-    double a, double b, double c,
+    const double* rho_3d, const int nx, const int ny, const int nz,
+    const double a, const double b, const double c,
     const OESystem::OEScalarGrid& out_template,
     OESystem::OEScalarGrid& out_grid) {
-    GridParams gp = get_grid_params(out_template);
+    const GridParams gp = get_grid_params(out_template);
 
     for (unsigned int iz = 0; iz < gp.z_dim; ++iz) {
-        double z = gp.z_origin + iz * gp.spacing;
+        const double z = gp.z_origin + iz * gp.spacing;
         double fz = std::fmod(z / c, 1.0);
         if (fz < 0.0) fz += 1.0;
-        double gk = fz * nz;
-        int k0 = static_cast<int>(gk) % nz;
-        int k1 = (k0 + 1) % nz;
-        double dk = gk - static_cast<int>(gk);
+        const double gk = fz * nz;
+        const int k0 = static_cast<int>(gk) % nz;
+        const int k1 = (k0 + 1) % nz;
+        const double dk = gk - static_cast<int>(gk);
 
         for (unsigned int iy = 0; iy < gp.y_dim; ++iy) {
-            double y = gp.y_origin + iy * gp.spacing;
+            const double y = gp.y_origin + iy * gp.spacing;
             double fy = std::fmod(y / b, 1.0);
             if (fy < 0.0) fy += 1.0;
-            double gj = fy * ny;
-            int j0 = static_cast<int>(gj) % ny;
-            int j1 = (j0 + 1) % ny;
-            double dj = gj - static_cast<int>(gj);
+            const double gj = fy * ny;
+            const int j0 = static_cast<int>(gj) % ny;
+            const int j1 = (j0 + 1) % ny;
+            const double dj = gj - static_cast<int>(gj);
 
             for (unsigned int ix = 0; ix < gp.x_dim; ++ix) {
-                double x = gp.x_origin + ix * gp.spacing;
+                const double x = gp.x_origin + ix * gp.spacing;
                 double fx = std::fmod(x / a, 1.0);
                 if (fx < 0.0) fx += 1.0;
-                double gi = fx * nx;
-                int i0 = static_cast<int>(gi) % nx;
-                int i1 = (i0 + 1) % nx;
-                double di = gi - static_cast<int>(gi);
+                const double gi = fx * nx;
+                const int i0 = static_cast<int>(gi) % nx;
+                const int i1 = (i0 + 1) % nx;
+                const double di = gi - static_cast<int>(gi);
 
                 // Index: [i][j][k] = i * ny * nz + j * nz + k
-                auto idx = [&](int ii, int jj, int kk) {
+                auto idx = [&](const int ii, const int jj, const int kk) {
                     return ii * ny * nz + jj * nz + kk;
                 };
 
-                double val =
+                const double val =
                     rho_3d[idx(i0, j0, k0)] * (1 - di) * (1 - dj) * (1 - dk) +
                     rho_3d[idx(i1, j0, k0)] * di * (1 - dj) * (1 - dk) +
                     rho_3d[idx(i0, j1, k0)] * (1 - di) * dj * (1 - dk) +
@@ -200,7 +200,7 @@ static void InterpolateUCToGrid(
                     rho_3d[idx(i0, j1, k1)] * (1 - di) * dj * dk +
                     rho_3d[idx(i1, j1, k1)] * di * dj * dk;
 
-                unsigned int elem = iz * gp.x_dim * gp.y_dim +
+                const unsigned int elem = iz * gp.x_dim * gp.y_dim +
                                     iy * gp.x_dim + ix;
                 out_grid[elem] = static_cast<float>(val);
             }
@@ -228,8 +228,8 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
 
     const UnitCell& cell = pimpl_->cell;
     const auto& symops = pimpl_->symops;
-    double a = cell.a, b = cell.b, c = cell.c;
-    double sp = obs_grid.GetSpacing();
+    const double a = cell.a, b = cell.b, c = cell.c;
+    const double sp = obs_grid.GetSpacing();
 
     // ----------------------------------------------------------------
     // Step 1: Prepare structure - extract atom data
@@ -251,15 +251,15 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         if (!include_h && atom->GetAtomicNum() == 1) continue;
         if (mask && !(*mask)(*atom)) continue;
 
-        unsigned int z_num = atom->GetAtomicNum();
-        int charge = atom->GetFormalCharge();
+        const unsigned int z_num = atom->GetAtomicNum();
+        const int charge = atom->GetFormalCharge();
 
         // Look up scattering factors (fall back to neutral)
         const CromerMannCoeffs* cm = get_scattering_factors(z_num, charge);
         if (!cm) continue;
 
         // Get effective key for type indexing
-        unsigned int eff_z = z_num;
+        const unsigned int eff_z = z_num;
         int eff_charge = charge;
         if (!get_scattering_factors(z_num, charge)) {
             eff_charge = 0;
@@ -268,14 +268,14 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         mol.GetCoords(&(*atom), coords_buf);
 
         // Convert to fractional using unit cell
-        auto frac = cell.CartesianToFractional(
+        const auto frac = cell.CartesianToFractional(
             coords_buf[0], coords_buf[1], coords_buf[2]);
 
-        OEChem::OEResidue res = OEChem::OEAtomGetResidue(&(*atom));
+        const OEChem::OEResidue res = OEChem::OEAtomGetResidue(&(*atom));
         double bfac = res.GetBFactor();
         if (bfac <= 0.0) bfac = DEFAULT_BFACTOR;
 
-        int type_idx = find_or_add_type(eff_z, eff_charge);
+        const int type_idx = find_or_add_type(eff_z, eff_charge);
         atoms_data.push_back({frac[0], frac[1], frac[2], bfac, type_idx});
     }
 
@@ -287,12 +287,12 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // Step 2: Generate Miller indices within resolution sphere
     // ----------------------------------------------------------------
     auto miller = GenerateMillerIndices(a, b, c, resolution);
-    size_t n_refl = miller.size();
+    const size_t n_refl = miller.size();
 
     // ----------------------------------------------------------------
     // Step 3: Precompute scattering factor table per type per reflection
     // ----------------------------------------------------------------
-    size_t n_types = unique_keys.size();
+    const size_t n_types = unique_keys.size();
     // f_s_table[refl_idx * n_types + type_idx]
     std::vector<double> f_s_table(n_refl * n_types);
     for (size_t ti = 0; ti < n_types; ++ti) {
@@ -306,11 +306,11 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     // Step 4: Expand atoms by symmetry operators
     // ----------------------------------------------------------------
-    size_t n_atoms_asu = atoms_data.size();
+    const size_t n_atoms_asu = atoms_data.size();
     size_t n_ops = symops.size();
     if (n_ops == 0) n_ops = 1;  // identity
 
-    size_t n_expanded = n_atoms_asu * n_ops;
+    const size_t n_expanded = n_atoms_asu * n_ops;
     std::vector<double> frac_x(n_expanded), frac_y(n_expanded), frac_z(n_expanded);
     std::vector<double> bfacs(n_expanded);
     std::vector<int> type_indices(n_expanded);
@@ -326,7 +326,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             ++idx;
         } else {
             for (const auto& op : symops) {
-                auto sym = op.Apply(ad.frac_x, ad.frac_y, ad.frac_z);
+                const auto sym = op.Apply(ad.frac_x, ad.frac_y, ad.frac_z);
                 frac_x[idx] = sym[0];
                 frac_y[idx] = sym[1];
                 frac_z[idx] = sym[2];
@@ -347,17 +347,17 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     #pragma omp parallel for schedule(dynamic, 64)
 #endif
     for (size_t i = 0; i < n_refl; ++i) {
-        int h = miller[i].h;
-        int k = miller[i].k;
-        int l = miller[i].l;
-        double s2 = miller[i].stol2;
+        const int h = miller[i].h;
+        const int k = miller[i].k;
+        const int l = miller[i].l;
+        const double s2 = miller[i].stol2;
         double re = 0.0, im = 0.0;
 
         for (size_t j = 0; j < n_expanded; ++j) {
-            double f_s = f_s_table[i * n_types + type_indices[j]];
-            double dw = std::exp(-bfacs[j] * s2);
-            double f_dw = f_s * dw;
-            double phase = -TWO_PI * (
+            const double f_s = f_s_table[i * n_types + type_indices[j]];
+            const double dw = std::exp(-bfacs[j] * s2);
+            const double f_dw = f_s * dw;
+            const double phase = -TWO_PI * (
                 h * frac_x[j] + k * frac_y[j] + l * frac_z[j]);
             re += f_dw * std::cos(phase);
             im += f_dw * std::sin(phase);
@@ -370,20 +370,20 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     // Step 6: Scatter Fc into 3D FFT array
     // ----------------------------------------------------------------
-    int nx = static_cast<int>(std::round(a / sp));
-    int ny = static_cast<int>(std::round(b / sp));
-    int nz = static_cast<int>(std::round(c / sp));
+    const int nx = static_cast<int>(std::round(a / sp));
+    const int ny = static_cast<int>(std::round(b / sp));
+    const int nz = static_cast<int>(std::round(c / sp));
 
-    size_t grid_size = static_cast<size_t>(nx) * ny * nz;
+    const size_t grid_size = static_cast<size_t>(nx) * ny * nz;
     fftw_complex* Fc_3d = fftw_alloc_complex(grid_size);
     std::fill(reinterpret_cast<double*>(Fc_3d),
               reinterpret_cast<double*>(Fc_3d) + 2 * grid_size, 0.0);
 
     for (size_t i = 0; i < n_refl; ++i) {
-        int hi = ((miller[i].h % nx) + nx) % nx;
-        int ki = ((miller[i].k % ny) + ny) % ny;
-        int li = ((miller[i].l % nz) + nz) % nz;
-        size_t flat = hi * ny * nz + ki * nz + li;
+        const int hi = ((miller[i].h % nx) + nx) % nx;
+        const int ki = ((miller[i].k % ny) + ny) % ny;
+        const int li = ((miller[i].l % nz) + nz) % nz;
+        const size_t flat = hi * ny * nz + ki * nz + li;
         Fc_3d[flat][0] += Fc_real[i];
         Fc_3d[flat][1] += Fc_imag[i];
     }
@@ -411,16 +411,16 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
 
         // Compute S^2 for each FFT grid point and apply correction
         for (int i = 0; i < nx; ++i) {
-            double hi = (i <= nx / 2) ? i : i - nx;
+            const double hi = (i <= nx / 2) ? i : i - nx;
             for (int j = 0; j < ny; ++j) {
-                double ki = (j <= ny / 2) ? j : j - ny;
+                const double ki = (j <= ny / 2) ? j : j - ny;
                 for (int k = 0; k < nz; ++k) {
-                    double li = (k <= nz / 2) ? k : k - nz;
-                    double s2 = (hi / a) * (hi / a) +
-                                (ki / b) * (ki / b) +
-                                (li / c) * (li / c);
-                    double correction = k_sol * std::exp(-b_sol * s2 / 4.0);
-                    size_t flat = i * ny * nz + j * nz + k;
+                    const double li = (k <= nz / 2) ? k : k - nz;
+                    const double s2 = (hi / a) * (hi / a) +
+                                      (ki / b) * (ki / b) +
+                                      (li / c) * (li / c);
+                    const double correction = k_sol * std::exp(-b_sol * s2 / 4.0);
+                    const size_t flat = i * ny * nz + j * nz + k;
                     Fc_3d[flat][0] += correction * mask_fft[flat][0];
                     Fc_3d[flat][1] += correction * mask_fft[flat][1];
                 }
@@ -440,9 +440,9 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     fftw_destroy_plan(ifft_plan);
     fftw_free(Fc_3d);
 
-    double V = a * b * c;
+    const double V = a * b * c;
     std::vector<double> rho_3d(grid_size);
-    double scale_factor = static_cast<double>(nx * ny * nz) / V;
+    const double scale_factor = static_cast<double>(nx * ny * nz) / V;
     for (size_t i = 0; i < grid_size; ++i) {
         rho_3d[i] = rho_complex[i][0] * scale_factor /
                      static_cast<double>(grid_size);
@@ -469,16 +469,15 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         fftw_complex* obs_in = fftw_alloc_complex(grid_size);
         fftw_complex* Fobs_3d = fftw_alloc_complex(grid_size);
 
-        GridParams obs_gp = get_grid_params(obs_grid);
         for (int i = 0; i < nx; ++i) {
-            double x = obs_grid.GetXMin() + (static_cast<double>(i) / nx) * a;
+            const double x = obs_grid.GetXMin() + (static_cast<double>(i) / nx) * a;
             for (int j = 0; j < ny; ++j) {
-                double y = obs_grid.GetYMin() +
-                           (static_cast<double>(j) / ny) * b;
+                const double y = obs_grid.GetYMin() +
+                                 (static_cast<double>(j) / ny) * b;
                 for (int k = 0; k < nz; ++k) {
-                    double z = obs_grid.GetZMin() +
-                               (static_cast<double>(k) / nz) * c;
-                    size_t flat = i * ny * nz + j * nz + k;
+                    const double z = obs_grid.GetZMin() +
+                                     (static_cast<double>(k) / nz) * c;
+                    const size_t flat = i * ny * nz + j * nz + k;
                     obs_in[flat][0] = interpolate_density(
                         obs_grid, x, y, z, 0.0);
                     obs_in[flat][1] = 0.0;
@@ -493,28 +492,28 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         fftw_free(obs_in);
 
         // Per-shell scaling
-        double s2_max = 1.0 / (resolution * resolution);
+        const double s2_max = 1.0 / (resolution * resolution);
         std::vector<double> shell_edges(n_scale_shells + 1);
         for (unsigned int i = 0; i <= n_scale_shells; ++i) {
             shell_edges[i] = s2_max * i / n_scale_shells;
         }
 
         for (unsigned int shell = 0; shell < n_scale_shells; ++shell) {
-            double s2_lo = shell_edges[shell];
-            double s2_hi = shell_edges[shell + 1];
+            const double s2_lo = shell_edges[shell];
+            const double s2_hi = shell_edges[shell + 1];
 
             double sum_fobs_fc = 0.0;
             double sum_fc2 = 0.0;
 
             for (int i = 0; i < nx; ++i) {
-                double hi = (i <= nx / 2) ? i : i - nx;
+                const double hi = (i <= nx / 2) ? i : i - nx;
                 for (int j = 0; j < ny; ++j) {
-                    double ki = (j <= ny / 2) ? j : j - ny;
+                    const double ki = (j <= ny / 2) ? j : j - ny;
                     for (int k = 0; k < nz; ++k) {
-                        double li = (k <= nz / 2) ? k : k - nz;
-                        double s2 = (hi / a) * (hi / a) +
-                                    (ki / b) * (ki / b) +
-                                    (li / c) * (li / c);
+                        const double li = (k <= nz / 2) ? k : k - nz;
+                        const double s2 = (hi / a) * (hi / a) +
+                                          (ki / b) * (ki / b) +
+                                          (li / c) * (li / c);
 
                         bool in_shell;
                         if (shell == 0) {
@@ -524,11 +523,11 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
                         }
 
                         if (in_shell) {
-                            size_t flat = i * ny * nz + j * nz + k;
-                            double fc_amp = std::sqrt(
+                            const size_t flat = i * ny * nz + j * nz + k;
+                            const double fc_amp = std::sqrt(
                                 F_calc[flat][0] * F_calc[flat][0] +
                                 F_calc[flat][1] * F_calc[flat][1]);
-                            double fobs_amp = std::sqrt(
+                            const double fobs_amp = std::sqrt(
                                 Fobs_3d[flat][0] * Fobs_3d[flat][0] +
                                 Fobs_3d[flat][1] * Fobs_3d[flat][1]);
                             sum_fobs_fc += fobs_amp * fc_amp;
@@ -539,16 +538,16 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             }
 
             if (sum_fc2 > 0.0) {
-                double k_shell = sum_fobs_fc / sum_fc2;
+                const double k_shell = sum_fobs_fc / sum_fc2;
                 for (int i = 0; i < nx; ++i) {
-                    double hi = (i <= nx / 2) ? i : i - nx;
+                    const double hi = (i <= nx / 2) ? i : i - nx;
                     for (int j = 0; j < ny; ++j) {
-                        double ki = (j <= ny / 2) ? j : j - ny;
+                        const double ki = (j <= ny / 2) ? j : j - ny;
                         for (int k = 0; k < nz; ++k) {
-                            double li = (k <= nz / 2) ? k : k - nz;
-                            double s2 = (hi / a) * (hi / a) +
-                                        (ki / b) * (ki / b) +
-                                        (li / c) * (li / c);
+                            const double li = (k <= nz / 2) ? k : k - nz;
+                            const double s2 = (hi / a) * (hi / a) +
+                                              (ki / b) * (ki / b) +
+                                              (li / c) * (li / c);
                             bool in_shell;
                             if (shell == 0) {
                                 in_shell = (s2 > 0) && (s2 <= s2_hi);
@@ -556,7 +555,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
                                 in_shell = (s2 > s2_lo) && (s2 <= s2_hi);
                             }
                             if (in_shell) {
-                                size_t flat = i * ny * nz + j * nz + k;
+                                const size_t flat = i * ny * nz + j * nz + k;
                                 F_calc[flat][0] *= k_shell;
                                 F_calc[flat][1] *= k_shell;
                             }
@@ -602,12 +601,12 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         if (mask && !(*mask)(*atom)) continue;
 
         mol.GetCoords(&(*atom), scale_coords);
-        float fx = scale_coords[0], fy = scale_coords[1], fz = scale_coords[2];
+        const float fx = scale_coords[0], fy = scale_coords[1], fz = scale_coords[2];
 
         if (obs_grid.IsInGrid(fx, fy, fz)) {
-            double obs_val = OESystem::OEFloatGridLinearInterpolate(
+            const double obs_val = OESystem::OEFloatGridLinearInterpolate(
                 obs_grid, fx, fy, fz, 0.0f);
-            double calc_val = OESystem::OEFloatGridLinearInterpolate(
+            const double calc_val = OESystem::OEFloatGridLinearInterpolate(
                 *calc_grid, fx, fy, fz, 0.0f);
             sum_obs_calc += obs_val * calc_val;
             sum_calc2 += calc_val * calc_val;
@@ -615,8 +614,8 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     }
 
     if (sum_calc2 > 0.0) {
-        double k_scale = sum_obs_calc / sum_calc2;
-        unsigned int grid_sz = calc_grid->GetSize();
+        const double k_scale = sum_obs_calc / sum_calc2;
+        const unsigned int grid_sz = calc_grid->GetSize();
         for (unsigned int i = 0; i < grid_sz; ++i) {
             (*calc_grid)[i] = static_cast<float>((*calc_grid)[i] * k_scale);
         }

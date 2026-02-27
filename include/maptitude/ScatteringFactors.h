@@ -14,6 +14,7 @@
 #define MAPTITUDE_SCATTERINGFACTORS_H
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace Maptitude {

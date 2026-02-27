@@ -12,10 +12,10 @@ Residue::Residue(std::string name, int number, std::string chain,
     , insert_code(std::move(insert_code)) {}
 
 Residue Residue::FromAtom(const OEChem::OEAtomBase& atom) {
-    OEChem::OEResidue res = OEChem::OEAtomGetResidue(&atom);
+    const OEChem::OEResidue res = OEChem::OEAtomGetResidue(&atom);
     return Residue(
         res.GetName(),
-        static_cast<int>(res.GetResidueNumber()),
+        res.GetResidueNumber(),
         std::string(1, res.GetChainID()),
         std::string(1, res.GetInsertCode()));
 }
