@@ -63,30 +63,6 @@ print(f"Overall RSCC: {result.overall:.3f}")
 
 ## Usage
 
-### Computing Model Density
-
-`fc_density` calculates model electron density from atomic coordinates using Fourier synthesis. It requires a unit cell
-and symmetry operators that define the crystal form.
-
-```python
-from maptitude import fc_density, UnitCell, parse_symops
-
-cell = UnitCell(a, b, c, alpha, beta, gamma)
-symops = parse_symops("x,y,z\n-x,y+1/2,-z+1/2")
-
-calc_grid = fc_density(
-    mol,  # OEMolBase with coordinates
-    obs_grid,  # OEScalarGrid (defines output geometry)
-    resolution,  # Resolution in Angstroms
-    cell,  # Unit cell parameters
-    symops=symops,  # Symmetry operators
-    k_sol=0.35,  # Bulk solvent scale factor
-    b_sol=46.0,  # Bulk solvent B-factor
-)
-```
-
-The returned grid is a standard `OEScalarGrid` with the same dimensions as the input grid.
-
 ### Scoring Metrics
 
 All scoring functions return a `DensityScoreResult` with an overall score and per-residue and per-atom breakdowns.
