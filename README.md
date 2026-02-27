@@ -49,12 +49,8 @@ oechem.OEReadMolecule(oechem.oemolistream("model.pdb"), mol)
 obs_grid = oegrid.OEScalarGrid()
 oegrid.OEReadGrid(obs_grid, "2fofc.map")
 
-# Define crystal form
-cell = UnitCell(50.0, 60.0, 70.0, 90.0, 90.0, 90.0)
-symops = parse_symops("x,y,z\n-x,y+1/2,-z+1/2")
-
 # Compute model density
-calc_grid = fc_density(mol, obs_grid, 2.0, cell, symops=symops)
+calc_grid = fc_density(mol, obs_grid, 2.0)
 
 # Score the fit
 result = rscc(mol, obs_grid, 2.0, calc_grid=calc_grid)
