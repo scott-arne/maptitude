@@ -49,11 +49,8 @@ oechem.OEReadMolecule(oechem.oemolistream("model.pdb"), mol)
 obs_grid = oegrid.OEScalarGrid()
 oegrid.OEReadGrid(obs_grid, "2fofc.map")
 
-# Compute model density
-calc_grid = fc_density(mol, obs_grid, 2.0)
-
 # Score the fit
-result = rscc(mol, obs_grid, 2.0, calc_grid=calc_grid)
+result = rscc(mol, obs_grid, 2.0)
 print(f"Overall RSCC: {result.overall:.3f}")
 ```
 
