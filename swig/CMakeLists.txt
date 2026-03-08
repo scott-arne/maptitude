@@ -174,9 +174,27 @@ if(DEFINED OPENEYE_TOOLKITS_VERSION AND OPENEYE_TOOLKITS_VERSION)
 else()
     set(_BUILD_INFO_VERSION "${OpenEye_VERSION}")
 endif()
+
+# Collect expected library filenames for runtime compatibility symlinks
+set(_EXPECTED_LIBS "")
+if(OpenEye_LIBRARY_TYPE STREQUAL "SHARED")
+    foreach(_LIB_VAR OECHEM_LIBRARY OESYSTEM_LIBRARY OEPLATFORM_LIBRARY OEMATH_LIBRARY
+                     OEGRID_LIBRARY OEFIZZCHEM_LIBRARY OEZSTD_LIBRARY)
+        if(${_LIB_VAR})
+            get_filename_component(_LIB_NAME "${${_LIB_VAR}}" NAME)
+            if(_EXPECTED_LIBS)
+                set(_EXPECTED_LIBS "${_EXPECTED_LIBS}, \"${_LIB_NAME}\"")
+            else()
+                set(_EXPECTED_LIBS "\"${_LIB_NAME}\"")
+            endif()
+        endif()
+    endforeach()
+endif()
+
 set(BUILD_INFO_CONTENT "# Auto-generated build information - do not edit
 OPENEYE_BUILD_VERSION = \"${_BUILD_INFO_VERSION}\"
 OPENEYE_LIBRARY_TYPE = \"${OpenEye_LIBRARY_TYPE}\"
+OPENEYE_EXPECTED_LIBS = [${_EXPECTED_LIBS}]
 ")
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/_build_info.py "${BUILD_INFO_CONTENT}")
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/_build_info.py

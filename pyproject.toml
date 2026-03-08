@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "maptitude"
-version = "0.1.0"
+version = "0.1.1"
 description = "High-performance crystallographic electron density computation and scoring"
 license = "MIT"
 license-files = ["LICENSE"]

@@ -27,11 +27,13 @@ Example usage::
     print(f"Overall RSCC: {result.overall}")
 """
 
+import os
+import re
 import warnings
 
 # Version info
-__version__ = "0.1.0"
-__version_info__ = (0, 1, 0)
+__version__ = "0.1.1"
+__version_info__ = (0, 1, 1)
 
 
 def _check_openeye_version():
@@ -74,6 +76,90 @@ def _check_openeye_version():
 
 # Check OpenEye version on import
 _check_openeye_version()
+
+
+def _ensure_library_compat():
+    """Create compatibility symlinks when OpenEye library versions differ from build time.
+
+    When the package is built with shared OpenEye libraries, the compiled extension
+    records exact versioned library filenames (e.g., liboechem-4.3.0.1.dylib).
+    If the user upgrades openeye-toolkits, these filenames change (e.g., to
+    liboechem-4.3.0.2.dylib) and the dynamic linker fails to load the extension.
+
+    This function detects version mismatches and creates symlinks from the expected
+    (build-time) library names to the actual (runtime) library files in the package
+    directory, which is on the extension's rpath (@loader_path / $ORIGIN).
+    """
+    try:
+        from . import _build_info
+    except ImportError:
+        return False
+
+    if getattr(_build_info, 'OPENEYE_LIBRARY_TYPE', 'STATIC') != 'SHARED':
+        return False
+
+    expected_libs = getattr(_build_info, 'OPENEYE_EXPECTED_LIBS', [])
+    if not expected_libs:
+        return False
+
+    try:
+        from openeye import libs
+        oe_lib_dir = libs.FindOpenEyeDLLSDirectory()
+    except (ImportError, Exception):
+        return False
+
+    if not os.path.isdir(oe_lib_dir):
+        return False
+
+    pkg_dir = os.path.dirname(__file__)
+    created_any = False
+
+    for expected_name in expected_libs:
+        # Check if the expected library exists in the OpenEye lib directory
+        if os.path.exists(os.path.join(oe_lib_dir, expected_name)):
+            continue
+
+        # Check for an existing symlink in our package directory
+        symlink_path = os.path.join(pkg_dir, expected_name)
+        if os.path.islink(symlink_path):
+            if os.path.exists(symlink_path):
+                continue  # Valid symlink already exists
+            # Stale symlink (target was removed/upgraded) - remove it
+            try:
+                os.unlink(symlink_path)
+            except OSError:
+                continue
+        elif os.path.exists(symlink_path):
+            continue  # Regular file exists
+
+        # Extract the base library name (e.g., "liboechem" from "liboechem-4.3.0.1.dylib")
+        # Handles both dash-versioned (liboechem-4.3.0.1.dylib) and
+        # dot-versioned (libzstd.1.dylib) naming conventions
+        match = re.match(r'(lib\w+?)(-[\d.]+)?(\.[\d.]*\w+)', expected_name)
+        if not match:
+            continue
+        base_name = match.group(1)
+
+        # Find the actual library with a potentially different version
+        actual_path = None
+        for f in os.listdir(oe_lib_dir):
+            if f.startswith(base_name + '-') or f.startswith(base_name + '.'):
+                actual_path = os.path.join(oe_lib_dir, f)
+                break
+
+        if actual_path:
+            symlink_path = os.path.join(pkg_dir, expected_name)
+            try:
+                os.symlink(actual_path, symlink_path)
+                created_any = True
+            except OSError:
+                pass
+
+    return created_any
+
+
+# Create compatibility symlinks before loading the C extension
+_ensure_library_compat()
 
 from .maptitude import (
     # Core types
