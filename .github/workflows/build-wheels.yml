@@ -75,12 +75,13 @@ jobs:
           rm /tmp/sdk.tar.gz
           ls -la /opt/openeye/
 
-      - name: Setup OpenEye license
-        env:
-          OE_LICENSE: ${{ secrets.OE_LICENSE }}
+      - name: Download OpenEye license from GCS
         run: |
-          mkdir -p ~/.OpenEye
-          echo "$OE_LICENSE" > ~/.OpenEye/oe_license.txt
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
+            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/oe_license.txt" \
+            -o /opt/openeye/oe_license.txt
+          echo "OE_LICENSE=/opt/openeye/oe_license.txt" >> $GITHUB_ENV
 
       - name: Install openeye-toolkits Python package
         run: |
@@ -133,6 +134,12 @@ jobs:
           /opt/venv/bin/python -m wheel pack "$TMPDIR" -d dist/
           rm -rf "$TMPDIR"
 
+      - name: Test wheel
+        run: |
+          /opt/venv/bin/pip install pytest
+          /opt/venv/bin/pip install dist/maptitude-*.whl
+          /opt/venv/bin/pytest tests/python/ -v -s
+
       - name: List built artifacts
         run: |
           ls -la dist/
@@ -183,12 +190,13 @@ jobs:
           rm /tmp/sdk.tar.gz
           ls -la ${{ runner.temp }}/openeye/
 
-      - name: Setup OpenEye license
-        env:
-          OE_LICENSE: ${{ secrets.OE_LICENSE }}
+      - name: Download OpenEye license from GCS
         run: |
-          mkdir -p ~/.OpenEye
-          echo "$OE_LICENSE" > ~/.OpenEye/oe_license.txt
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
+            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/oe_license.txt" \
+            -o ${{ runner.temp }}/openeye/oe_license.txt
+          echo "OE_LICENSE=${{ runner.temp }}/openeye/oe_license.txt" >> $GITHUB_ENV
 
       - name: Install openeye-toolkits Python package
         run: |
@@ -207,6 +215,12 @@ jobs:
             --openeye-root ${{ runner.temp }}/openeye \
             --python $(which python) \
             --verbose
+
+      - name: Test wheel
+        run: |
+          pip install pytest
+          pip install dist/maptitude-*.whl
+          pytest tests/python/ -v -s
 
       - name: List built artifacts
         run: |
