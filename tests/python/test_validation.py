@@ -166,7 +166,11 @@ def _load_ccp4_grid(ccp4_path: pathlib.Path):
         with open(ccp4_path, "rb") as f:
             f.seek(1024)
             sym_bytes = f.read(nsymbt)
-        symops_list = parse_symops(sym_bytes.decode("ascii", errors="ignore"))
+        # CCP4 symmetry records are 80-char fixed-width with no newlines.
+        # Split into 80-char chunks so parse_symops can handle them.
+        sym_text = sym_bytes.decode("ascii", errors="ignore")
+        sym_lines = [sym_text[i:i+80].strip() for i in range(0, len(sym_text), 80)]
+        symops_list = parse_symops("\n".join(line for line in sym_lines if line))
 
     grid = oegrid.OEScalarGrid()
     ifs = oechem.oeifstream(str(ccp4_path))
@@ -294,12 +298,24 @@ def _ligand_mask(res_name: str, chain_id: str, res_num: int):
     """Build an atom predicate selecting a single ligand residue."""
     from openeye import oechem
 
+    class _HasResName(oechem.OEUnaryAtomPred):
+        def __init__(self, name):
+            super().__init__()
+            self._name = name
+
+        def __call__(self, atom):
+            res = oechem.OEAtomGetResidue(atom)
+            return res.GetName().strip() == self._name
+
+        def CreateCopy(self):
+            return _HasResName(self._name)
+
     return oechem.OEAndAtom(
         oechem.OEAndAtom(
             oechem.OEHasChainID(chain_id),
             oechem.OEHasResidueNumber(res_num),
         ),
-        oechem.OEHasResName(res_name),
+        _HasResName(res_name),
     )
 
 
@@ -434,8 +450,12 @@ class TestIntegration:
 
         cls.grid = _load_mrc_grid(_ASSET_DIR / "390_emd_30342_A_z4.mrc")
 
-        cls.rscc_result = rscc(cls.mol, cls.grid, resolution=cls._RESOLUTION)
-        cls.rsr_result = rsr(cls.mol, cls.grid, resolution=cls._RESOLUTION)
+        # Cryo-EM has no Fc model; use observed grid as calc_grid to exercise
+        # the code path (auto-generation is not yet supported).
+        cls.rscc_result = rscc(cls.mol, cls.grid, resolution=cls._RESOLUTION,
+                               calc_grid=cls.grid)
+        cls.rsr_result = rsr(cls.mol, cls.grid, resolution=cls._RESOLUTION,
+                             calc_grid=cls.grid)
         cls.qscore_result = qscore(cls.mol, cls.grid, resolution=cls._RESOLUTION)
         cls.ediam_result = ediam(cls.mol, cls.grid, resolution=cls._RESOLUTION)
 
