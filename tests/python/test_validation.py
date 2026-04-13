@@ -11,9 +11,8 @@ import math
 import pathlib
 import struct
 
+import numpy as np
 import pytest
-
-np = pytest.importorskip("numpy", reason="numpy required for validation tests")
 
 _ASSET_DIR = pathlib.Path(__file__).parent.parent / "assets" / "mapq"
 
