@@ -26,7 +26,7 @@ requires-python = ">=3.10"
 dependencies = ["openeye-toolkits>=2025.2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "vrzn>=0.1.0"]
 
 [tool.scikit-build]
 cmake.version = ">=3.21"
@@ -50,3 +50,18 @@ MAPTITUDE_UNIVERSAL2 = "ON"
 testpaths = ["tests/python"]
 python_files = ["test_*.py"]
 addopts = "-v"
+
+[tool.oe-build]
+package-name = "maptitude"
+cmake-test-flag = "MAPTITUDE_BUILD_TESTS"
+rpath-strategy = "platform"
+expected-missing-libs = [
+    "liboechem", "liboesystem", "liboeplatform",
+    "liboemath", "libzstd", "liboegrid", "liboefizzchem",
+    "liboegraphsim", "liboeshape", "liboeff",
+    "liboespicoli", "liboezap", "liboequacpac",
+    "liboedepict", "liboegrapheme", "liboemolprop",
+    "liboeiupac", "liboefastrocs",
+]
+
+[tool.oe-build.extra-cmake-defines]

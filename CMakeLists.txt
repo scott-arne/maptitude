@@ -14,7 +14,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Options
 option(MAPTITUDE_BUILD_TESTS "Build tests" ON)
 option(MAPTITUDE_BUILD_PYTHON "Build Python bindings" ON)
-option(MAPTITUDE_UNIVERSAL2 "Build universal2 binary for macOS" OFF)
+option(MAPTITUDE_UNIVERSAL2 "Build universal2 binary for macOS" ON)
+option(MAPTITUDE_USE_STABLE_ABI "Use Python stable ABI" ON)
 
 if(APPLE AND MAPTITUDE_UNIVERSAL2)
     set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Build architectures" FORCE)
@@ -22,11 +23,6 @@ if(APPLE AND MAPTITUDE_UNIVERSAL2)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-
-# Dependencies
-find_package(OpenEye REQUIRED)
-find_package(FFTW3 REQUIRED)
-find_package(OpenMP)
 
 # Fetch header-only dependencies
 include(FetchContent)
@@ -37,12 +33,30 @@ FetchContent_Declare(
     GIT_TAG v1.5.5
     GIT_SHALLOW TRUE
 )
-FetchContent_MakeAvailable(nanoflann)
 
+FetchContent_Declare(
+    cmake_openeye
+    GIT_REPOSITORY https://github.com/scott-arne/cmake-openeye.git
+    GIT_TAG v1.0.2
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(nanoflann cmake_openeye)
+list(APPEND CMAKE_MODULE_PATH "${cmake_openeye_SOURCE_DIR}")
+
+# Dependencies
 if(MAPTITUDE_BUILD_PYTHON)
     find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
     find_package(SWIG 4.0)
 endif()
+
+if(OPENEYE_USE_SHARED)
+    find_package(OpenEyePython REQUIRED)
+endif()
+
+find_package(OpenEye REQUIRED)
+find_package(FFTW3 REQUIRED)
+find_package(OpenMP)
 
 # Library sources
 set(MAPTITUDE_SOURCES

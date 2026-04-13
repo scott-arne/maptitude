@@ -1,0 +1,29 @@
+[[locations]]
+file = "pyproject.toml"
+type = "pyproject-version"
+
+[[locations]]
+file = "python/pyproject.toml"
+type = "pyproject-version"
+
+[[locations]]
+file = "python/maptitude/__init__.py"
+type = "python-dunder"
+
+[[locations]]
+file = "python/maptitude/__init__.py"
+type = "python-version-info"
+
+[[locations]]
+file = "CMakeLists.txt"
+type = "cmake-project"
+
+[[locations]]
+file = "include/maptitude/maptitude.h"
+type = "c-define"
+prefix = "MAPTITUDE"
+
+[[locations]]
+file = "swig/maptitude.i"
+type = "c-define"
+prefix = "MAPTITUDE"
