@@ -27,3 +27,9 @@ prefix = "MAPTITUDE"
 file = "swig/maptitude.i"
 type = "c-define"
 prefix = "MAPTITUDE"
+
+[[locations]]
+file = "tests/python/test_maptitude.py"
+type = "custom"
+label = "test-version-assert"
+template = '''__version__\s*==\s*"{version}"'''
