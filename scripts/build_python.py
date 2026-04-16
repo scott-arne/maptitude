@@ -292,7 +292,7 @@ def get_version_from_pyproject(pyproject_path):
 
 
 def build_wheel(project_dir, python_exe, openeye_root, openeye_info, config,
-                verbose=False):
+                cmake_defines=None, verbose=False):
     """Build the binary wheel for the project.
 
     :param project_dir: Root directory of the project.
@@ -300,6 +300,7 @@ def build_wheel(project_dir, python_exe, openeye_root, openeye_info, config,
     :param openeye_root: Path to the OpenEye C++ SDK root.
     :param openeye_info: Dict with OpenEye toolkits information.
     :param config: Build configuration from [tool.oe-build].
+    :param cmake_defines: Extra CMake defines as ``KEY=VALUE`` strings.
     :param verbose: Enable verbose output.
     :returns: Path to the built wheel file, or None on failure.
     """
@@ -331,6 +332,10 @@ def build_wheel(project_dir, python_exe, openeye_root, openeye_info, config,
     # Add any extra CMake defines from config
     for key, value in config.get('extra-cmake-defines', {}).items():
         cmd.extend(['-C', f'cmake.define.{key}={value}'])
+
+    # Add CLI cmake defines (override config values)
+    for define in (cmake_defines or []):
+        cmd.extend(['-C', f'cmake.define.{define}'])
 
     run_command(cmd, cwd=project_dir, verbose=verbose)
 
@@ -599,6 +604,13 @@ def main():
         help='Verbose output'
     )
     parser.add_argument(
+        '--cmake-define',
+        action='append',
+        default=[],
+        metavar='KEY=VALUE',
+        help='Extra CMake defines passed to the build (repeatable)'
+    )
+    parser.add_argument(
         '--no-color',
         action='store_true',
         help='Disable colored output'
@@ -669,7 +681,8 @@ def main():
         args.openeye_root,
         openeye_info,
         config,
-        verbose=args.verbose
+        cmake_defines=args.cmake_define,
+        verbose=args.verbose,
     )
     if wheel:
         built_packages.append(wheel)

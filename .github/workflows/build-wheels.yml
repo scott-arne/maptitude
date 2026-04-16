@@ -175,9 +175,27 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew install swig fftw
+          brew install swig
           pip install --upgrade pip setuptools wheel
           pip install scikit-build-core ninja cmake build delocate
+
+      - name: Build universal2 FFTW3 from source
+        run: |
+          FFTW_VERSION=3.3.10
+          curl -fsSL "http://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz" -o /tmp/fftw.tar.gz
+          tar -xzf /tmp/fftw.tar.gz -C /tmp
+          cd /tmp/fftw-${FFTW_VERSION}
+          mkdir build-universal && cd build-universal
+          cmake .. \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0" \
+            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/fftw3" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTS=OFF
+          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+          cmake --install . --config Release
 
       - name: Download OpenEye SDK from GCS
         run: |
@@ -214,6 +232,8 @@ jobs:
           python scripts/build_python.py \
             --openeye-root ${{ runner.temp }}/openeye \
             --python $(which python) \
+            --cmake-define MAPTITUDE_UNIVERSAL2=ON \
+            --cmake-define FFTW3_ROOT=${{ runner.temp }}/fftw3 \
             --verbose
 
       - name: Test wheel

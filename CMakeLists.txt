@@ -5,7 +5,7 @@ if(POLICY CMP0144)
     cmake_policy(SET CMP0144 NEW)
 endif()
 
-project(maptitude VERSION 0.1.5 LANGUAGES CXX)
+project(maptitude VERSION 0.1.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,12 +14,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Options
 option(MAPTITUDE_BUILD_TESTS "Build tests" ON)
 option(MAPTITUDE_BUILD_PYTHON "Build Python bindings" ON)
-option(MAPTITUDE_UNIVERSAL2 "Build universal2 binary for macOS" ON)
+option(MAPTITUDE_UNIVERSAL2 "Build universal2 binary for macOS" OFF)
 option(MAPTITUDE_USE_STABLE_ABI "Use Python stable ABI" ON)
 
 if(APPLE AND MAPTITUDE_UNIVERSAL2)
     set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Build architectures" FORCE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
+    set(FFTW3_USE_STATIC ON CACHE BOOL "Use static FFTW3 for universal2 builds" FORCE)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")

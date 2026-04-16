@@ -29,11 +29,27 @@ find_path(FFTW3_INCLUDE_DIR
     PATH_SUFFIXES include
 )
 
+# When FFTW3_USE_STATIC is set, restrict search to static libraries only.
+# This is required for universal2 builds where the dynamic library may not
+# contain all requested architectures.
+if(FFTW3_USE_STATIC)
+    set(_FFTW3_ORIG_SUFFIXES ${CMAKE_FIND_LIBRARY_SUFFIXES})
+    if(WIN32)
+        set(CMAKE_FIND_LIBRARY_SUFFIXES .lib .a)
+    else()
+        set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+    endif()
+endif()
+
 find_library(FFTW3_LIBRARY
     NAMES fftw3
     PATHS ${_FFTW3_SEARCH_PATHS}
     PATH_SUFFIXES lib lib64
 )
+
+if(FFTW3_USE_STATIC)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ${_FFTW3_ORIG_SUFFIXES})
+endif()
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(FFTW3
@@ -41,7 +57,11 @@ find_package_handle_standard_args(FFTW3
 )
 
 if(FFTW3_FOUND AND NOT TARGET FFTW3::fftw3)
-    add_library(FFTW3::fftw3 UNKNOWN IMPORTED)
+    if(FFTW3_USE_STATIC)
+        add_library(FFTW3::fftw3 STATIC IMPORTED)
+    else()
+        add_library(FFTW3::fftw3 UNKNOWN IMPORTED)
+    endif()
     set_target_properties(FFTW3::fftw3 PROPERTIES
         IMPORTED_LOCATION "${FFTW3_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${FFTW3_INCLUDE_DIR}"
