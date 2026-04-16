@@ -5,7 +5,7 @@ if(POLICY CMP0144)
     cmake_policy(SET CMP0144 NEW)
 endif()
 
-project(maptitude VERSION 0.1.6 LANGUAGES CXX)
+project(maptitude VERSION 0.1.7 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -85,10 +85,10 @@ target_include_directories(maptitude
 
 target_link_libraries(maptitude
     PUBLIC
+        FFTW3::fftw3
         OpenEye::OEChem
         OpenEye::OEGrid
     PRIVATE
-        FFTW3::fftw3
         nanoflann::nanoflann
 )
 
