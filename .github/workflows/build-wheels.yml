@@ -287,9 +287,12 @@ jobs:
 
       - name: Build FFTW3 from source
         run: |
+          # Git-bash tar on Windows treats a drive-letter colon in the path
+          # (e.g. D:\a\_temp) as a remote hostname. --force-local disables
+          # that interpretation so local Windows paths work.
           FFTW_VERSION=3.3.10
           curl -fsSL "http://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz" -o "${RUNNER_TEMP}/fftw.tar.gz"
-          tar -xzf "${RUNNER_TEMP}/fftw.tar.gz" -C "${RUNNER_TEMP}"
+          tar --force-local -xzf "${RUNNER_TEMP}/fftw.tar.gz" -C "${RUNNER_TEMP}"
           cd "${RUNNER_TEMP}/fftw-${FFTW_VERSION}"
           mkdir build && cd build
           cmake .. \
