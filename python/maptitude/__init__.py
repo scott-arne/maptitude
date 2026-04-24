@@ -32,8 +32,8 @@ import re
 import warnings
 
 # Version info
-__version__ = "0.1.7"
-__version_info__ = (0, 1, 7)
+__version__ = "0.2.0"
+__version_info__ = (0, 2, 0)
 
 
 def _check_openeye_version():

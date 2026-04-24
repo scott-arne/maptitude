@@ -434,8 +434,8 @@ OE_CROSS_RUNTIME_REF_TYPEMAPS(OEDocking::OEReceptor, _maptitude_is_oereceptor, "
 // Version macros
 // ============================================================================
 #define MAPTITUDE_VERSION_MAJOR 0
-#define MAPTITUDE_VERSION_MINOR 1
-#define MAPTITUDE_VERSION_PATCH 7
+#define MAPTITUDE_VERSION_MINOR 2
+#define MAPTITUDE_VERSION_PATCH 0
 
 // ============================================================================
 // MapOp enum

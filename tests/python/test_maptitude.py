@@ -21,7 +21,7 @@ def test_import():
     """Verify the package can be imported."""
     import maptitude
     assert hasattr(maptitude, "__version__")
-    assert maptitude.__version__ == "0.1.7"
+    assert maptitude.__version__ == "0.2.0"
 
 
 def test_unit_cell_creation():
