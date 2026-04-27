@@ -376,6 +376,7 @@ jobs:
 
       - name: Test wheel
         run: |
+          pip install pytest numpy
           pip install dist/maptitude-*.whl
           pytest tests/python/ -v -s
 
