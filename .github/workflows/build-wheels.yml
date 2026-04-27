@@ -292,8 +292,9 @@ jobs:
           # that interpretation so local Windows paths work.
           FFTW_VERSION=3.3.10
           curl -fsSL "http://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz" -o "${RUNNER_TEMP}/fftw.tar.gz"
-          tar --force-local -xzf "${RUNNER_TEMP}/fftw.tar.gz" -C "${RUNNER_TEMP}"
-          cd "${RUNNER_TEMP}/fftw-${FFTW_VERSION}"
+          cd "${RUNNER_TEMP}"
+          tar --force-local -xzf fftw.tar.gz
+          cd "fftw-${FFTW_VERSION}"
           mkdir build && cd build
           cmake .. \
             -G Ninja \
