@@ -282,8 +282,8 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          pip install --upgrade pip setuptools wheel
-          pip install scikit-build-core ninja cmake build swig pytest
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install scikit-build-core ninja cmake build swig pytest
 
       - name: Build FFTW3 from source
         run: |
