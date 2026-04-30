@@ -5,7 +5,7 @@ if(POLICY CMP0144)
     cmake_policy(SET CMP0144 NEW)
 endif()
 
-project(maptitude VERSION 0.2.0 LANGUAGES CXX)
+project(maptitude VERSION 0.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,7 +38,7 @@ FetchContent_Declare(
 FetchContent_Declare(
     cmake_openeye
     GIT_REPOSITORY https://github.com/scott-arne/cmake-openeye.git
-    GIT_TAG v1.0.2
+    GIT_TAG v1.2.0
     GIT_SHALLOW TRUE
 )
 

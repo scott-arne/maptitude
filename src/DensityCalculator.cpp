@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <vector>
 
 #ifdef MAPTITUDE_USE_OPENMP
@@ -346,7 +347,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
 #ifdef MAPTITUDE_USE_OPENMP
     #pragma omp parallel for schedule(dynamic, 64)
 #endif
-    for (size_t i = 0; i < n_refl; ++i) {
+    for (std::ptrdiff_t i = 0; i < static_cast<std::ptrdiff_t>(n_refl); ++i) {
         const int h = miller[i].h;
         const int k = miller[i].k;
         const int l = miller[i].l;
@@ -354,7 +355,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         double re = 0.0, im = 0.0;
 
         for (size_t j = 0; j < n_expanded; ++j) {
-            const double f_s = f_s_table[i * n_types + type_indices[j]];
+            const double f_s = f_s_table[static_cast<size_t>(i) * n_types + type_indices[j]];
             const double dw = std::exp(-bfacs[j] * s2);
             const double f_dw = f_s * dw;
             const double phase = -TWO_PI * (
