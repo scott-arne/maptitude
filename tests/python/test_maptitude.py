@@ -21,7 +21,7 @@ def test_import():
     """Verify the package can be imported."""
     import maptitude
     assert hasattr(maptitude, "__version__")
-    assert maptitude.__version__ == "0.2.3"
+    assert maptitude.__version__ == "0.2.4"
 
 
 def test_unit_cell_creation():
@@ -205,7 +205,7 @@ def test_density_scorer_rscc():
 def _has_openeye():
     """Check if OpenEye toolkits are available."""
     try:
-        from openeye import oechem, oegrid
+        from openeye import oechem, oegrid  # noqa: F401
         return True
     except ImportError:
         return False
