@@ -36,8 +36,10 @@ OESystem::OEScalarGrid CalcGrid() {
     return MakeGaussianGrid(0.25, -0.1, 0.15, 1.1, HALF_WIDTH, SPACING);
 }
 
-/// Compare against a pinned value with a relative tolerance, falling back to an
-/// absolute comparison when the pin is at or near zero.
+/// Compare against a pinned value with a tolerance scaled by the larger of 1.0
+/// or |pinned|. All metrics here are bounded in [-1, 1], so all current pins use
+/// the absolute branch (scale = 1.0). The relative branch exists for Task 5's
+/// DensityCalculator pins, which can exceed 1.0.
 void ExpectPinned(double actual, double pinned) {
     const double scale = std::max(1.0, std::abs(pinned));
     EXPECT_NEAR(actual, pinned, PIN_RELATIVE_TOLERANCE * scale);
