@@ -4,16 +4,21 @@
 /// tests then fail loudly on any numeric drift. Regenerating this file is only
 /// correct when a drift has been reviewed and accepted as one of the documented
 /// exceptions in the Phase 1 spec.
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "maptitude/CoverageOptions.h"
+#include "maptitude/DensityCalculator.h"
 #include "maptitude/Metric.h"
 #include "maptitude/QScoreOptions.h"
 #include "maptitude/RsccOptions.h"
 #include "maptitude/RsrOptions.h"
+#include "maptitude/SymOp.h"
+#include "maptitude/UnitCell.h"
 
 #include "fixtures.h"
 
@@ -168,6 +173,44 @@ void EmitMetricPins() {
     }
 }
 
+/// Reduce a grid to a few scalars so a pin can detect any change in the map
+/// without committing a multi-megabyte golden file.
+void EmitGridSummary(const std::string& prefix, const OESystem::OEScalarGrid& grid) {
+    double sum = 0.0, sum_sq = 0.0;
+    double lo = grid[0], hi = grid[0];
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+        const double v = grid[i];
+        sum += v;
+        sum_sq += v * v;
+        lo = std::min(lo, v);
+        hi = std::max(hi, v);
+    }
+    Emit(prefix + "_SUM", sum);
+    Emit(prefix + "_SUM_SQ", sum_sq);
+    Emit(prefix + "_MIN", lo);
+    Emit(prefix + "_MAX", hi);
+}
+
+void EmitFcPins() {
+    // P1 in an orthorhombic cell: the only geometry Phase 1 keeps supporting.
+    UnitCell ortho(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+    DensityCalculator calc(ortho, symops);
+    OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
+    std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
+    EmitGridSummary("FC_ORTHORHOMBIC", *fc);
+
+    // Monoclinic: produces numbers today. Task 9 makes this throw CellError.
+    // The pin exists so that regression is a reviewed change, not a silent one.
+    UnitCell mono(20.0, 25.0, 30.0, 90.0, 105.0, 90.0);
+    OEChem::OEGraphMol mol2 = MakeAtomMol(6, 5.0, 5.0, 5.0);
+    DensityCalculator calc2(mono, symops);
+    std::unique_ptr<OESystem::OEScalarGrid> fc2(calc2.Calculate(mol2, obs, 2.0));
+    EmitGridSummary("FC_MONOCLINIC", *fc2);
+}
+
 }  // namespace
 
 int main() {
@@ -180,6 +223,7 @@ int main() {
     std::cout << "#define MAPTITUDE_TEST_PIN_VALUES_H\n\n";
     std::cout << "namespace MaptitudePins {\n\n";
     EmitMetricPins();
+    EmitFcPins();
     std::cout << "\n}  // namespace MaptitudePins\n\n";
     std::cout << "#endif  // MAPTITUDE_TEST_PIN_VALUES_H\n";
     return 0;
