@@ -64,7 +64,13 @@ static inline OESystem::OEScalarGrid MakeUniformGrid(float value, double half_wi
 }
 
 /// Build a grid whose value increases linearly along x, y, and z with distinct
-/// weights, so no two elements collide and no symmetry can mask an index bug.
+/// weights, so no symmetry can mask an index bug.
+///
+/// Values are unique only while `2 * half_width / spacing <= 9` (at most ten
+/// points per axis). Beyond that the decade weights wrap: ten steps in y offset
+/// exactly one step in z, so e.g. (4.0, 0.5) yields 1777 distinct values across
+/// 4913 elements. Callers needing guaranteed-unique values must stay within
+/// that bound.
 static inline OESystem::OEScalarGrid MakeRampGrid(double half_width, double spacing) {
     OESystem::OEScalarGrid grid = MakeEmptyGrid(half_width, spacing);
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
