@@ -21,6 +21,7 @@ add_executable(maptitude_tests
     test_metric_analytic.cpp
     test_metric_characterization.cpp
     test_density_calculator_characterization.cpp
+    test_grid_ops_characterization.cpp
 )
 
 target_link_libraries(maptitude_tests
