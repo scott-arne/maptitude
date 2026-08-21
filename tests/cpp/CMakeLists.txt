@@ -18,6 +18,7 @@ add_executable(maptitude_tests
     test_spatial_index.cpp
     test_scoring_helpers.cpp
     test_fixtures.cpp
+    test_metric_analytic.cpp
 )
 
 target_link_libraries(maptitude_tests
