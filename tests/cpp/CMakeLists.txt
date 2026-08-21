@@ -17,6 +17,7 @@ add_executable(maptitude_tests
     test_grid_ops.cpp
     test_spatial_index.cpp
     test_scoring_helpers.cpp
+    test_fixtures.cpp
 )
 
 target_link_libraries(maptitude_tests
@@ -24,6 +25,8 @@ target_link_libraries(maptitude_tests
         maptitude
         GTest::gtest_main
 )
+
+target_include_directories(maptitude_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 include(GoogleTest)
 gtest_discover_tests(maptitude_tests)
