@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <vector>
 
 #include "maptitude/CoverageOptions.h"
 #include "maptitude/Metric.h"
@@ -70,6 +71,8 @@ TEST(MetricAnalyticTest, RsrIsSymmetricInItsTwoMaps) {
     const double forward = rsr(mol_ab, a, RESOLUTION, nullptr, &b).overall;
     const double reverse = rsr(mol_ba, b, RESOLUTION, nullptr, &a).overall;
 
+    // The two Gaussians differ across the sampled support, so a positive residual follows from RSR's definition.
+    EXPECT_GT(forward, 0.0);
     EXPECT_NEAR(forward, reverse, 1e-9);
 }
 
@@ -86,15 +89,25 @@ TEST(MetricAnalyticTest, CoverageOnUniformMapIsOne) {
 TEST(MetricAnalyticTest, CoverageIsMonotonicNonIncreasingInSigma) {
     OESystem::OEScalarGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, 1.5, HALF_WIDTH, SPACING);
 
+    std::vector<double> scores;
     double previous = 1.0;
-    for (double sigma : {0.0, 0.5, 1.0, 2.0, 3.0}) {
+    for (double sigma : {0.0, 1.0, 2.0, 4.0, 8.0}) {
         CoverageOptions options;
         options.SetSigma(sigma);
         OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
         const double score = coverage(mol, grid, nullptr, options).overall;
+        scores.push_back(score);
         EXPECT_LE(score, previous + 1e-12) << "coverage rose when sigma rose to " << sigma;
         previous = score;
     }
+
+    // The atom sits on the grid maximum. At sigma 0 the threshold is the mean, and
+    // the maximum is always at least the mean, so the first score is 1.0 for any map.
+    // At high sigma the threshold exceeds the map's maximum, so no atom anywhere can
+    // be covered. Coverage scores each atom as a binary hit and averages, so a
+    // single-atom molecule can only return 1.0 or 0.0 — the property shows as one step.
+    EXPECT_DOUBLE_EQ(scores.front(), 1.0);
+    EXPECT_DOUBLE_EQ(scores.back(), 0.0);
 }
 
 TEST(MetricAnalyticTest, QScoreIsNearOneForTheReferenceGaussian) {
