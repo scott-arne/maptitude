@@ -46,9 +46,11 @@ TEST(MetricAnalyticTest, RsccIsInvariantUnderPositiveAffineRescaling) {
     OEChem::OEGraphMol mol2 = MakeAtomMol(6, 0.0, 0.0, 0.0);
     const double rescaled_score = rscc(mol2, rescaled, RESOLUTION, nullptr, &calc).overall;
 
-    // Tolerance accounts for accumulated floating-point errors in the correlation
-    // computation over the 4913-element grid (grid rescaling, trilinear sampling,
-    // computed-map generation, mean/variance calculation, and the final correlation).
+    // The grid stores float. Offsetting rho from [0,1] to [7,8] quantizes values at
+    // the ~4e-7 float spacing around 7, then the correlation's mean-subtraction
+    // surfaces that loss as a ~1e-9 perturbation (measured: 1.16e-9). The same
+    // pipeline driven with an unmodified grid reproduces the baseline bit-exactly,
+    // so this looser tolerance is specific to the offset and must not be copied.
     EXPECT_NEAR(rescaled_score, baseline, 1e-8);
 }
 
@@ -115,7 +117,8 @@ TEST(MetricAnalyticTest, EdiamIsMonotonicNonDecreasingInUniformLevel) {
         OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
         const double score = ediam(mol, grid, RESOLUTION).overall;
         EXPECT_GE(score, previous - 1e-12) << "EDIAm fell when the level rose to " << level;
-        EXPECT_GE(score, -1.0);
+        // EDIAm returns values in [0, 1] per Metric.h:106.
+        EXPECT_GE(score, 0.0);
         EXPECT_LE(score, 1.0);
         previous = score;
     }
