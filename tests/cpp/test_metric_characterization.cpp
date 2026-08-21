@@ -36,6 +36,23 @@ OESystem::OEScalarGrid CalcGrid() {
     return MakeGaussianGrid(0.25, -0.1, 0.15, 1.1, HALF_WIDTH, SPACING);
 }
 
+/// Two carbons: one on the observed grid's maximum, one 3.0 A out along x.
+OEChem::OEGraphMol MakeTwoCarbonMol() {
+    OEChem::OEGraphMol mol;
+    const double coords[2][3] = {{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}};
+    for (const auto& xyz : coords) {
+        OEChem::OEAtomBase* atom = mol.NewAtom(6);
+        mol.SetCoords(atom, xyz);
+        OEChem::OEResidue residue;
+        residue.SetName("LIG");
+        residue.SetResidueNumber(1);
+        residue.SetChainID('A');
+        residue.SetBFactor(0.0);
+        OEChem::OEAtomSetResidue(atom, residue);
+    }
+    return mol;
+}
+
 /// Compare against a pinned value with a tolerance scaled by the larger of 1.0
 /// or |pinned|. All metrics here are bounded in [-1, 1], so all current pins use
 /// the absolute branch (scale = 1.0). The relative branch exists for the
@@ -86,6 +103,19 @@ TEST(MetricCharacterizationTest, RsccOxygenOffset) {
     ExpectPinned(rscc(mol, obs, RESOLUTION, nullptr, &calc).overall, MaptitudePins::RSCC_OXYGEN_OFFSET);
 }
 
+TEST(MetricCharacterizationTest, RsccCarbonAdaptive) {
+    // RSCC's radius switch has no ADAPTIVE case, so ADAPTIVE falls through to the
+    // binned default. Equal to RSCC_CARBON_BINNED by construction -- the equality
+    // is the pin. Giving RSCC a real adaptive branch would move this and not that.
+    RsccOptions options;
+    options.SetAtomRadiusMethod(AtomRadius::ADAPTIVE);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = ObsGrid();
+    const OESystem::OEScalarGrid calc = CalcGrid();
+    ExpectPinned(rscc(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
+                 MaptitudePins::RSCC_CARBON_ADAPTIVE);
+}
+
 TEST(MetricCharacterizationTest, RsrCarbonBinned) {
     // RsrOptions defaults to ADAPTIVE, so the binned path must be selected
     // explicitly -- otherwise this pin silently duplicates RSR_CARBON_ADAPTIVE.
@@ -105,6 +135,40 @@ TEST(MetricCharacterizationTest, RsrCarbonAdaptive) {
     const OESystem::OEScalarGrid calc = CalcGrid();
     ExpectPinned(rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
                  MaptitudePins::RSR_CARBON_ADAPTIVE);
+}
+
+TEST(MetricCharacterizationTest, RsrCarbonDefault) {
+    // Pins that RsrOptions still defaults to ADAPTIVE. Equal to
+    // RSR_CARBON_ADAPTIVE by construction -- that equality IS the assertion, and
+    // changing the default moves this pin while leaving the explicit one alone.
+    RsrOptions options;
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = ObsGrid();
+    const OESystem::OEScalarGrid calc = CalcGrid();
+    ExpectPinned(rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
+                 MaptitudePins::RSR_CARBON_DEFAULT);
+}
+
+TEST(MetricCharacterizationTest, RsrCarbonFixed) {
+    RsrOptions options;
+    options.SetAtomRadiusMethod(AtomRadius::FIXED);
+    options.SetFixedAtomRadius(1.5);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = ObsGrid();
+    const OESystem::OEScalarGrid calc = CalcGrid();
+    ExpectPinned(rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
+                 MaptitudePins::RSR_CARBON_FIXED);
+}
+
+TEST(MetricCharacterizationTest, RsrCarbonScaled) {
+    RsrOptions options;
+    options.SetAtomRadiusMethod(AtomRadius::SCALED);
+    options.SetAtomRadiusScaling(1.5);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = ObsGrid();
+    const OESystem::OEScalarGrid calc = CalcGrid();
+    ExpectPinned(rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
+                 MaptitudePins::RSR_CARBON_SCALED);
 }
 
 TEST(MetricCharacterizationTest, QScoreCarbonDefault) {
@@ -140,4 +204,15 @@ TEST(MetricCharacterizationTest, CoverageCarbonSigma24) {
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
     ExpectPinned(coverage(mol, ObsGrid(), nullptr, options).overall,
                  MaptitudePins::COVERAGE_CARBON_SIGMA24);
+}
+
+TEST(MetricCharacterizationTest, CoverageTwoAtomSplit) {
+    // The only pin whose value no single-atom molecule can produce: one atom above
+    // the threshold and one below, so 0.5 is the aggregation mean itself. Any
+    // implementation that drops an atom or fails to average returns 1.0 or 0.0.
+    CoverageOptions options;
+    options.SetSigma(4.0);
+    OEChem::OEGraphMol mol = MakeTwoCarbonMol();
+    ExpectPinned(coverage(mol, ObsGrid(), nullptr, options).overall,
+                 MaptitudePins::COVERAGE_TWO_ATOM_SPLIT);
 }

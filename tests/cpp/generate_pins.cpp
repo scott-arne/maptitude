@@ -38,6 +38,23 @@ OESystem::OEScalarGrid CalcGrid() {
     return MakeGaussianGrid(0.25, -0.1, 0.15, 1.1, HALF_WIDTH, SPACING);
 }
 
+/// Two carbons: one on the observed grid's maximum, one 3.0 A out along x.
+OEChem::OEGraphMol MakeTwoCarbonMol() {
+    OEChem::OEGraphMol mol;
+    const double coords[2][3] = {{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}};
+    for (const auto& xyz : coords) {
+        OEChem::OEAtomBase* atom = mol.NewAtom(6);
+        mol.SetCoords(atom, xyz);
+        OEChem::OEResidue residue;
+        residue.SetName("LIG");
+        residue.SetResidueNumber(1);
+        residue.SetChainID('A');
+        residue.SetBFactor(0.0);
+        OEChem::OEAtomSetResidue(atom, residue);
+    }
+    return mol;
+}
+
 void EmitMetricPins() {
     const OESystem::OEScalarGrid obs = ObsGrid();
     const OESystem::OEScalarGrid calc = CalcGrid();
@@ -68,6 +85,15 @@ void EmitMetricPins() {
         Emit("RSCC_OXYGEN_OFFSET", rscc(mol, obs, RESOLUTION, nullptr, &calc).overall);
     }
     {
+        // RSCC's radius switch has no ADAPTIVE case, so ADAPTIVE falls through to the
+        // binned default. Equal to RSCC_CARBON_BINNED by construction -- the equality
+        // is the pin. Giving RSCC a real adaptive branch would move this and not that.
+        RsccOptions options;
+        options.SetAtomRadiusMethod(AtomRadius::ADAPTIVE);
+        OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+        Emit("RSCC_CARBON_ADAPTIVE", rscc(mol, obs, RESOLUTION, nullptr, &calc, options).overall);
+    }
+    {
         // RsrOptions defaults to ADAPTIVE, so the binned path must be selected
         // explicitly -- otherwise this pin silently duplicates RSR_CARBON_ADAPTIVE.
         RsrOptions options;
@@ -80,6 +106,28 @@ void EmitMetricPins() {
         options.SetAtomRadiusMethod(AtomRadius::ADAPTIVE);
         OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
         Emit("RSR_CARBON_ADAPTIVE", rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall);
+    }
+    {
+        // Pins that RsrOptions still defaults to ADAPTIVE. Equal to
+        // RSR_CARBON_ADAPTIVE by construction -- that equality IS the assertion, and
+        // changing the default moves this pin while leaving the explicit one alone.
+        RsrOptions options;
+        OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+        Emit("RSR_CARBON_DEFAULT", rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall);
+    }
+    {
+        RsrOptions options;
+        options.SetAtomRadiusMethod(AtomRadius::FIXED);
+        options.SetFixedAtomRadius(1.5);
+        OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+        Emit("RSR_CARBON_FIXED", rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall);
+    }
+    {
+        RsrOptions options;
+        options.SetAtomRadiusMethod(AtomRadius::SCALED);
+        options.SetAtomRadiusScaling(1.5);
+        OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+        Emit("RSR_CARBON_SCALED", rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall);
     }
     {
         OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
@@ -108,6 +156,15 @@ void EmitMetricPins() {
         options.SetSigma(24.0);
         OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
         Emit("COVERAGE_CARBON_SIGMA24", coverage(mol, obs, nullptr, options).overall);
+    }
+    {
+        // The only pin whose value no single-atom molecule can produce: one atom above
+        // the threshold and one below, so 0.5 is the aggregation mean itself. Any
+        // implementation that drops an atom or fails to average returns 1.0 or 0.0.
+        CoverageOptions options;
+        options.SetSigma(4.0);
+        OEChem::OEGraphMol mol = MakeTwoCarbonMol();
+        Emit("COVERAGE_TWO_ATOM_SPLIT", coverage(mol, obs, nullptr, options).overall);
     }
 }
 
