@@ -3,7 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <set>
+#include <stdexcept>
 #include <utility>
 
 #include <oechem.h>
@@ -66,13 +66,20 @@ static inline OESystem::OEScalarGrid MakeUniformGrid(float value, double half_wi
 /// Build a grid whose value increases linearly along x, y, and z with distinct
 /// weights, so no symmetry can mask an index bug.
 ///
-/// Values are unique only while `2 * half_width / spacing <= 9` (at most ten
-/// points per axis). Beyond that the decade weights wrap: ten steps in y offset
-/// exactly one step in z, so e.g. (4.0, 0.5) yields 1777 distinct values across
-/// 4913 elements. Callers needing guaranteed-unique values must stay within
-/// that bound.
+/// Values are guaranteed unique. The decade weights separate ten grid points
+/// per axis; beyond that they wrap — ten steps in y offset exactly one step in
+/// z — so geometries with more than ten points on any axis produce colliding
+/// values and are rejected with `std::invalid_argument`. Example: (4.0, 0.5)
+/// produces 17 points per axis and would yield 1777 distinct values across 4913
+/// elements, so it is rejected rather than silently returned.
 static inline OESystem::OEScalarGrid MakeRampGrid(double half_width, double spacing) {
     OESystem::OEScalarGrid grid = MakeEmptyGrid(half_width, spacing);
+    const unsigned int max_dim = std::max({grid.GetXDim(), grid.GetYDim(), grid.GetZDim()});
+    if (max_dim > 10) {
+        throw std::invalid_argument(
+            "MakeRampGrid: the decade weights only separate ten points per axis; "
+            "this geometry produces more, so values would collide");
+    }
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
         float gx, gy, gz;
         grid.ElementToSpatialCoord(i, gx, gy, gz);
