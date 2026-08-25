@@ -23,8 +23,8 @@ This project provides the following for both C++ and Python:
 
 ## Requirements
 
-- Python 3.10 or later
-- OpenEye Toolkits 2025.2 or later (with a valid license)
+- Python 3.11 or later
+- OpenEye Toolkits 2026.1 or later (with a valid license)
 
 ## Installation
 

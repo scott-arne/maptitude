@@ -38,7 +38,7 @@ FetchContent_Declare(
 FetchContent_Declare(
     cmake_openeye
     GIT_REPOSITORY https://github.com/scott-arne/cmake-openeye.git
-    GIT_TAG v1.2.0
+    GIT_TAG v1.2.1
     GIT_SHALLOW TRUE
 )
 
