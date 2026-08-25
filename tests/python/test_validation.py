@@ -9,7 +9,6 @@ implementations produce results consistent with the reference data.
 
 import math
 import pathlib
-import struct
 
 import numpy as np
 import pytest
@@ -122,62 +121,10 @@ _PDB_RESOLUTIONS = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _load_mrc_grid(mrc_path: pathlib.Path):
-    """Load an MRC/CCP4 grid and fix the origin from the MRC header.
-
-    OpenEye's OEReadGrid does not apply the ORIGIN field (words 50-52) from
-    the MRC header, so the grid ends up at the wrong spatial location. This
-    helper reads the origin from the binary header and shifts the grid
-    mid-coordinates accordingly.
-    """
-    from openeye import oechem, oegrid
-
-    with open(mrc_path, "rb") as f:
-        header = f.read(1024)
-    origin_x, origin_y, origin_z = struct.unpack_from("3f", header, 196)
-
-    grid = oegrid.OEScalarGrid()
-    ifs = oechem.oeifstream(str(mrc_path))
-    oegrid.OEReadGrid(ifs, grid, oegrid.OEGridFileType_CCP4)
-    ifs.close()
-
-    sp = grid.GetSpacing()
-    grid.SetXMid(origin_x + (grid.GetXDim() - 1) * sp / 2.0)
-    grid.SetYMid(origin_y + (grid.GetYDim() - 1) * sp / 2.0)
-    grid.SetZMid(origin_z + (grid.GetZDim() - 1) * sp / 2.0)
-    return grid
-
-
-def _load_ccp4_grid(ccp4_path: pathlib.Path):
-    """Load a CCP4 map from PDBe EDS including symmetry operators.
-
-    :returns: Tuple of (grid, (a, b, c) cell dimensions, symops_text).
-    """
-    from openeye import oechem, oegrid
-    from maptitude import parse_symops
-
-    with open(ccp4_path, "rb") as f:
-        header = f.read(1024)
-    a, b, c = struct.unpack_from("3f", header, 40)
-    nsymbt = struct.unpack_from("<i", header, 92)[0]
-
-    symops_list = []
-    if nsymbt > 0:
-        with open(ccp4_path, "rb") as f:
-            f.seek(1024)
-            sym_bytes = f.read(nsymbt)
-        # CCP4 symmetry records are 80-char fixed-width with no newlines.
-        # Split into 80-char chunks so parse_symops can handle them.
-        sym_text = sym_bytes.decode("ascii", errors="ignore")
-        sym_lines = [sym_text[i:i+80].strip() for i in range(0, len(sym_text), 80)]
-        symops_list = parse_symops("\n".join(line for line in sym_lines if line))
-
-    grid = oegrid.OEScalarGrid()
-    ifs = oechem.oeifstream(str(ccp4_path))
-    oegrid.OEReadGrid(ifs, grid, oegrid.OEGridFileType_CCP4)
-    ifs.close()
-
-    return grid, (a, b, c), symops_list
+# MRC/CCP4 map loading and symmetry-operator extraction are shared with the
+# benchmark suite; import the single canonical implementation (see conftest.py
+# for the sys.path wiring) instead of duplicating the header parsing here.
+from helpers import load_ccp4_grid, load_mrc_grid
 
 
 def _wrap_and_pad_grid(grid, mol, cell, padding: float = 3.0):
@@ -343,7 +290,7 @@ class TestQScoreMapqComparison:
         oechem.OEReadMolecule(ifs, cls.mol)
         ifs.close()
 
-        cls.grid = _load_mrc_grid(_ASSET_DIR / "390_emd_30342_A_z4.mrc")
+        cls.grid = load_mrc_grid(_ASSET_DIR / "390_emd_30342_A_z4.mrc")
 
         cls.result = qscore(cls.mol, cls.grid, resolution=cls._RESOLUTION)
 
@@ -434,6 +381,12 @@ class TestIntegration:
 
     Uses the 7CEC fragment (12 residues, 100 heavy atoms, chain A) and the
     EMD-30342 density map at 3.9 A resolution.
+
+    Cryo-EM maps have no Fc model, so only the model-free metrics (Q-Score,
+    EDIAm, Coverage) are exercised here. RSCC and RSR require an Fc model and
+    are validated on X-ray data (see :class:`TestRSCCRSRBenchmark`); computing
+    them for EM against the observed map would be a meaningless
+    observed-vs-observed self-correlation.
     """
 
     _RESOLUTION = 3.9
@@ -441,32 +394,18 @@ class TestIntegration:
     @classmethod
     def setup_class(cls):
         from openeye import oechem
-        from maptitude import rscc, rsr, qscore, ediam
+        from maptitude import qscore, ediam, coverage
 
         cls.mol = oechem.OEGraphMol()
         ifs = oechem.oemolistream(str(_ASSET_DIR / "390_7cec_A100.cif"))
         oechem.OEReadMolecule(ifs, cls.mol)
         ifs.close()
 
-        cls.grid = _load_mrc_grid(_ASSET_DIR / "390_emd_30342_A_z4.mrc")
+        cls.grid = load_mrc_grid(_ASSET_DIR / "390_emd_30342_A_z4.mrc")
 
-        # Cryo-EM has no Fc model; use observed grid as calc_grid to exercise
-        # the code path (auto-generation is not yet supported).
-        cls.rscc_result = rscc(cls.mol, cls.grid, resolution=cls._RESOLUTION,
-                               calc_grid=cls.grid)
-        cls.rsr_result = rsr(cls.mol, cls.grid, resolution=cls._RESOLUTION,
-                             calc_grid=cls.grid)
         cls.qscore_result = qscore(cls.mol, cls.grid, resolution=cls._RESOLUTION)
         cls.ediam_result = ediam(cls.mol, cls.grid, resolution=cls._RESOLUTION)
-
-    def test_rscc_on_real_structure(self):
-        assert not math.isnan(self.rscc_result.overall)
-        assert len(self.rscc_result.by_residue) > 0
-        assert len(self.rscc_result.by_atom) > 0
-
-    def test_rsr_on_real_structure(self):
-        assert not math.isnan(self.rsr_result.overall)
-        assert self.rsr_result.overall >= 0.0
+        cls.coverage_result = coverage(cls.mol, cls.grid, 1.0)
 
     def test_qscore_on_real_structure(self):
         assert not math.isnan(self.qscore_result.overall)
@@ -476,11 +415,10 @@ class TestIntegration:
         assert self.ediam_result.overall >= 0.0
         assert self.ediam_result.overall <= 1.0
 
-    def test_rscc_and_rsr_return_same_atom_count(self):
-        """RSCC and RSR should identify the same set of atoms."""
-        assert set(self.rscc_result.by_atom.keys()) == set(
-            self.rsr_result.by_atom.keys()
-        )
+    def test_coverage_on_real_structure(self):
+        assert not math.isnan(self.coverage_result.overall)
+        assert 0.0 <= self.coverage_result.overall <= 1.0
+        assert len(self.coverage_result.by_atom) > 0
 
     def test_qscore_and_ediam_return_same_atom_count(self):
         """Q-score and EDIAm should cover the same atoms."""
@@ -536,9 +474,10 @@ class TestRSCCRSRBenchmark:
             oechem.OEReadMolecule(ifs, mol)
             ifs.close()
 
-            grid, cell_dims, symops_list = _load_ccp4_grid(
+            grid, cell_dims, symops_text = load_ccp4_grid(
                 _ASSET_DIR / f"{pdb}_2fofc.ccp4"
             )
+            symops_list = parse_symops(symops_text) if symops_text else None
             grid = _wrap_and_pad_grid(grid, mol, cell_dims)
 
             cls.mols[pdb] = mol
