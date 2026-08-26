@@ -4,6 +4,9 @@ The output is committed so tests do not depend on a Python toolchain. Rerun only
 if the fixture needs to change::
 
     .venv/bin/python tests/data/make_test_map.py
+
+Note: regeneration is not byte-identical. The density region is stable, but 2
+bytes in the CCP4 EXTRA field change each run due to pointer-derived metadata.
 """
 
 from __future__ import annotations

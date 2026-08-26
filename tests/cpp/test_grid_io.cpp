@@ -47,5 +47,9 @@ TEST(GridIoTest, ScoresAgainstAMapReadFromDisk) {
     EXPECT_TRUE(std::isfinite(result.overall));
     EXPECT_GE(result.overall, -1.0);
     EXPECT_LE(result.overall, 1.0);
+    // A carbon on the Gaussian's peak scores ~0.94. Asserting strict positivity
+    // is what distinguishes this from a test that an always-zero regression in
+    // the disk-read scoring path would still pass.
+    EXPECT_GT(result.overall, 0.0);
     EXPECT_FALSE(result.by_atom.empty());
 }
