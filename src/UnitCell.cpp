@@ -154,11 +154,14 @@ void validate_cell(const UnitCell& cell) {
         throw CellError(message.str());
     }
 
-    // Compute volume locally (cannot call Volume() as it will call validate_cell
-    // after F3, creating infinite recursion). The volume check alone is not
-    // sufficient: vol = a*b*c*sqrt(radicand), so a large c can mask underflow
-    // in a*b, leaving matrix denominators like a*b*sg at zero even when vol is
-    // finite. Check the derived matrices directly.
+    // Compute the volume locally rather than calling Volume(), which validates
+    // its own cell and would recurse back into here.
+    //
+    // A finite positive volume is not on its own enough to make a cell usable:
+    // vol = a*b*c*sqrt(radicand) is left-associative, so a large c can mask an
+    // a*b that has already underflowed to zero, leaving denominators such as
+    // a*b*sg at zero while vol still looks healthy. Check the derived matrices
+    // themselves instead of reasoning about which denominators can degenerate.
     const double sg = std::sin(cell.gamma * DEG_TO_RAD);
     const double vol = cell.a * cell.b * cell.c * std::sqrt(radicand);
     if (!std::isfinite(vol) || vol <= 0.0) {
