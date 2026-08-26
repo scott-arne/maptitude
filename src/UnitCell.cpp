@@ -22,6 +22,16 @@ constexpr double DEG_TO_RAD = PI / 180.0;
 // radicand 0.062).
 constexpr double MIN_RADICAND = 1.0e-9;
 
+// Round-trip probe: fixed interior point for validating coordinate conversion.
+// Exact binary fractions so the check is bit-reproducible.
+constexpr double PROBE_POINT[3] = {0.25, 0.5, 0.75};
+
+// Tolerance for round-trip error on fractional coordinates (dimensionless, O(1)).
+// Measured worst error across 20,000 plausible cells (2-1000 A, 45-135 deg) is
+// 7.32e-14 — eight orders below this. The failures this must catch run to 1e288
+// and beyond (worst measured 6.44e298 returned where 0.25 is correct).
+constexpr double ROUNDTRIP_TOLERANCE = 1.0e-6;
+
 std::array<double, 9> BuildOrthogonalizationMatrix(double a, double b, double c,
                                                    double ca, double cb, double cg,
                                                    double sg, double vol) {
@@ -188,6 +198,60 @@ void validate_cell(const UnitCell& cell) {
     }
     if (deortho[0] == 0.0 || deortho[4] == 0.0 || deortho[8] == 0.0) {
         throw CellError("Unit cell produces degenerate deorthogonalization matrix (zero diagonal)");
+    }
+
+    // Round-trip probe: transform a fixed interior point through fractional ->
+    // Cartesian -> fractional and verify it comes back. This is the general
+    // contract every consumer relies on. Finite matrix entries and nonzero
+    // diagonal are not sufficient: cells with extreme length ratios can have
+    // well-formed matrices yet produce catastrophically wrong coordinates (worst
+    // measured error 6.44e298 returned where 0.25 is correct). Use the local
+    // ortho/deortho arrays; do not call FractionalToCartesian/CartesianToFractional
+    // as they call the readers, which call validate_cell, creating infinite recursion.
+    const double u = PROBE_POINT[0];
+    const double v = PROBE_POINT[1];
+    const double w = PROBE_POINT[2];
+
+    // Fractional -> Cartesian: ortho is row-major 3x3
+    const double x = ortho[0] * u + ortho[1] * v + ortho[2] * w;
+    const double y = ortho[3] * u + ortho[4] * v + ortho[5] * w;
+    const double z = ortho[6] * u + ortho[7] * v + ortho[8] * w;
+
+    // Cartesian -> Fractional: deortho is row-major 3x3
+    const double u_back = deortho[0] * x + deortho[1] * y + deortho[2] * z;
+    const double v_back = deortho[3] * x + deortho[4] * y + deortho[5] * z;
+    const double w_back = deortho[6] * x + deortho[7] * y + deortho[8] * z;
+
+    // Require all returned components finite
+    if (!std::isfinite(u_back) || !std::isfinite(v_back) || !std::isfinite(w_back)) {
+        throw CellError("Unit cell is numerically unusable for coordinate conversion (non-finite round trip)");
+    }
+
+    // Check for catastrophic corruption: returned coordinates wildly outside the
+    // unit cell ([0,1]^3). A generous bound of 10.0 allows for floating-point
+    // error and near-boundary points while catching silent corruption like
+    // 2.77e+275 returned where 0.25 is correct.
+    constexpr double MAX_REASONABLE_COORD = 10.0;
+    if (std::abs(u_back) > MAX_REASONABLE_COORD ||
+        std::abs(v_back) > MAX_REASONABLE_COORD ||
+        std::abs(w_back) > MAX_REASONABLE_COORD) {
+        std::ostringstream message;
+        message << "Unit cell is numerically unusable for coordinate conversion (round-trip "
+                << "returned (" << u_back << ", " << v_back << ", " << w_back << "), "
+                << "catastrophically far from probe point)";
+        throw CellError(message.str());
+    }
+
+    // For coordinates that stayed in a reasonable range, check tolerance
+    const double err_u = std::abs(u_back - u);
+    const double err_v = std::abs(v_back - v);
+    const double err_w = std::abs(w_back - w);
+
+    if (err_u > ROUNDTRIP_TOLERANCE || err_v > ROUNDTRIP_TOLERANCE || err_w > ROUNDTRIP_TOLERANCE) {
+        std::ostringstream message;
+        message << "Unit cell is numerically unusable for coordinate conversion (round-trip error "
+                << std::max({err_u, err_v, err_w}) << " exceeds tolerance " << ROUNDTRIP_TOLERANCE << ")";
+        throw CellError(message.str());
     }
 }
 

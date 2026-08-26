@@ -108,13 +108,16 @@ struct UnitCell {
 
 /// Validate that a unit cell is geometrically valid and numerically usable.
 ///
-/// Runs four independent checks: (1) each length is finite and positive;
-/// (2) each angle is strictly within (0, 180) degrees; (3) the volume radicand
-/// exceeds a small positive floor (~1e-9), rejecting both geometrically impossible
-/// cells and those too degenerate to compute with; (4) the derived volume is
-/// finite and positive. Neither the angle-range check nor the radicand check
-/// subsumes the other: cos(200°) == cos(160°), so an out-of-range angle can pass
-/// the radicand test, while in-range angles (150, 150, 150) can describe no real
+/// Runs a sequence of checks: (1) each length is finite and positive; (2) each
+/// angle is strictly within (0, 180) degrees; (3) the volume radicand exceeds a
+/// small positive floor (~1e-9), rejecting both geometrically impossible cells and
+/// those too degenerate to compute with; (4) the derived volume is finite and
+/// positive; (5) all orthogonalization and deorthogonalization matrix entries are
+/// finite and the diagonal is nonzero; (6) a round-trip coordinate transformation
+/// probe (fractional -> Cartesian -> fractional) on a fixed interior point returns
+/// within tolerance. Neither the angle-range check nor the radicand check subsumes
+/// the other: cos(200°) == cos(160°), so an out-of-range angle can pass the
+/// radicand test, while in-range angles (150, 150, 150) can describe no real
 /// lattice.
 ///
 /// Called automatically by the parameterized constructor, by the geometry readers
