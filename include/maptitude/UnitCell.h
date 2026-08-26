@@ -106,6 +106,19 @@ struct UnitCell {
     bool operator!=(const UnitCell& other) const;
 };
 
+/// Validate that a unit cell describes a real lattice.
+///
+/// Runs three independent checks in order: lengths finite and positive; each
+/// angle strictly within (0, 180) degrees; and a positive volume radicand.
+/// Neither the angle-range check nor the radicand check subsumes the other --
+/// cos(200 deg) == cos(160 deg), so an out-of-range angle can pass the
+/// radicand test, while three in-range angles (150, 150, 150) can still
+/// describe no real lattice.
+///
+/// \param cell The cell to check.
+/// \throws CellError If any check fails; the message names the specific cause.
+void validate_cell(const UnitCell& cell);
+
 }  // namespace Maptitude
 
 #endif  // MAPTITUDE_UNITCELL_H

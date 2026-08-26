@@ -2,6 +2,7 @@
 #include "maptitude/Error.h"
 #include "maptitude/Grid.h"
 #include "maptitude/ScatteringFactors.h"
+#include "maptitude/UnitCell.h"
 
 #include <oechem.h>
 #include <oegrid.h>
@@ -35,7 +36,11 @@ struct DensityCalculator::Impl {
 
 DensityCalculator::DensityCalculator(const UnitCell& cell,
                                      const std::vector<SymOp>& symops)
-    : pimpl_(std::make_unique<Impl>(cell, symops)) {}
+    : pimpl_(std::make_unique<Impl>(cell, symops)) {
+    // The members of UnitCell are public and mutable, so a cell can be
+    // invalidated after construction. Re-check at the consumption point.
+    validate_cell(pimpl_->cell);
+}
 
 DensityCalculator::~DensityCalculator() = default;
 
