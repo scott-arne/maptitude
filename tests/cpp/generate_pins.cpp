@@ -176,24 +176,33 @@ void EmitMetricPins(std::ostream& os) {
     }
 }
 
-/// Reduce a grid to five scalars: sum, sum-of-squares, min, max, and an
-/// order-sensitive index moment.
+/// Reduce a grid to five scalars: sum, sum-of-squares, min, max, and a
+/// mean-centred order-sensitive index moment.
 ///
-/// The index moment is sum((i+1) * v[i]). It catches deterministic axis-order
-/// and stride permutations (e.g., a transposed grid with the same value
-/// multiset). It does not catch value changes that happen to preserve the
-/// weighted sum.
+/// The index moment is sum((i+1) * (v[i] - mean)). Mean-centring removes the
+/// permutation-invariant component: the mean contributes uniformly to every
+/// index, so including it only inflates the tolerance without adding signal.
+/// It catches deterministic axis-order and stride permutations (e.g., a
+/// transposed grid with the same value multiset).
 void EmitGridSummary(std::ostream& os, const std::string& prefix, const OESystem::OEScalarGrid& grid) {
     double sum = 0.0, sum_sq = 0.0, index_moment = 0.0;
     double lo = grid[0], hi = grid[0];
+
+    // First pass: sum, sum_sq, min, max
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
         const double v = grid[i];
         sum += v;
         sum_sq += v * v;
         lo = std::min(lo, v);
         hi = std::max(hi, v);
-        index_moment += static_cast<double>(i + 1) * v;
     }
+
+    // Second pass: mean-centred index moment
+    const double mean = sum / static_cast<double>(grid.GetSize());
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+        index_moment += static_cast<double>(i + 1) * (grid[i] - mean);
+    }
+
     Emit(os, prefix + "_SUM", sum);
     Emit(os, prefix + "_SUM_SQ", sum_sq);
     Emit(os, prefix + "_MIN", lo);
@@ -226,6 +235,20 @@ void EmitFcPins(std::ostream& os) {
     std::unique_ptr<OESystem::OEScalarGrid> fc3(
         calc3.Calculate(mol3, obs, RESOLUTION, nullptr, 0.35, 46.0, false, 4));
     EmitGridSummary(os, "FC_ORTHORHOMBIC_SHELLS4", *fc3);
+
+    // Asymmetric atom position. The three cases above all place the atom at
+    // (5,5,5) inside a cubic grid with an isotropic Gaussian, a configuration an
+    // axis permutation maps almost onto itself -- their index moments move by
+    // less than their own tolerance under an x/y swap and cannot detect a
+    // stride or axis-order regression in the final interpolation loop. Distinct
+    // coordinates break that symmetry: the weakest permutation moves this
+    // moment by ~10^5 times its tolerance. Orthorhombic on purpose, so Task 9
+    // leaves it in place as the surviving permutation guard.
+    OEChem::OEGraphMol mol4 = MakeAtomMol(6, 5.0, 2.0, -1.0);
+    DensityCalculator calc4(ortho, symops);
+    OESystem::OEScalarGrid obs4 = MakeGaussianGrid(5.0, 2.0, -1.0, 1.0, HALF_WIDTH, SPACING);
+    std::unique_ptr<OESystem::OEScalarGrid> fc4(calc4.Calculate(mol4, obs4, RESOLUTION));
+    EmitGridSummary(os, "FC_ORTHORHOMBIC_ASYM", *fc4);
 }
 
 void EmitGridOpsPins(std::ostream& os) {

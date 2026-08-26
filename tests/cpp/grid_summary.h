@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include <gtest/gtest.h>
 #include <oegrid.h>
 
 /// Shared grid-reduction helpers for characterization tests.
@@ -16,7 +17,7 @@
 
 namespace MaptitudeTest {
 
-constexpr double FC_RELATIVE_TOLERANCE = 1e-6;
+constexpr double PIN_RELATIVE_TOLERANCE = 1e-6;
 
 struct GridSummary {
     double sum = 0.0;
@@ -26,37 +27,47 @@ struct GridSummary {
     double index_moment = 0.0;
 };
 
-/// Reduce a grid to five scalars: sum, sum-of-squares, min, max, and an
-/// order-sensitive index moment.
+/// Reduce a grid to five scalars: sum, sum-of-squares, min, max, and a
+/// mean-centred order-sensitive index moment.
 ///
-/// The index moment is sum((i+1) * v[i]). It catches deterministic axis-order
-/// and stride permutations (e.g., a transposed grid with the same value
-/// multiset). It does not catch value changes that happen to preserve the
-/// weighted sum.
+/// The index moment is sum((i+1) * (v[i] - mean)). Mean-centring removes the
+/// permutation-invariant component: the mean contributes uniformly to every
+/// index, so including it only inflates the tolerance without adding signal.
+/// It catches deterministic axis-order and stride permutations (e.g., a
+/// transposed grid with the same value multiset).
 inline GridSummary Summarize(const OESystem::OEScalarGrid& grid) {
     GridSummary s;
     s.min = grid[0];
     s.max = grid[0];
+
+    // First pass: sum, sum_sq, min, max
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
         const double v = grid[i];
         s.sum += v;
         s.sum_sq += v * v;
         s.min = std::min(s.min, v);
         s.max = std::max(s.max, v);
-        s.index_moment += static_cast<double>(i + 1) * v;
     }
+
+    // Second pass: mean-centred index moment
+    const double mean = s.sum / static_cast<double>(grid.GetSize());
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+        s.index_moment += static_cast<double>(i + 1) * (grid[i] - mean);
+    }
+
     return s;
 }
 
 /// ExpectPinned with two-regime tolerance: relative 1e-6 for |pinned| >= 1,
 /// absolute 1e-6 below it.
 ///
-/// The floor exists to avoid manufacturing cross-machine flakiness when FFTW's
-/// FFTW_ESTIMATE picks different codelets. Tightening toward the float noise
-/// floor on sub-1.0 values would make the pins brittle, not more precise.
+/// The floor exists to avoid manufacturing cross-machine flakiness. For FC pins,
+/// FFTW_ESTIMATE may pick different codelets across builds. For GridOps pins,
+/// the floor ensures that near-zero results do not turn into brittle noise-floor
+/// assertions. Tightening toward float epsilon would make pins fragile.
 inline void ExpectPinned(double actual, double pinned) {
     const double scale = std::max(1.0, std::abs(pinned));
-    EXPECT_NEAR(actual, pinned, FC_RELATIVE_TOLERANCE * scale);
+    EXPECT_NEAR(actual, pinned, PIN_RELATIVE_TOLERANCE * scale);
 }
 
 }  // namespace MaptitudeTest

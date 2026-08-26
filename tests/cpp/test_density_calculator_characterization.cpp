@@ -78,3 +78,27 @@ TEST(DensityCalculatorCharacterizationTest, OrthorhombicShells4) {
     ExpectPinned(s.max, MaptitudePins::FC_ORTHORHOMBIC_SHELLS4_MAX);
     ExpectPinned(s.index_moment, MaptitudePins::FC_ORTHORHOMBIC_SHELLS4_INDEX_MOMENT);
 }
+
+// Asymmetric atom position breaks the permutation symmetry that makes the
+// (5,5,5) cases above miss axis-order and stride regressions. The three
+// distinct coordinates at (5.0, 2.0, -1.0) move the mean-centred index moment
+// by ~10^5 times its tolerance under any axis permutation, catching the
+// transpositions that the symmetric geometry cannot. Orthorhombic on purpose
+// so Task 9 leaves it in place as the surviving permutation guard.
+TEST(DensityCalculatorCharacterizationTest, OrthorhombicAsym) {
+    UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 2.0, -1.0);
+    OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 2.0, -1.0, 1.0, 6.0, 0.5);
+
+    DensityCalculator calc(cell, symops);
+    std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
+    ASSERT_NE(fc, nullptr);
+
+    const GridSummary s = Summarize(*fc);
+    ExpectPinned(s.sum, MaptitudePins::FC_ORTHORHOMBIC_ASYM_SUM);
+    ExpectPinned(s.sum_sq, MaptitudePins::FC_ORTHORHOMBIC_ASYM_SUM_SQ);
+    ExpectPinned(s.min, MaptitudePins::FC_ORTHORHOMBIC_ASYM_MIN);
+    ExpectPinned(s.max, MaptitudePins::FC_ORTHORHOMBIC_ASYM_MAX);
+    ExpectPinned(s.index_moment, MaptitudePins::FC_ORTHORHOMBIC_ASYM_INDEX_MOMENT);
+}
