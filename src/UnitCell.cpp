@@ -21,6 +21,28 @@ constexpr double DEG_TO_RAD = PI / 180.0;
 // (the most degenerate angle triple in the test suite, 30/30/40 degrees, has
 // radicand 0.062).
 constexpr double MIN_RADICAND = 1.0e-9;
+
+std::array<double, 9> BuildOrthogonalizationMatrix(double a, double b, double c,
+                                                   double ca, double cb, double cg,
+                                                   double sg, double vol) {
+    // Row-major 3x3 matrix: fractional -> Cartesian
+    return {
+        a,  b * cg,  c * cb,
+        0,  b * sg,  c * (ca - cb * cg) / sg,
+        0,  0,       vol / (a * b * sg)
+    };
+}
+
+std::array<double, 9> BuildDeorthogonalizationMatrix(double a, double b, double c,
+                                                     double ca, double cb, double cg,
+                                                     double sg, double vol) {
+    // Inverse of orthogonalization matrix: Cartesian -> fractional
+    return {
+        1.0 / a,  -cg / (a * sg),  (cg * (ca - cb * cg) / sg - cb * sg) * b * c / vol,
+        0,        1.0 / (b * sg),  -(ca - cb * cg) * a * c / (vol * sg),
+        0,        0,               a * b * sg / vol
+    };
+}
 }
 
 UnitCell::UnitCell(const double a, const double b, const double c,
@@ -46,12 +68,7 @@ std::array<double, 9> UnitCell::OrthogonalizationMatrix() const {
 
     const double vol = Volume();
 
-    // Row-major 3x3 matrix: fractional -> Cartesian
-    return {
-        a,  b * cg,  c * cb,
-        0,  b * sg,  c * (ca - cb * cg) / sg,
-        0,  0,       vol / (a * b * sg)
-    };
+    return BuildOrthogonalizationMatrix(a, b, c, ca, cb, cg, sg, vol);
 }
 
 std::array<double, 9> UnitCell::DeorthogonalizationMatrix() const {
@@ -63,12 +80,7 @@ std::array<double, 9> UnitCell::DeorthogonalizationMatrix() const {
 
     const double vol = Volume();
 
-    // Inverse of orthogonalization matrix: Cartesian -> fractional
-    return {
-        1.0 / a,  -cg / (a * sg),  (cg * (ca - cb * cg) / sg - cb * sg) * b * c / vol,
-        0,        1.0 / (b * sg),  -(ca - cb * cg) * a * c / (vol * sg),
-        0,        0,               a * b * sg / vol
-    };
+    return BuildDeorthogonalizationMatrix(a, b, c, ca, cb, cg, sg, vol);
 }
 
 std::array<double, 3> UnitCell::CartesianToFractional(
@@ -143,18 +155,36 @@ void validate_cell(const UnitCell& cell) {
     }
 
     // Compute volume locally (cannot call Volume() as it will call validate_cell
-    // after F3, creating infinite recursion). Check that derived quantities are
-    // finite and usable. The volume check catches both underflow (1e-200 cube
-    // gives vol=0) and overflow (1e200 cube gives vol=inf). The matrix
-    // denominators (a*b*sg and vol) are implied: if vol is finite and positive,
-    // and we already checked a,b > 0 and angles are valid (so sg > 0 for any
-    // gamma in (0,180) excluding exact 0 or 180), then a*b*sg is also finite and
-    // positive.
+    // after F3, creating infinite recursion). The volume check alone is not
+    // sufficient: vol = a*b*c*sqrt(radicand), so a large c can mask underflow
+    // in a*b, leaving matrix denominators like a*b*sg at zero even when vol is
+    // finite. Check the derived matrices directly.
+    const double sg = std::sin(cell.gamma * DEG_TO_RAD);
     const double vol = cell.a * cell.b * cell.c * std::sqrt(radicand);
     if (!std::isfinite(vol) || vol <= 0.0) {
         std::ostringstream message;
         message << "Unit cell produces unusable volume: " << vol;
         throw CellError(message.str());
+    }
+
+    const auto ortho = BuildOrthogonalizationMatrix(cell.a, cell.b, cell.c, ca, cb, cg, sg, vol);
+    const auto deortho = BuildDeorthogonalizationMatrix(cell.a, cell.b, cell.c, ca, cb, cg, sg, vol);
+
+    // Verify all matrix entries are finite and the diagonal is nonzero (a zero
+    // diagonal entry means a degenerate transform). Indices 0, 4, 8 are the diagonal.
+    for (int i = 0; i < 9; ++i) {
+        if (!std::isfinite(ortho[i])) {
+            throw CellError("Unit cell produces non-finite orthogonalization matrix");
+        }
+        if (!std::isfinite(deortho[i])) {
+            throw CellError("Unit cell produces non-finite deorthogonalization matrix");
+        }
+    }
+    if (ortho[0] == 0.0 || ortho[4] == 0.0 || ortho[8] == 0.0) {
+        throw CellError("Unit cell produces degenerate orthogonalization matrix (zero diagonal)");
+    }
+    if (deortho[0] == 0.0 || deortho[4] == 0.0 || deortho[8] == 0.0) {
+        throw CellError("Unit cell produces degenerate deorthogonalization matrix (zero diagonal)");
     }
 }
 

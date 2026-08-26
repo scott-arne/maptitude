@@ -172,3 +172,24 @@ TEST(CellValidationTest, DefaultConstructedCellThrowsFromReaders) {
     EXPECT_THROW(cell.OrthogonalizationMatrix(), CellError);
     EXPECT_THROW(cell.DeorthogonalizationMatrix(), CellError);
 }
+
+// ---- Matrix denominator overflow (F2 round 2) ----
+
+TEST(CellValidationTest, RejectsOrthogonalizationMatrixOverflow) {
+    // Fix round 2: a*b underflows to zero but large c rescues the volume,
+    // leaving vol/(a*b*sg) = inf in the orthogonalization matrix.
+    UnitCell cell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0);
+    cell.a = cell.b = 3.16228e-162;
+    cell.c = 1e280;
+    cell.gamma = 0.002;
+    EXPECT_THROW(validate_cell(cell), CellError);
+}
+
+TEST(CellValidationTest, RejectsDeorthogonalizationMatrixOverflow) {
+    // Fix round 2: subnormal a with large b*c causes b*c/vol to overflow
+    // in the deorthogonalization matrix even though vol is finite.
+    UnitCell cell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0);
+    cell.a = 1e-310;
+    cell.b = cell.c = 1e155;
+    EXPECT_THROW(validate_cell(cell), CellError);
+}
