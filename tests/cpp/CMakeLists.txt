@@ -22,7 +22,11 @@ add_executable(maptitude_tests
     test_metric_characterization.cpp
     test_density_calculator_characterization.cpp
     test_grid_ops_characterization.cpp
+    test_grid_io.cpp
 )
+
+target_compile_definitions(maptitude_tests
+    PRIVATE MAPTITUDE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data")
 
 target_link_libraries(maptitude_tests
     PRIVATE
