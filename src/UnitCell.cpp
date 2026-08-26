@@ -10,6 +10,17 @@ namespace Maptitude {
 namespace {
 constexpr double PI = 3.14159265358979323846;
 constexpr double DEG_TO_RAD = PI / 180.0;
+
+// Minimum radicand for a cell to be considered numerically usable. The radicand
+// is a dimensionless function of the angles alone (bounded above by 1 for
+// orthogonal cells). The direct polynomial form (1 - ca² - cb² - cg² + 2·ca·cb·cg)
+// has absolute error ~1e-15 from rounding (each term is O(1), so it is a few ulps
+// of 1.0 regardless of how small the true radicand is), making the computed sign
+// unreliable for near-degenerate cells. This floor sits ~6 orders above the noise
+// (so the sign question never arises) and ~7 orders below realistic crystallography
+// (the most degenerate angle triple in the test suite, 30/30/40 degrees, has
+// radicand 0.062).
+constexpr double MIN_RADICAND = 1.0e-9;
 }
 
 UnitCell::UnitCell(const double a, const double b, const double c,
@@ -19,6 +30,7 @@ UnitCell::UnitCell(const double a, const double b, const double c,
 }
 
 double UnitCell::Volume() const {
+    validate_cell(*this);
     const double ca = std::cos(alpha * DEG_TO_RAD);
     const double cb = std::cos(beta * DEG_TO_RAD);
     const double cg = std::cos(gamma * DEG_TO_RAD);
@@ -26,6 +38,7 @@ double UnitCell::Volume() const {
 }
 
 std::array<double, 9> UnitCell::OrthogonalizationMatrix() const {
+    validate_cell(*this);
     const double ca = std::cos(alpha * DEG_TO_RAD);
     const double cb = std::cos(beta * DEG_TO_RAD);
     const double cg = std::cos(gamma * DEG_TO_RAD);
@@ -42,6 +55,7 @@ std::array<double, 9> UnitCell::OrthogonalizationMatrix() const {
 }
 
 std::array<double, 9> UnitCell::DeorthogonalizationMatrix() const {
+    validate_cell(*this);
     const double ca = std::cos(alpha * DEG_TO_RAD);
     const double cb = std::cos(beta * DEG_TO_RAD);
     const double cg = std::cos(gamma * DEG_TO_RAD);
@@ -120,10 +134,26 @@ void validate_cell(const UnitCell& cell) {
     const double cb = std::cos(cell.beta * DEG_TO_RAD);
     const double cg = std::cos(cell.gamma * DEG_TO_RAD);
     const double radicand = 1.0 - ca * ca - cb * cb - cg * cg + 2.0 * ca * cb * cg;
-    if (radicand <= 0.0) {
+    if (radicand < MIN_RADICAND) {
         std::ostringstream message;
         message << "Unit cell angles (" << cell.alpha << ", " << cell.beta << ", " << cell.gamma
-                << ") describe no real lattice: volume radicand is " << radicand;
+                << ") are either geometrically impossible or too degenerate: volume radicand is "
+                << radicand;
+        throw CellError(message.str());
+    }
+
+    // Compute volume locally (cannot call Volume() as it will call validate_cell
+    // after F3, creating infinite recursion). Check that derived quantities are
+    // finite and usable. The volume check catches both underflow (1e-200 cube
+    // gives vol=0) and overflow (1e200 cube gives vol=inf). The matrix
+    // denominators (a*b*sg and vol) are implied: if vol is finite and positive,
+    // and we already checked a,b > 0 and angles are valid (so sg > 0 for any
+    // gamma in (0,180) excluding exact 0 or 180), then a*b*sg is also finite and
+    // positive.
+    const double vol = cell.a * cell.b * cell.c * std::sqrt(radicand);
+    if (!std::isfinite(vol) || vol <= 0.0) {
+        std::ostringstream message;
+        message << "Unit cell produces unusable volume: " << vol;
         throw CellError(message.str());
     }
 }
