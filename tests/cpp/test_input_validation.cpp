@@ -194,12 +194,12 @@ TEST(CellValidationTest, RejectsDeorthogonalizationMatrixOverflow) {
     EXPECT_THROW(validate_cell(cell), CellError);
 }
 
-// ---- Round-trip coordinate conversion probe (F5 round 3) ----
+// ---- Condition-number bound for coordinate conversion (F5 round 3/5) ----
 
 TEST(CellValidationTest, RejectsWorstRoundTripCorruption) {
-    // Fix round 3: extreme length ratios can produce finite matrix entries yet
-    // return catastrophically wrong coordinates (6.44e298 where 0.25 is correct).
-    // This is the worst measured case.
+    // Extreme length ratios can produce finite matrix entries yet return
+    // catastrophically wrong coordinates. This cell has condition number
+    // ~1e308 (one row sum overflows to inf), far exceeding the threshold.
     UnitCell cell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0);
     cell.a = 1e-20;
     cell.b = 1e-300;
@@ -209,9 +209,9 @@ TEST(CellValidationTest, RejectsWorstRoundTripCorruption) {
 }
 
 TEST(CellValidationTest, RejectsCaseThatIdentityCheckMisses) {
-    // Fix round 3: the proposed deortho*ortho identity check cannot distinguish
-    // this corrupted cell from a valid hexagonal cell (both have identity error
-    // 1.11e-16). The round-trip probe catches it.
+    // The proposed deortho*ortho identity check cannot distinguish this cell
+    // from a valid hexagonal cell (both have identity error 1.11e-16). The
+    // condition-number bound catches it (kappa ~1e308, row sum overflows).
     UnitCell cell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0);
     cell.a = 1e-200;
     cell.b = cell.c = 1e120;
@@ -219,14 +219,50 @@ TEST(CellValidationTest, RejectsCaseThatIdentityCheckMisses) {
 }
 
 TEST(CellValidationTest, RejectsExtremeLengthRatioFlaggedByReview) {
-    // The review named this cell and reached the right conclusion by the wrong
-    // route: it claimed CartesianToFractional(10, 0, 0) -> inf, which is an
-    // honest overflow of an unrepresentable answer. The real defect is that the
-    // interior point (0.25, 0.5, 0.75) round-trips to (-1.66e+276, 0.5, 0.75).
-    // The three basis vectors all round-trip cleanly, which is why a
-    // deortho*ortho identity check cannot see this and why an earlier
-    // measurement wrongly concluded the cell was healthy.
+    // Interior point (0.25, 0.5, 0.75) round-trips to (-1.66e+276, 0.5, 0.75)
+    // while basis vectors round-trip cleanly, which is why deortho*ortho
+    // identity check and earlier measurements missed this. Condition number
+    // bound catches all cases regardless of which points are probed.
     EXPECT_THROW(UnitCell(1e-308, 1.0, 1.0, 90.0, 90.0, 90.0), CellError);
+}
+
+TEST(CellValidationTest, RejectsCellWithExactProbeButWrongInterior) {
+    // Fix round 5: short-mantissa probes are structurally blind to catastrophic
+    // cancellation. This cell's (0.25, 0.5, 0.75) round trip is *exact* while
+    // (0.172..., 0.985..., 0.604...) comes back as (0.125, ...), error 0.047.
+    // The probe was chosen as exact binary fractions for reproducibility, which
+    // is exactly why it cannot see low-order bit destruction. Condition number
+    // is 5.74e226, far exceeding threshold.
+    UnitCell cell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0);
+    cell.a = 7.241769560140648e110;
+    cell.b = 7.532447449398725e125;
+    cell.c = 1.9046765643114865e-101;
+    cell.alpha = 63.52960342238751;
+    cell.beta = 43.63896561425281;
+    cell.gamma = 71.17433010912423;
+    EXPECT_THROW(validate_cell(cell), CellError);
+}
+
+TEST(CellValidationTest, RejectsWorstProbeEscape) {
+    // Fix round 5: worst escape from the round-trip probe in a 120k-cell sweep.
+    // Probe accepted it while another interior point came back with absolute
+    // error 1.227. Condition number 1.77e201 exceeds threshold.
+    UnitCell cell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0);
+    cell.a = 4.73235506481289e135;
+    cell.b = 5.588102857699266e-66;
+    cell.c = 2.913459289783779e-50;
+    cell.alpha = 136.82442378774567;
+    cell.beta = 98.94351481288861;
+    cell.gamma = 90.04905757433274;
+    EXPECT_THROW(validate_cell(cell), CellError);
+}
+
+TEST(CellValidationTest, AcceptsLegitimateExtremes) {
+    // Fix round 5: pin the condition-number threshold from below. A thin plate
+    // (kappa 500) and a ribosome cell (kappa 3.79) are legitimate despite being
+    // at the extreme end of the plausible range. Neither may be refused.
+    EXPECT_NO_THROW(UnitCell(2.0, 2.0, 1000.0, 90.0, 90.0, 90.0));
+    EXPECT_NO_THROW(UnitCell(500.0, 500.0, 1200.0, 90.0, 90.0, 120.0));
 }
 
 TEST(CellValidationTest, AcceptsPhysicalRangeEnds) {

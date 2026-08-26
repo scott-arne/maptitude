@@ -22,15 +22,14 @@ constexpr double DEG_TO_RAD = PI / 180.0;
 // radicand 0.062).
 constexpr double MIN_RADICAND = 1.0e-9;
 
-// Round-trip probe: fixed interior point for validating coordinate conversion.
-// Exact binary fractions so the check is bit-reproducible.
-constexpr double PROBE_POINT[3] = {0.25, 0.5, 0.75};
-
-// Tolerance for round-trip error on fractional coordinates (dimensionless, O(1)).
-// Measured worst error across 20,000 plausible cells (2-1000 A, 45-135 deg) is
-// 7.32e-14 — eight orders below this. The failures this must catch run to 1e288
-// and beyond (worst measured 6.44e298 returned where 0.25 is correct).
-constexpr double ROUNDTRIP_TOLERANCE = 1.0e-6;
+// Maximum infinity-norm condition number for coordinate conversion. Standard
+// rounding analysis for fl(M^-1 fl(M p)) gives round-trip error <= 6u*kappa*||p||_inf,
+// with u = 1.11e-16 and ||p||_inf <= 1 for fractional coordinates, so kappa < 1e9
+// bounds error at 6.7e-7, comfortably under the 1e-6 target. Measured across
+// plausible cells (0.5-5000 A, 20-160 deg), the worst kappa is 15,230 — 4.8 orders
+// below this threshold. Named cells: 1 A cube and 3000 A cube both kappa 1; seven
+// canonical shapes span 1 to 10.8; 500x500x1200 ribosome 3.79; 2x2x1000 thin plate 500.
+constexpr double MAX_CONDITION_NUMBER = 1.0e9;
 
 std::array<double, 9> BuildOrthogonalizationMatrix(double a, double b, double c,
                                                    double ca, double cb, double cg,
@@ -200,44 +199,31 @@ void validate_cell(const UnitCell& cell) {
         throw CellError("Unit cell produces degenerate deorthogonalization matrix (zero diagonal)");
     }
 
-    // Round-trip probe: transform a fixed interior point through fractional ->
-    // Cartesian -> fractional and verify it comes back. This is the general
-    // contract every consumer relies on. Finite matrix entries and nonzero
-    // diagonal are not sufficient: cells with extreme length ratios can have
-    // well-formed matrices yet produce catastrophically wrong coordinates (worst
-    // measured error 6.44e298 returned where 0.25 is correct). Use the local
-    // ortho/deortho arrays; do not call FractionalToCartesian/CartesianToFractional
-    // as they call the readers, which call validate_cell, creating infinite recursion.
-    const double u = PROBE_POINT[0];
-    const double v = PROBE_POINT[1];
-    const double w = PROBE_POINT[2];
+    // Infinity-norm condition number: bounds the round-trip error for any interior
+    // point. Finite matrix entries and nonzero diagonal are not sufficient: cells
+    // with extreme length ratios can have well-formed matrices yet produce
+    // catastrophically wrong coordinates. A condition-number bound is a *bound*
+    // rather than a *sample*, so it is not blind to any failure mode the way
+    // short-mantissa probes are. Compute from local arrays; do not call the
+    // readers, which call validate_cell, creating infinite recursion.
+    const double ortho_row0 = std::abs(ortho[0]) + std::abs(ortho[1]) + std::abs(ortho[2]);
+    const double ortho_row1 = std::abs(ortho[3]) + std::abs(ortho[4]) + std::abs(ortho[5]);
+    const double ortho_row2 = std::abs(ortho[6]) + std::abs(ortho[7]) + std::abs(ortho[8]);
+    const double ortho_norm = std::max({ortho_row0, ortho_row1, ortho_row2});
 
-    // Fractional -> Cartesian: ortho is row-major 3x3
-    const double x = ortho[0] * u + ortho[1] * v + ortho[2] * w;
-    const double y = ortho[3] * u + ortho[4] * v + ortho[5] * w;
-    const double z = ortho[6] * u + ortho[7] * v + ortho[8] * w;
+    const double deortho_row0 = std::abs(deortho[0]) + std::abs(deortho[1]) + std::abs(deortho[2]);
+    const double deortho_row1 = std::abs(deortho[3]) + std::abs(deortho[4]) + std::abs(deortho[5]);
+    const double deortho_row2 = std::abs(deortho[6]) + std::abs(deortho[7]) + std::abs(deortho[8]);
+    const double deortho_norm = std::max({deortho_row0, deortho_row1, deortho_row2});
 
-    // Cartesian -> Fractional: deortho is row-major 3x3
-    const double u_back = deortho[0] * x + deortho[1] * y + deortho[2] * z;
-    const double v_back = deortho[3] * x + deortho[4] * y + deortho[5] * z;
-    const double w_back = deortho[6] * x + deortho[7] * y + deortho[8] * z;
+    const double kappa = ortho_norm * deortho_norm;
 
-    // Require all returned components finite
-    if (!std::isfinite(u_back) || !std::isfinite(v_back) || !std::isfinite(w_back)) {
-        throw CellError("Unit cell is numerically unusable for coordinate conversion (non-finite round trip)");
-    }
-
-    // Check tolerance: probe components are at most 0.75, so any massive error
-    // (e.g. 1.66e+276 where 0.25 is correct) exceeds the tolerance by orders of
-    // magnitude.
-    const double err_u = std::abs(u_back - u);
-    const double err_v = std::abs(v_back - v);
-    const double err_w = std::abs(w_back - w);
-
-    if (err_u > ROUNDTRIP_TOLERANCE || err_v > ROUNDTRIP_TOLERANCE || err_w > ROUNDTRIP_TOLERANCE) {
+    // Require kappa finite before checking threshold: some cells overflow a row
+    // sum to inf while every individual matrix entry is finite.
+    if (!std::isfinite(kappa) || kappa >= MAX_CONDITION_NUMBER) {
         std::ostringstream message;
-        message << "Unit cell is numerically unusable for coordinate conversion (round-trip error "
-                << std::max({err_u, err_v, err_w}) << " exceeds tolerance " << ROUNDTRIP_TOLERANCE << ")";
+        message << "Unit cell is numerically unusable for coordinate conversion (condition number "
+                << kappa << " exceeds threshold " << MAX_CONDITION_NUMBER << ")";
         throw CellError(message.str());
     }
 }

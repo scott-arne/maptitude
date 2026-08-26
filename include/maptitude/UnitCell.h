@@ -113,12 +113,12 @@ struct UnitCell {
 /// small positive floor (~1e-9), rejecting both geometrically impossible cells and
 /// those too degenerate to compute with; (4) the derived volume is finite and
 /// positive; (5) all orthogonalization and deorthogonalization matrix entries are
-/// finite and the diagonal is nonzero; (6) a round-trip coordinate transformation
-/// probe (fractional -> Cartesian -> fractional) on a fixed interior point returns
-/// within tolerance. Neither the angle-range check nor the radicand check subsumes
-/// the other: cos(200°) == cos(160°), so an out-of-range angle can pass the
-/// radicand test, while in-range angles (150, 150, 150) can describe no real
-/// lattice.
+/// finite and the diagonal is nonzero; (6) the infinity-norm condition number
+/// (product of the matrix row-sum norms) stays below a threshold (~1e9), ensuring
+/// coordinate conversions are numerically stable for any interior point. Neither
+/// the angle-range check nor the radicand check subsumes the other: cos(200°) ==
+/// cos(160°), so an out-of-range angle can pass the radicand test, while in-range
+/// angles (150, 150, 150) can describe no real lattice.
 ///
 /// Called automatically by the parameterized constructor, by the geometry readers
 /// (Volume, OrthogonalizationMatrix, DeorthogonalizationMatrix), and by
