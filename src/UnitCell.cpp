@@ -227,22 +227,9 @@ void validate_cell(const UnitCell& cell) {
         throw CellError("Unit cell is numerically unusable for coordinate conversion (non-finite round trip)");
     }
 
-    // Check for catastrophic corruption: returned coordinates wildly outside the
-    // unit cell ([0,1]^3). A generous bound of 10.0 allows for floating-point
-    // error and near-boundary points while catching silent corruption like
-    // 2.77e+275 returned where 0.25 is correct.
-    constexpr double MAX_REASONABLE_COORD = 10.0;
-    if (std::abs(u_back) > MAX_REASONABLE_COORD ||
-        std::abs(v_back) > MAX_REASONABLE_COORD ||
-        std::abs(w_back) > MAX_REASONABLE_COORD) {
-        std::ostringstream message;
-        message << "Unit cell is numerically unusable for coordinate conversion (round-trip "
-                << "returned (" << u_back << ", " << v_back << ", " << w_back << "), "
-                << "catastrophically far from probe point)";
-        throw CellError(message.str());
-    }
-
-    // For coordinates that stayed in a reasonable range, check tolerance
+    // Check tolerance: probe components are at most 0.75, so any massive error
+    // (e.g. 1.66e+276 where 0.25 is correct) exceeds the tolerance by orders of
+    // magnitude.
     const double err_u = std::abs(u_back - u);
     const double err_v = std::abs(v_back - v);
     const double err_w = std::abs(w_back - w);

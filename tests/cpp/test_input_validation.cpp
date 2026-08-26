@@ -194,7 +194,7 @@ TEST(CellValidationTest, RejectsDeorthogonalizationMatrixOverflow) {
     EXPECT_THROW(validate_cell(cell), CellError);
 }
 
-// ---- Round-trip coordinate conversion probe (F3 round 3) ----
+// ---- Round-trip coordinate conversion probe (F5 round 3) ----
 
 TEST(CellValidationTest, RejectsWorstRoundTripCorruption) {
     // Fix round 3: extreme length ratios can produce finite matrix entries yet
@@ -218,23 +218,15 @@ TEST(CellValidationTest, RejectsCaseThatIdentityCheckMisses) {
     EXPECT_THROW(validate_cell(cell), CellError);
 }
 
-TEST(CellValidationTest, AcceptsExtremeLengthDespiteProbeFailure) {
-    // Fix round 3: UnitCell(1e-308, 1.0, 1.0, 90, 90, 90) was flagged by the
-    // review but should be accepted. The standard probe (0.25, 0.5, 0.75) fails
-    // due to cos(90°) floating-point residue (6.12e-17) being amplified by the
-    // tiny dimension, but specific coordinate conversions like (0,0,1) and (1,0,0)
-    // round-trip correctly. The matrix pair is a genuine mutual inverse for
-    // points aligned with the coordinate axes. The only true failure is
-    // CartesianToFractional(10, 0, 0) returning inf — a query 1e309 cell-widths
-    // from the origin whose answer is not representable.
-    //
-    // This cell is at the extreme edge of floating-point representation and
-    // fails the general round-trip probe, but is accepted because the failure
-    // mode is understood and some conversions work correctly.
-    //
-    // NOTE: This test currently fails because the round-trip probe rejects this
-    // cell. Awaiting clarification on how to handle this edge case.
-    // EXPECT_NO_THROW(UnitCell(1e-308, 1.0, 1.0, 90.0, 90.0, 90.0));
+TEST(CellValidationTest, RejectsExtremeLengthRatioFlaggedByReview) {
+    // The review named this cell and reached the right conclusion by the wrong
+    // route: it claimed CartesianToFractional(10, 0, 0) -> inf, which is an
+    // honest overflow of an unrepresentable answer. The real defect is that the
+    // interior point (0.25, 0.5, 0.75) round-trips to (-1.66e+276, 0.5, 0.75).
+    // The three basis vectors all round-trip cleanly, which is why a
+    // deortho*ortho identity check cannot see this and why an earlier
+    // measurement wrongly concluded the cell was healthy.
+    EXPECT_THROW(UnitCell(1e-308, 1.0, 1.0, 90.0, 90.0, 90.0), CellError);
 }
 
 TEST(CellValidationTest, AcceptsPhysicalRangeEnds) {
