@@ -46,6 +46,13 @@ public:
         : std::runtime_error(message) {}
 };
 
+/// Thrown when unit-cell parameters are geometrically invalid or describe a
+/// lattice this library does not support.
+class CellError : public std::runtime_error {
+public:
+    explicit CellError(const std::string& message) : std::runtime_error(message) {}
+};
+
 }  // namespace Maptitude
 
 #endif  // MAPTITUDE_ERROR_H

@@ -25,6 +25,76 @@
 #include <oegrid.h>
 
 using namespace Maptitude;
+
+/* Python exception objects, created on the first %init. Module-level statics:
+   the interpreter owns the references for the life of the process.
+
+   Sharing one set of classes across every interpreter makes this module unsafe
+   under subinterpreters. That is a known, deliberate constraint, and these
+   statics are only one reason for it -- the library also links OpenEye, FFTW,
+   and OpenMP, none of which are subinterpreter-safe either. */
+static PyObject* g_maptitude_error = NULL;
+static PyObject* g_structure_error = NULL;
+static PyObject* g_grid_error = NULL;
+static PyObject* g_symop_error = NULL;
+static PyObject* g_cell_error = NULL;
+
+/* Create one exception class, or reuse the cached one, then bind it on the
+   module being executed. Returns 0 on success, or -1 with a Python error
+   already set.
+
+   The NULL check is load-bearing rather than defensive. SWIG emits %init into
+   a Py_mod_exec slot and gives the generated PyModuleDef an m_size of 0, so
+   the slot can run more than once per process -- dropping the maptitude keys
+   from sys.modules and importing again is enough. Minting a fresh class on the
+   second run would leave every earlier importer holding a superseded object,
+   and the class %exception raises would no longer be the one their `except`
+   clause names. Reusing the cached object is what keeps those identical, and
+   what keeps the four subclasses sharing one MaptitudeError base.
+
+   PyModule_AddObjectRef does not steal, so the module takes its own reference
+   and the static keeps the one PyErr_NewException returned -- %exception
+   dereferences that static long after %init has returned. */
+static int MaptitudeAddException(PyObject* module, const char* qualified_name,
+                                 const char* attribute_name, PyObject* base,
+                                 PyObject** slot) {
+    if (*slot == NULL) {
+        /* The static keeps this reference for the life of the process; it is
+           never released, because %exception dereferences it from arbitrary
+           wrapper functions with no teardown hook to coordinate with. */
+        *slot = PyErr_NewException(qualified_name, base, NULL);
+        if (*slot == NULL) {
+            return -1;
+        }
+    }
+    return PyModule_AddObjectRef(module, attribute_name, *slot) < 0 ? -1 : 0;
+}
+%}
+
+%init %{
+    /* SWIG emits this block into SWIG_mod_exec, a Py_mod_exec slot returning
+       int -- 0 for success, -1 for failure. Returning NULL here would be 0,
+       i.e. a successful import with NULL exception statics. */
+    if (MaptitudeAddException(m, "maptitude.MaptitudeError", "MaptitudeError",
+                              NULL, &g_maptitude_error) < 0) {
+        return -1;
+    }
+    if (MaptitudeAddException(m, "maptitude.StructureError", "StructureError",
+                              g_maptitude_error, &g_structure_error) < 0) {
+        return -1;
+    }
+    if (MaptitudeAddException(m, "maptitude.GridError", "GridError",
+                              g_maptitude_error, &g_grid_error) < 0) {
+        return -1;
+    }
+    if (MaptitudeAddException(m, "maptitude.SymOpError", "SymOpError",
+                              g_maptitude_error, &g_symop_error) < 0) {
+        return -1;
+    }
+    if (MaptitudeAddException(m, "maptitude.CellError", "CellError",
+                              g_maptitude_error, &g_cell_error) < 0) {
+        return -1;
+    }
 %}
 
 // ============================================================================
@@ -407,17 +477,34 @@ OE_CROSS_RUNTIME_REF_TYPEMAPS(OEDocking::OEReceptor, _maptitude_is_oereceptor, "
     try {
         $action
     } catch (const Maptitude::StructureError& e) {
-        SWIG_exception(SWIG_ValueError, e.what());
+        PyErr_SetString(g_structure_error, e.what());
+        SWIG_fail;
     } catch (const Maptitude::GridError& e) {
-        SWIG_exception(SWIG_ValueError, e.what());
+        PyErr_SetString(g_grid_error, e.what());
+        SWIG_fail;
     } catch (const Maptitude::SymOpError& e) {
-        SWIG_exception(SWIG_ValueError, e.what());
+        PyErr_SetString(g_symop_error, e.what());
+        SWIG_fail;
+    } catch (const Maptitude::CellError& e) {
+        PyErr_SetString(g_cell_error, e.what());
+        SWIG_fail;
     } catch (const std::exception& e) {
         SWIG_exception(SWIG_RuntimeError, e.what());
     } catch (...) {
         SWIG_exception(SWIG_RuntimeError, "Unknown C++ exception");
     }
 }
+
+%pythoncode %{
+# The exception classes are created in the extension module's init function.
+# SWIG's proxy module does not mirror arbitrary extension attributes, so alias
+# them here; python/maptitude/__init__.py re-exports from this module.
+MaptitudeError = _maptitude.MaptitudeError
+StructureError = _maptitude.StructureError
+GridError = _maptitude.GridError
+SymOpError = _maptitude.SymOpError
+CellError = _maptitude.CellError
+%}
 
 // ============================================================================
 // Template instantiations for container types

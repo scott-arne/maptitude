@@ -624,6 +624,13 @@ from .maptitude import (
     DoubleVector,
     UnsignedIntVector,
     SymOpVector,
+
+    # Exceptions
+    MaptitudeError,
+    StructureError,
+    GridError,
+    SymOpError,
+    CellError,
 )
 
 
@@ -691,4 +698,10 @@ __all__ = [
     "fc_density",
     "parse_symop",
     "parse_symops",
+    # Exceptions
+    "MaptitudeError",
+    "StructureError",
+    "GridError",
+    "SymOpError",
+    "CellError",
 ]
