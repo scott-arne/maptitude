@@ -3,6 +3,8 @@
 #include "maptitude/Error.h"
 
 #include <cmath>
+#include <limits>
+#include <sstream>
 #include <string>
 
 using namespace Maptitude;
@@ -270,6 +272,72 @@ TEST(SymOpTest, LargeTranslationsRoundTripWithoutIntegerOverflow) {
         const SymOp second = SymOp::Parse(first.ToString());
         EXPECT_TRUE(first == second) << "input: " << text
                                      << " serialized as " << first.ToString();
+    }
+}
+
+TEST(SymOpTest, NegativeNearZeroTranslationsSerializeWithASeparator) {
+    // ToString chose the '+' separator from the sign of t[row] but chose what to print from
+    // the rounded numerator. For 1e-10 < |t| < 5e-9 the numerator rounds to zero, and a
+    // negative translation then emitted neither a '+' (t > 0 is false) nor a '-' (the sign
+    // does not survive the cast of -0.0 to int). "x-1e-9,y,z" served as "x0/2,y,z", which
+    // the term-boundary rule added at f8bedfc rejects -- the serializer emitting a string
+    // its own parser refuses.
+    const char* operators[] = {"x-1e-9,y,z", "x-2e-10,y,z", "x-1e-9,y-1e-9,z-1e-9",
+                               "y-1e-9,x,z", "x-y-1e-9,x,z"};
+    for (const char* text : operators) {
+        const SymOp op = SymOp::Parse(text);
+        const std::string serialized = op.ToString();
+        EXPECT_NO_THROW(SymOp::Parse(serialized))
+            << "input: " << text << " serialized as " << serialized;
+    }
+    // The band's two edges must keep behaving as documented rather than being swept up.
+    EXPECT_EQ(SymOp::Parse("x-1e-10,y,z").ToString(), "x,y,z");
+    EXPECT_EQ(SymOp::Parse("x-1e-8,y,z").ToString(), "x-1e-08,y,z");
+}
+
+TEST(SymOpTest, EveryTranslationMagnitudeAndSignRoundTrips) {
+    // A property test over the translation space, not another point pin. Rounds 4, 5, and 6
+    // each found a distinct ToString defect that every existing test missed, because each
+    // test named the handful of values its own finding used. This sweeps the magnitudes that
+    // select different branches -- suppressed, fraction, near-fraction, decimal, int-range
+    // boundary, non-finite-product -- in both signs and in three row shapes, because the
+    // round-6 defect only appears when a translation follows an already-emitted term.
+    const double magnitudes[] = {
+        1e-11, 1e-10, 2e-10, 1e-9, 5e-9, 1e-8, 1e-7, 1e-3,
+        1.0 / 12, 1.0 / 6, 1.0 / 4, 1.0 / 3, 0.5, 2.0 / 3, 0.75, 1.0 / 13,
+        1.0, 1.5, 3.0, 1e6, 1073741823.0, 1073741824.0, 2147483647.0, 1e20,
+        std::numeric_limits<double>::max()};
+    const char* prefixes[] = {"", "x", "x-y"};
+
+    for (const double magnitude : magnitudes) {
+        for (const double sign : {1.0, -1.0}) {
+            const double value = sign * magnitude;
+            for (const char* prefix : prefixes) {
+                std::ostringstream component;
+                component.precision(std::numeric_limits<double>::max_digits10);
+                component << prefix;
+                // A leading '+' on an empty prefix is legal but redundant; a negative value
+                // supplies its own sign either way.
+                if (*prefix != '\0' && value > 0) component << "+";
+                component << value;
+
+                const std::string text = component.str() + ",y,z";
+                const SymOp op = SymOp::Parse(text);
+                const std::string serialized = op.ToString();
+                ASSERT_NO_THROW(SymOp::Parse(serialized))
+                    << "input: " << text << " serialized as " << serialized;
+
+                // Above both suppression thresholds -- the 1e-10 magnitude test and the
+                // 1e-8 fraction tolerance, whose reach is 5e-9 at denominator 2 -- the
+                // round trip must be exact, not merely parseable. That is the assertion the
+                // round-5 defect needed: its corrupted output was grammatically valid.
+                if (magnitude >= 1e-7) {
+                    const SymOp reparsed = SymOp::Parse(serialized);
+                    EXPECT_TRUE(op == reparsed)
+                        << "input: " << text << " serialized as " << serialized;
+                }
+            }
+        }
     }
 }
 

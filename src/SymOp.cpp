@@ -251,40 +251,62 @@ std::string SymOp::ToString() const {
         }
 
         if (std::abs(t[row]) > 1e-10) {
-            if (t[row] > 0 && !first) oss << "+";
-            // Try to express as fraction
             const double frac = t[row];
-            bool found_frac = false;
+            std::string rendered;
+            bool indistinguishable_from_zero = false;
+
             for (int denom = 2; denom <= 12; ++denom) {
+                // frac * denom overflows to infinity for translations near DBL_MAX, and
+                // inf - inf is NaN, which fails this test -- so the fraction form is
+                // correctly skipped rather than entered with a garbage numerator.
                 const double numer = frac * denom;
-                if (std::abs(numer - std::round(numer)) < 1e-8) {
-                    const double rounded = std::round(numer);
-                    // Casting a double outside int's range is undefined behavior, and
-                    // frac * 2 passes INT_MAX once the translation reaches 2^30. The
-                    // saturated cast silently rewrote the operator: "x+1073741824,y,z"
-                    // serialized as "x+2147483647/2,y,z" and reparsed as 1073741823.5.
-                    // A larger denominator only grows |numer|, so give up on the fraction
-                    // form entirely and let the max_digits10 decimal path below render it
-                    // exactly.
-                    if (rounded < static_cast<double>(std::numeric_limits<int>::min()) ||
-                        rounded > static_cast<double>(std::numeric_limits<int>::max())) {
-                        break;
-                    }
-                    oss << static_cast<int>(rounded) << "/" << denom;
-                    found_frac = true;
+                if (std::abs(numer - std::round(numer)) >= 1e-8) continue;
+
+                const double rounded = std::round(numer);
+                // Casting a double outside int's range is undefined behavior, and frac * 2
+                // passes INT_MAX once the translation reaches 2^30. A larger denominator
+                // only grows |numer|, so give up on the fraction form entirely and let the
+                // decimal path below render the value exactly.
+                if (rounded < static_cast<double>(std::numeric_limits<int>::min()) ||
+                    rounded > static_cast<double>(std::numeric_limits<int>::max())) {
                     break;
                 }
+
+                const int n = static_cast<int>(rounded);
+                // A numerator of zero means the search found the translation
+                // indistinguishable from zero at this denominator, so there is nothing to
+                // write. "0/2" would be noise, and for a negative translation it is worse
+                // than noise: the sign does not survive the cast, so the row emits two
+                // adjacent terms with no separator and the parser rejects its own
+                // serializer's output ("x-1e-9,y,z" served as "x0/2,y,z").
+                if (n == 0) {
+                    indistinguishable_from_zero = true;
+                    break;
+                }
+
+                std::ostringstream fraction;
+                fraction << n << "/" << denom;
+                rendered = fraction.str();
+                break;
             }
-            if (!found_frac) {
-                // Six significant digits is not enough to name a double: 1/13 writes
-                // as 0.0769231 and reads back as a different value. max_digits10 is
-                // the shortest precision that round-trips every double exactly.
-                const std::streamsize previous =
-                    oss.precision(std::numeric_limits<double>::max_digits10);
-                oss << frac;
-                oss.precision(previous);
+
+            if (!indistinguishable_from_zero) {
+                if (rendered.empty()) {
+                    // Six significant digits is not enough to name a double: 1/13 writes
+                    // as 0.0769231 and reads back as a different value. max_digits10 is
+                    // the shortest precision that round-trips every double exactly.
+                    std::ostringstream decimal;
+                    decimal.precision(std::numeric_limits<double>::max_digits10);
+                    decimal << frac;
+                    rendered = decimal.str();
+                }
+                // The separator follows from the token, not from the sign of the
+                // translation. Deciding it from the sign is what let a value that renders
+                // as "0" emit neither a '+' nor a '-'.
+                if (!first && rendered.front() != '-') oss << "+";
+                oss << rendered;
+                first = false;
             }
-            first = false;
         }
 
         // ParseComponent rejects an empty component, so a row that emitted nothing -- an
