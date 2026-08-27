@@ -157,8 +157,11 @@ namespace OESystem {
 // ============================================================================
 // OpenEye's Python bindings use SWIG runtime v4; our module uses v5.
 // Since the runtimes are separate, SWIG_TypeQuery cannot access OpenEye types.
-// We use Python isinstance for type safety and directly extract the void*
-// pointer from the SwigPyObject struct layout (stable across SWIG versions).
+// We validate the Python wrapper's real type (not isinstance, which honors
+// __class__ properties) and directly extract the void* pointer from the
+// SwigPyObject struct layout (stable across SWIG versions). Type validation
+// is limited to the wrapper because the separate runtimes put OpenEye's SWIG
+// type table out of reach.
 //
 // This approach enables passing OpenEye objects between Python and C++ without
 // serialization. The macros below generate the boilerplate for each type.
@@ -175,9 +178,14 @@ struct _SwigPyObjectCompat {
 /* Defense in depth, NOT a fix. Struct punning across two SWIG runtimes cannot
    be made safe, only unreachable from bad input: this function still casts an
    arbitrary object's `this` attribute to _SwigPyObjectCompat and reads through
-   it, and no guard here can validate that layout. The isinstance checkers in
-   the typemaps are the actual defense. Do not relax a typemap's type check on
-   the belief that this function is hardened -- it is not. */
+   it, and no guard here can validate that layout. The type checkers in the
+   typemaps are the primary defense: they validate the Python wrapper's real
+   type before extraction. They cannot validate the pointer itself, because
+   `this` is a writable attribute — an accepted predicate whose `this` was
+   reassigned (e.g., pred.this = mol.this) will still be punned. Closing that
+   would require validating the pointee against OpenEye's SWIG type table,
+   which is unreachable across the v4/v5 runtime split. Do not relax a
+   typemap's type check on the belief that this function is hardened -- it is not. */
 static void* _maptitude_extract_swig_ptr(PyObject* obj) {
     if (obj == NULL || obj == Py_None) {
         return NULL;
@@ -196,7 +204,8 @@ static void* _maptitude_extract_swig_ptr(PyObject* obj) {
 // Generates a cached type checker for an OpenEye Python type. Uses the object's
 // real type (Py_TYPE), not PyObject_IsInstance, because the extracted pointer is
 // reinterpret_cast to a C++ type and a spoofed __class__ property would otherwise
-// let any object claim to be one.
+// let any object claim to be one. This check covers the wrapper type only; see
+// the _maptitude_extract_swig_ptr comment for the pointer validation limit.
 // TAG:    identifier suffix (e.g., oemolbase)
 // MODULE: Python module string (e.g., "openeye.oechem")
 // CLASS:  Python class name string (e.g., "OEMolBase")
