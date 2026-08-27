@@ -12,6 +12,8 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <vector>
 
@@ -237,6 +239,55 @@ static void InterpolateUCToGrid(
     }
 }
 
+// ==== FFTW RAII wrappers ====
+
+namespace {
+
+/// FFTW buffers come from fftw_malloc, not operator new, so they need their own
+/// deleter. RAII here guards the throw paths: Calculate performs nine
+/// allocations across ~200 lines and calls into code that can throw.
+struct FftwComplexDeleter {
+    void operator()(fftw_complex* p) const noexcept {
+        if (p != nullptr) {
+            fftw_free(p);
+        }
+    }
+};
+
+using FftwComplexPtr = std::unique_ptr<fftw_complex, FftwComplexDeleter>;
+
+/// fftw_plan is a pointer to an opaque fftw_plan_s.
+struct FftwPlanDeleter {
+    void operator()(fftw_plan_s* p) const noexcept;
+};
+
+using FftwPlanPtr = std::unique_ptr<fftw_plan_s, FftwPlanDeleter>;
+
+/// fftw_plan_dft_3d and fftw_destroy_plan mutate global planner state and are
+/// not thread-safe. fftw_execute on an already-created plan is, so this guards
+/// only creation and destruction. SWIG releases the GIL for long C++ calls, so
+/// concurrent Calculate from a Python thread pool is reachable.
+std::mutex& FftwPlannerMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+void FftwPlanDeleter::operator()(fftw_plan_s* p) const noexcept {
+    if (p != nullptr) {
+        std::lock_guard<std::mutex> lock(FftwPlannerMutex());
+        fftw_destroy_plan(p);
+    }
+}
+
+/// Create a plan under the planner lock.
+FftwPlanPtr MakePlan3d(int n0, int n1, int n2, fftw_complex* in, fftw_complex* out, int sign,
+                       unsigned int flags) {
+    std::lock_guard<std::mutex> lock(FftwPlannerMutex());
+    return FftwPlanPtr(fftw_plan_dft_3d(n0, n1, n2, in, out, sign, flags));
+}
+
+}  // namespace
+
 // ==== Main Calculate method ====
 
 OESystem::OEScalarGrid* DensityCalculator::Calculate(
@@ -404,7 +455,11 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     const int nz = static_cast<int>(std::round(c / sp));
 
     const size_t grid_size = static_cast<size_t>(nx) * ny * nz;
-    fftw_complex* Fc_3d = fftw_alloc_complex(grid_size);
+    FftwComplexPtr Fc_3d_owner(fftw_alloc_complex(grid_size));
+    if (!Fc_3d_owner) {
+        throw GridError("FFTW allocation failed for the calculated structure factors");
+    }
+    fftw_complex* Fc_3d = Fc_3d_owner.get();
     std::fill(reinterpret_cast<double*>(Fc_3d),
               reinterpret_cast<double*>(Fc_3d) + 2 * grid_size, 0.0);
 
@@ -425,18 +480,29 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             symops.empty() ? std::vector<SymOp>{SymOp()} : symops);
 
         // FFT the solvent mask
-        fftw_complex* mask_fft = fftw_alloc_complex(grid_size);
-        fftw_complex* mask_in = fftw_alloc_complex(grid_size);
+        FftwComplexPtr mask_fft_owner(fftw_alloc_complex(grid_size));
+        if (!mask_fft_owner) {
+            throw GridError("FFTW allocation failed for the solvent mask FFT");
+        }
+        fftw_complex* mask_fft = mask_fft_owner.get();
+        FftwComplexPtr mask_in_owner(fftw_alloc_complex(grid_size));
+        if (!mask_in_owner) {
+            throw GridError("FFTW allocation failed for the solvent mask input");
+        }
+        fftw_complex* mask_in = mask_in_owner.get();
         for (size_t i = 0; i < grid_size; ++i) {
             mask_in[i][0] = sol_mask[i];
             mask_in[i][1] = 0.0;
         }
 
-        fftw_plan mask_plan = fftw_plan_dft_3d(
+        FftwPlanPtr mask_plan = MakePlan3d(
             nx, ny, nz, mask_in, mask_fft, FFTW_FORWARD, FFTW_ESTIMATE);
-        fftw_execute(mask_plan);
-        fftw_destroy_plan(mask_plan);
-        fftw_free(mask_in);
+        if (!mask_plan) {
+            throw GridError("FFTW planning failed for solvent mask");
+        }
+        fftw_execute(mask_plan.get());
+        mask_plan.reset();
+        mask_in_owner.reset();
 
         // Compute S^2 for each FFT grid point and apply correction
         for (int i = 0; i < nx; ++i) {
@@ -456,18 +522,25 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             }
         }
 
-        fftw_free(mask_fft);
+        mask_fft_owner.reset();
     }
 
     // ----------------------------------------------------------------
     // Step 8: Inverse FFT -> real-space density
     // ----------------------------------------------------------------
-    fftw_complex* rho_complex = fftw_alloc_complex(grid_size);
-    fftw_plan ifft_plan = fftw_plan_dft_3d(
+    FftwComplexPtr rho_complex_owner(fftw_alloc_complex(grid_size));
+    if (!rho_complex_owner) {
+        throw GridError("FFTW allocation failed for the density map");
+    }
+    fftw_complex* rho_complex = rho_complex_owner.get();
+    FftwPlanPtr ifft_plan = MakePlan3d(
         nx, ny, nz, Fc_3d, rho_complex, FFTW_BACKWARD, FFTW_ESTIMATE);
-    fftw_execute(ifft_plan);
-    fftw_destroy_plan(ifft_plan);
-    fftw_free(Fc_3d);
+    if (!ifft_plan) {
+        throw GridError("FFTW planning failed for inverse FFT");
+    }
+    fftw_execute(ifft_plan.get());
+    ifft_plan.reset();
+    Fc_3d_owner.reset();
 
     const double V = a * b * c;
     std::vector<double> rho_3d(grid_size);
@@ -482,21 +555,40 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     if (n_scale_shells > 1) {
         // FFT the calculated density
-        fftw_complex* rho_in = fftw_alloc_complex(grid_size);
-        fftw_complex* F_calc = fftw_alloc_complex(grid_size);
+        FftwComplexPtr rho_in_owner(fftw_alloc_complex(grid_size));
+        if (!rho_in_owner) {
+            throw GridError("FFTW allocation failed for the calculated density input");
+        }
+        fftw_complex* rho_in = rho_in_owner.get();
+        FftwComplexPtr F_calc_owner(fftw_alloc_complex(grid_size));
+        if (!F_calc_owner) {
+            throw GridError("FFTW allocation failed for the calculated structure factor FFT");
+        }
+        fftw_complex* F_calc = F_calc_owner.get();
         for (size_t i = 0; i < grid_size; ++i) {
             rho_in[i][0] = rho_3d[i];
             rho_in[i][1] = 0.0;
         }
-        fftw_plan fwd_plan = fftw_plan_dft_3d(
+        FftwPlanPtr fwd_plan = MakePlan3d(
             nx, ny, nz, rho_in, F_calc, FFTW_FORWARD, FFTW_ESTIMATE);
-        fftw_execute(fwd_plan);
-        fftw_destroy_plan(fwd_plan);
-        fftw_free(rho_in);
+        if (!fwd_plan) {
+            throw GridError("FFTW planning failed for forward FFT");
+        }
+        fftw_execute(fwd_plan.get());
+        fwd_plan.reset();
+        rho_in_owner.reset();
 
         // Sample observed density onto UC grid and FFT
-        fftw_complex* obs_in = fftw_alloc_complex(grid_size);
-        fftw_complex* Fobs_3d = fftw_alloc_complex(grid_size);
+        FftwComplexPtr obs_in_owner(fftw_alloc_complex(grid_size));
+        if (!obs_in_owner) {
+            throw GridError("FFTW allocation failed for the observed density input");
+        }
+        fftw_complex* obs_in = obs_in_owner.get();
+        FftwComplexPtr Fobs_3d_owner(fftw_alloc_complex(grid_size));
+        if (!Fobs_3d_owner) {
+            throw GridError("FFTW allocation failed for the observed structure factor FFT");
+        }
+        fftw_complex* Fobs_3d = Fobs_3d_owner.get();
 
         for (int i = 0; i < nx; ++i) {
             const double x = obs_grid.GetXMin() + (static_cast<double>(i) / nx) * a;
@@ -514,11 +606,14 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             }
         }
 
-        fftw_plan obs_fwd = fftw_plan_dft_3d(
+        FftwPlanPtr obs_fwd = MakePlan3d(
             nx, ny, nz, obs_in, Fobs_3d, FFTW_FORWARD, FFTW_ESTIMATE);
-        fftw_execute(obs_fwd);
-        fftw_destroy_plan(obs_fwd);
-        fftw_free(obs_in);
+        if (!obs_fwd) {
+            throw GridError("FFTW planning failed for observed density FFT");
+        }
+        fftw_execute(obs_fwd.get());
+        obs_fwd.reset();
+        obs_in_owner.reset();
 
         // Per-shell scaling
         const double s2_max = 1.0 / (resolution * resolution);
@@ -594,23 +689,30 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             }
         }
 
-        fftw_free(Fobs_3d);
+        Fobs_3d_owner.reset();
 
         // Inverse FFT scaled Fc back to real space
-        fftw_complex* rho_scaled = fftw_alloc_complex(grid_size);
-        fftw_plan scale_ifft = fftw_plan_dft_3d(
+        FftwComplexPtr rho_scaled_owner(fftw_alloc_complex(grid_size));
+        if (!rho_scaled_owner) {
+            throw GridError("FFTW allocation failed for the scaled density map");
+        }
+        fftw_complex* rho_scaled = rho_scaled_owner.get();
+        FftwPlanPtr scale_ifft = MakePlan3d(
             nx, ny, nz, F_calc, rho_scaled, FFTW_BACKWARD, FFTW_ESTIMATE);
-        fftw_execute(scale_ifft);
-        fftw_destroy_plan(scale_ifft);
-        fftw_free(F_calc);
+        if (!scale_ifft) {
+            throw GridError("FFTW planning failed for scaled inverse FFT");
+        }
+        fftw_execute(scale_ifft.get());
+        scale_ifft.reset();
+        F_calc_owner.reset();
 
         for (size_t i = 0; i < grid_size; ++i) {
             rho_3d[i] = rho_scaled[i][0] / static_cast<double>(grid_size);
         }
-        fftw_free(rho_scaled);
+        rho_scaled_owner.reset();
     }
 
-    fftw_free(rho_complex);
+    rho_complex_owner.reset();
 
     // ----------------------------------------------------------------
     // Step 10: Trilinear interpolation onto output grid

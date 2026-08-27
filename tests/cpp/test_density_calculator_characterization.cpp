@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "maptitude/DensityCalculator.h"
@@ -90,4 +91,59 @@ TEST(DensityCalculatorCharacterizationTest, OrthorhombicAsym) {
     ExpectPinned(s.min, MaptitudePins::FC_ORTHORHOMBIC_ASYM_MIN);
     ExpectPinned(s.max, MaptitudePins::FC_ORTHORHOMBIC_ASYM_MAX);
     ExpectPinned(s.index_moment, MaptitudePins::FC_ORTHORHOMBIC_ASYM_INDEX_MOMENT);
+}
+
+// Calculate performs nine FFTW allocations and five plans. The RAII conversion
+// guards against leaks when std::bad_alloc or allocation failure escapes from
+// the pipeline. The null checks added during the conversion create new throw
+// sites in the middle of the allocation region, which is what makes the RAII
+// conversion load-bearing rather than precautionary.
+TEST(DensityCalculatorCharacterizationTest, ThrowingPathDoesNotDestabilizeTheProcess) {
+    UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+    OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
+
+    DensityCalculator calc(cell, symops);
+    for (int i = 0; i < 50; ++i) {
+        // A non-positive resolution is rejected early (before any FFTW
+        // allocation), so this test proves the guard works but exercises no
+        // FFTW cleanup. Rely on Step 6's leak measurement for the allocation
+        // paths.
+        EXPECT_THROW(calc.Calculate(mol, obs, -1.0), GridError);
+    }
+
+    // The pipeline must still work afterwards.
+    std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
+    ASSERT_NE(fc, nullptr);
+    ExpectPinned(Summarize(*fc).sum, MaptitudePins::FC_ORTHORHOMBIC_SUM);
+}
+
+// fftw_plan_dft_3d and fftw_destroy_plan mutate global planner state and are
+// not thread-safe. fftw_execute on an already-created plan is thread-safe. Two
+// threads calling Calculate concurrently is reachable from Python with
+// ThreadPoolExecutor since SWIG releases the GIL for long C++ calls. The
+// planner mutex guards only plan creation and destruction.
+TEST(DensityCalculatorCharacterizationTest, ConcurrentCalculateIsSafe) {
+    UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+
+    std::vector<std::thread> threads;
+    std::vector<double> sums(4, 0.0);
+    for (int t = 0; t < 4; ++t) {
+        threads.emplace_back([&, t]() {
+            OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+            OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
+            DensityCalculator calc(cell, symops);
+            std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
+            sums[t] = Summarize(*fc).sum;
+        });
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    for (double sum : sums) {
+        ExpectPinned(sum, MaptitudePins::FC_ORTHORHOMBIC_SUM);
+    }
 }
