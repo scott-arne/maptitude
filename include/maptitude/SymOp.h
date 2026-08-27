@@ -79,10 +79,12 @@ struct SymOp {
      *
      * Every operator produced by Parse() serializes to a string Parse() accepts, so
      * ToString() output can be fed back in. Exact equality is a weaker claim: a
-     * translation below the 1e-10 suppression threshold serializes as "0", so
-     * "1e-11,y,z" reparses successfully but to a translation of exactly zero. A
-     * translation too large for the n/denom fraction form falls back to a
-     * max_digits10 decimal, which does round trip exactly.
+     * translation is dropped both when its magnitude is at or below 1e-10 and when
+     * its fraction numerator rounds to zero, which reaches magnitudes just under
+     * 5e-9. So "1e-11,y,z" and "x-1e-9,y,z" reparse successfully but to a
+     * translation of exactly zero, and a component left with nothing to write
+     * serializes as "0". A translation too large for the n/denom fraction form falls
+     * back to a max_digits10 decimal, which does round trip exactly.
      *
      * A SymOp built by hand rather than parsed may hold a rotation coefficient other
      * than +/-1; that serializes to a readable but non-parseable "2*x" form. This
