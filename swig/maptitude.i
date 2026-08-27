@@ -172,7 +172,16 @@ struct _SwigPyObjectCompat {
     void *ptr;
 };
 
+/* Defense in depth, NOT a fix. Struct punning across two SWIG runtimes cannot
+   be made safe, only unreachable from bad input: this function still casts an
+   arbitrary object's `this` attribute to _SwigPyObjectCompat and reads through
+   it, and no guard here can validate that layout. The isinstance checkers in
+   the typemaps are the actual defense. Do not relax a typemap's type check on
+   the belief that this function is hardened -- it is not. */
 static void* _maptitude_extract_swig_ptr(PyObject* obj) {
+    if (obj == NULL || obj == Py_None) {
+        return NULL;
+    }
     PyObject* thisAttr = PyObject_GetAttrString(obj, "this");
     if (!thisAttr) {
         PyErr_Clear();
@@ -242,6 +251,9 @@ DEFINE_OE_TYPE_CHECKER(oehierfragment,"openeye.oechem","OEHierFragment")
 DEFINE_OE_TYPE_CHECKER(oehierchain,  "openeye.oechem", "OEHierChain")
 DEFINE_OE_TYPE_CHECKER(oeinteractionhint,          "openeye.oechem", "OEInteractionHint")
 DEFINE_OE_TYPE_CHECKER(oeinteractionhintcontainer, "openeye.oechem", "OEInteractionHintContainer")
+
+// ---- Predicates (openeye.oechem) ----
+DEFINE_OE_TYPE_CHECKER(oeunaryatompred, "openeye.oechem", "OEUnaryAtomPred")
 
 // ---- Grid (openeye.oegrid) ----
 DEFINE_OE_TYPE_CHECKER(oescalargrid, "openeye.oegrid", "OEScalarGrid")
@@ -440,25 +452,7 @@ OE_CROSS_RUNTIME_REF_TYPEMAPS(OEDocking::OEReceptor, _maptitude_is_oereceptor, "
 // ============================================================================
 // Typemap: OEUnaryPredicate<OEAtomBase>* (maptitude-specific, optional atom predicate mask)
 // ============================================================================
-%typemap(in) const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* (void *argp = 0) {
-    if ($input == Py_None) {
-        $1 = NULL;
-    } else {
-        int res = SWIG_ConvertPtr($input, &argp, $descriptor, 0);
-        if (!SWIG_IsOK(res)) {
-            argp = _maptitude_extract_swig_ptr($input);
-            if (!argp) {
-                SWIG_exception_fail(SWIG_ArgError(SWIG_TypeError),
-                    "Expected OEUnaryAtomPred or None for mask parameter.");
-            }
-        }
-        $1 = reinterpret_cast< $1_ltype >(argp);
-    }
-}
-
-%typemap(typecheck, precedence=10) const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* {
-    $1 = ($input == Py_None) ? 1 : 1;  // Accept any object; runtime check in %typemap(in)
-}
+OE_CROSS_RUNTIME_NULLABLE_PTR_TYPEMAPS(OESystem::OEUnaryPredicate<OEChem::OEAtomBase>, _maptitude_is_oeunaryatompred, "Expected OEUnaryAtomPred or None for mask parameter.")
 
 // ============================================================================
 // Include STL typemaps
