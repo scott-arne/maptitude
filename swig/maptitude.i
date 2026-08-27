@@ -1094,7 +1094,7 @@ def rscc(obj, grid, resolution, mask=None, calc_grid=None,
     :param mask: Optional atom predicate.
     :param calc_grid: Optional pre-computed calculated density.
     :param atom_radius: Atom radius method (str or AtomRadius enum value).
-    :param options: RsccOptions configuration object.
+    :param options: RsccOptions configuration object. Never mutated.
     :returns: DensityScoreResult with RSCC values.
     """
     if options is None:
@@ -1124,7 +1124,7 @@ def rsr(obj, grid, resolution, mask=None, calc_grid=None,
     :param mask: Optional atom predicate.
     :param calc_grid: Optional pre-computed calculated density.
     :param atom_radius: Atom radius method (str or AtomRadius enum value).
-    :param options: RsrOptions configuration object.
+    :param options: RsrOptions configuration object. Never mutated.
     :returns: DensityScoreResult with RSR values.
     """
     if options is None:

@@ -46,9 +46,9 @@ def test_coverage_does_not_mutate_caller_options(scoring_inputs) -> None:
     assert options.GetSigma() == pytest.approx(2.0)
 
 
-def test_coverage_sigma_defaults_to_the_options_value(scoring_inputs) -> None:
+def test_coverage_sigma_defaults_to_the_options_value(sigma_discriminating_inputs) -> None:
     """Omitting sigma must leave the options object's value in force."""
-    mol, obs, _ = scoring_inputs
+    mol, obs = sigma_discriminating_inputs
     options = maptitude.CoverageOptions()
     options.SetSigma(3.0)
     with_options = maptitude.coverage(mol, obs, options=options)
