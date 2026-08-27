@@ -83,6 +83,15 @@ void ParseComponent(const std::string& component, const int row, std::array<doub
             pending_sign = true;
             ++pos;
         } else if (ch == 'x' || ch == 'X' || ch == 'y' || ch == 'Y' || ch == 'z' || ch == 'Z') {
+            // Terms are separated by an explicit '+' or '-'. Without this the loop reads
+            // juxtaposition as addition: "xy" becomes x+y, gaining a rotation column, and
+            // "2x" becomes x+2, gaining a translation. Neither is a symmetry operator, and
+            // both are silently rewritten into one that looks valid.
+            if (saw_term && !pending_sign) {
+                throw SymOpError(
+                    "Missing '+' or '-' between terms in symmetry operator component: " +
+                    component);
+            }
             // Each axis may appear at most once per component. A repeated axis is not a
             // symmetry operation, and the write below would silently overwrite the earlier
             // coefficient rather than sum it -- "x+x" parsing as 1 and "x-x" as -1. Note
@@ -103,6 +112,13 @@ void ParseComponent(const std::string& component, const int row, std::array<doub
         // The <cctype> classifiers are only defined for values representable as
         // unsigned char; a negative char is undefined behavior.
         } else if (std::isdigit(static_cast<unsigned char>(ch)) || ch == '.') {
+            // Same term-boundary rule as the axis branch: "x.5" and "x1/2" would otherwise
+            // both become x+1/2.
+            if (saw_term && !pending_sign) {
+                throw SymOpError(
+                    "Missing '+' or '-' between terms in symmetry operator component: " +
+                    component);
+            }
             size_t end;
             const double num = ParseNumber(s.substr(pos), component, end);
             pos += end;

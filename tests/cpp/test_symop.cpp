@@ -246,3 +246,34 @@ TEST(SymOpTest, StillAcceptsEveryDecimalFormTheGrammarIntends) {
     const SymOp op = SymOp::Parse("x+5e-1,y,z");
     EXPECT_NEAR(op.t[0], 0.5, 1e-12);
 }
+
+TEST(SymOpTest, RejectsTermsWithNoSeparator) {
+    // Juxtaposition is not addition. Each of these parsed silently into a DIFFERENT,
+    // valid-looking operator: "2x" became x+2, "xy" became x+y with an extra rotation
+    // column, "x.5" became x+1/2. A malformed CCP4 or CIF symmetry record shifted or
+    // rotated atoms with no error reaching the caller.
+    EXPECT_THROW(SymOp::Parse("2x,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x2,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("2.5x,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse(".5x,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x.5,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x1/2,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("xy,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("xyz,y,z"), SymOpError);
+    // A coefficient on an axis: "x+2y" gained both a y column and a translation of 2.
+    EXPECT_THROW(SymOp::Parse("x+2y,y,z"), SymOpError);
+}
+
+TEST(SymOpTest, StillAcceptsTermsSeparatedByASign) {
+    // The boundary rule must not reject operators that do separate their terms. A leading
+    // sign starts a term rather than following one, so it must not trip the check either.
+    EXPECT_NO_THROW(SymOp::Parse("x+1/2,y,z"));
+    EXPECT_NO_THROW(SymOp::Parse("1/2-x,y,z"));
+    EXPECT_NO_THROW(SymOp::Parse("+x,y,z"));
+    EXPECT_NO_THROW(SymOp::Parse("-x+y-z,y,z"));
+    const SymOp op = SymOp::Parse("x-y+1/3,y,z");
+    EXPECT_NEAR(op.R[0], 1.0, 1e-12);
+    EXPECT_NEAR(op.R[1], -1.0, 1e-12);
+    EXPECT_NEAR(op.R[2], 0.0, 1e-12);
+    EXPECT_NEAR(op.t[0], 1.0 / 3.0, 1e-12);
+}
