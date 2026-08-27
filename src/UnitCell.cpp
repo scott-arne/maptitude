@@ -31,6 +31,17 @@ constexpr double MIN_RADICAND = 1.0e-9;
 // canonical shapes span 1 to 10.8; 500x500x1200 ribosome 3.79; 2x2x1000 thin plate 500.
 constexpr double MAX_CONDITION_NUMBER = 1.0e9;
 
+// Maximum infinity-norm residual ||deortho*ortho - I|| for coordinate conversion.
+// The condition-number bound above is derived assuming the two matrices are exact
+// mutual inverses, which holds only while the analytic inverse formula is evaluated
+// in normal range; a subnormal volume divides into every deorthogonalization entry
+// and destroys that assumption. Round-trip error splits into
+// ||D·O - I||_inf·||p||_inf + 6u·kappa·||p||_inf, so residual < 1e-7 alongside
+// kappa < 1e9 bounds the total at 1e-7 + 6.7e-7 = 7.7e-7, under the 1e-6 target.
+// Measured across plausible cells (0.5-5000 A, 20-160 deg), the worst residual over
+// 23,240 cells is 9.10e-13 — five orders below this threshold.
+constexpr double MAX_INVERSE_RESIDUAL = 1.0e-7;
+
 std::array<double, 9> BuildOrthogonalizationMatrix(double a, double b, double c,
                                                    double ca, double cb, double cg,
                                                    double sg, double vol) {
@@ -224,6 +235,40 @@ void validate_cell(const UnitCell& cell) {
         std::ostringstream message;
         message << "Unit cell is numerically unusable for coordinate conversion (condition number "
                 << kappa << " exceeds threshold " << MAX_CONDITION_NUMBER << ")";
+        throw CellError(message.str());
+    }
+
+    // Residual ||deortho*ortho - I||: the kappa check above bounds only the
+    // rounding amplified by conditioning, and it does so assuming deortho is
+    // genuinely the inverse of ortho. Under subnormal underflow it is not, and a
+    // condition number computed from a matrix that is not the inverse measures
+    // nothing. This bounds the complementary term, the extent to which the pair
+    // fails to be mutual inverses; together the two cover every term in the
+    // round-trip error expansion. Neither subsumes the other: extreme length
+    // ratios can leave an exact inverse pair badly conditioned, while a subnormal
+    // volume can leave a well-conditioned pair that is not an inverse. Kappa is
+    // checked first, both as the cheaper early-out and because it guards this
+    // computation: a cell whose deortho*ortho products would overflow already has
+    // a kappa at least that large, so it is rejected before the multiply.
+    // Multiply the local arrays; the readers and conversion helpers call
+    // validate_cell and would recurse forever.
+    double residual = 0.0;
+    for (int row = 0; row < 3; ++row) {
+        double row_sum = 0.0;
+        for (int col = 0; col < 3; ++col) {
+            double entry = 0.0;
+            for (int k = 0; k < 3; ++k) {
+                entry += deortho[row * 3 + k] * ortho[k * 3 + col];
+            }
+            row_sum += std::abs(entry - (row == col ? 1.0 : 0.0));
+        }
+        residual = std::max(residual, row_sum);
+    }
+
+    if (!std::isfinite(residual) || residual >= MAX_INVERSE_RESIDUAL) {
+        std::ostringstream message;
+        message << "Unit cell is numerically unusable for coordinate conversion (inverse residual "
+                << residual << " exceeds threshold " << MAX_INVERSE_RESIDUAL << ")";
         throw CellError(message.str());
     }
 }

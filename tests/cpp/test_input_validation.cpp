@@ -271,3 +271,26 @@ TEST(CellValidationTest, AcceptsPhysicalRangeEnds) {
     EXPECT_NO_THROW(UnitCell(1.0, 1.0, 1.0, 90.0, 90.0, 90.0));
     EXPECT_NO_THROW(UnitCell(3000.0, 3000.0, 3000.0, 90.0, 90.0, 90.0));
 }
+
+// ---- Inverse-residual bound for coordinate conversion (F5 round 6) ----
+
+TEST(CellValidationTest, RejectsSubnormalVolumeThatBreaksTheInverse) {
+    // The condition number is only meaningful when the deorthogonalization
+    // matrix really is the inverse of the orthogonalization matrix. Here the
+    // volume is subnormal at 8.1e-322 (about seven bits of precision), and
+    // every deorthogonalization entry divides by it, so the "inverse" inherits
+    // the volume's ~0.6% relative error. kappa reads a healthy 2.37 because it
+    // is computed from a matrix that is not the inverse, while deortho*ortho
+    // sits 1.38e-3 off the identity and (0.25, 0.5, 0.75) round-trips with
+    // error 1.03e-3. Only the residual check sees this.
+    EXPECT_THROW(UnitCell(1e-107, 1e-107, 1e-107, 60.0, 70.0, 80.0), CellError);
+}
+
+TEST(CellValidationTest, AcceptsUsableCellWithSubnormalVolume) {
+    // Pin the residual threshold from below, and guard against anyone later
+    // "simplifying" the fix into a subnormal-volume rejection. This cell's
+    // volume is 8.138e-316 — also deeply subnormal — yet it round-trips to
+    // 5e-11 and is perfectly usable. The check gates on usability, not on
+    // subnormality.
+    EXPECT_NO_THROW(UnitCell(1e-105, 1e-105, 1e-105, 60.0, 70.0, 80.0));
+}

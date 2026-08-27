@@ -115,10 +115,16 @@ struct UnitCell {
 /// positive; (5) all orthogonalization and deorthogonalization matrix entries are
 /// finite and the diagonal is nonzero; (6) the infinity-norm condition number
 /// (product of the matrix row-sum norms) stays below a threshold (~1e9), ensuring
-/// coordinate conversions are numerically stable for any interior point. Neither
+/// coordinate conversions are numerically stable for any interior point; (7) the
+/// residual ||deortho*ortho - I|| stays below a small threshold (~1e-7), since
+/// check (6) only means anything when the two matrices really are mutual inverses
+/// — a subnormal volume divides into every deorthogonalization entry and leaves
+/// them non-inverse, at which point the condition number measures nothing. Neither
 /// the angle-range check nor the radicand check subsumes the other: cos(200°) ==
 /// cos(160°), so an out-of-range angle can pass the radicand test, while in-range
-/// angles (150, 150, 150) can describe no real lattice.
+/// angles (150, 150, 150) can describe no real lattice. Checks (6) and (7) are
+/// likewise complementary: they bound the two separate terms of the round-trip
+/// error, and each catches cells the other cannot see.
 ///
 /// Called automatically by the parameterized constructor, by the geometry readers
 /// (Volume, OrthogonalizationMatrix, DeorthogonalizationMatrix), and by
