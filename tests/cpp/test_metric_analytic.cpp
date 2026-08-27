@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "maptitude/CoverageOptions.h"
@@ -180,6 +181,33 @@ TEST(MetricAnalyticTest, QScoreRejectsAFixedSweepWithTooManyShells) {
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 
     EXPECT_THROW(qscore(mol, grid, RESOLUTION, nullptr, options), GridError);
+}
+
+TEST(MetricAnalyticTest, QScoreRejectsASweepWhoseShellPointProductIsUnbounded) {
+    // Bounding shells and points separately is not enough: 510000 shells is under
+    // MAX_SHELLS and 10000 points is exactly MAX_NUM_POINTS, yet the fixed precompute
+    // would store one 10000-point sphere per shell -- about 122 GB -- before any
+    // scoring runs. Only the product check rejects this.
+    QScoreOptions options;
+    options.SetRadialStep(MIN_RADIAL_STEP);
+    options.SetMaxRadius(0.5);
+    options.SetNumPoints(MAX_NUM_POINTS);
+    OESystem::OEScalarGrid grid =
+        MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    // Assert on the message, not just the type: 510000 shells is under MAX_SHELLS and
+    // every setter accepted, so any other branch firing here would mean the arithmetic
+    // moved and this test had stopped covering the product bound. Deleting the branch
+    // cannot be used to check that, because the unguarded path allocates rather than
+    // failing.
+    try {
+        qscore(mol, grid, RESOLUTION, nullptr, options);
+        FAIL() << "expected GridError for a 5.1e9-sample sweep";
+    } catch (const GridError& error) {
+        EXPECT_NE(std::string(error.what()).find("samples per atom"), std::string::npos)
+            << "rejected by the wrong branch: " << error.what();
+    }
 }
 
 TEST(MetricAnalyticTest, QScoreStillAcceptsTheDefaultSweep) {

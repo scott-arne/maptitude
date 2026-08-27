@@ -37,6 +37,14 @@ constexpr int MAX_SHELLS = 1000000;
 /// `src/Metric.cpp:446`.
 constexpr unsigned int MAX_NUM_POINTS = 10000;
 
+/// Shells and points are each bounded on their own, but it is their product that
+/// allocates, so the factors have to be bounded together as well: 510000 shells of
+/// 10000 points each satisfies both individual bounds and still asks the FIXED
+/// precompute for over 100 GB. The default sweep takes 32 samples per atom and an
+/// aggressive real configuration (200 shells x 200 points) takes 40000, so this ceiling
+/// sits far above any working setup while capping the precompute at roughly 48 MB.
+constexpr long long MAX_TOTAL_SAMPLES = 2000000;
+
 namespace detail {
 /// Reject a non-finite or non-positive option value with a message naming the
 /// setter, so the caller can find it without a debugger.

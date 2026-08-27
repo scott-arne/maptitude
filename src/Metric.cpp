@@ -32,7 +32,8 @@ using detail::fibonacci_sphere_points;
 /// radius arrive through QScoreOptions' validated setters. ADAPTIVE derives its own from the
 /// grid spacing and the resolution and consults no option, so the same invariants have to be
 /// re-established here.
-static void RequireUsableSweep(const char* mode, double step, double max_r) {
+static void RequireUsableSweep(const char* mode, double step, double max_r,
+                               unsigned int num_points) {
     std::ostringstream message;
     if (!std::isfinite(step) || step < MIN_RADIAL_STEP) {
         message << mode << " radial sweep needs a step of at least " << MIN_RADIAL_STEP
@@ -49,10 +50,24 @@ static void RequireUsableSweep(const char* mode, double step, double max_r) {
                 << " A is not smaller than the maximum radius " << max_r << " A";
         throw GridError(message.str());
     }
-    if ((max_r + 0.01) / step > static_cast<double>(MAX_SHELLS)) {
-        message << mode << " radial sweep would run "
-                << static_cast<long long>((max_r + 0.01) / step) << " shells, over the "
-                << MAX_SHELLS << " limit; raise the step or lower the maximum radius";
+    const double shells = (max_r + 0.01) / step;
+    if (shells > static_cast<double>(MAX_SHELLS)) {
+        message << mode << " radial sweep would run " << static_cast<long long>(shells)
+                << " shells, over the " << MAX_SHELLS
+                << " limit; raise the step or lower the maximum radius";
+        throw GridError(message.str());
+    }
+    // Shells and points are each bounded on their own, but it is their product that
+    // allocates: FIXED precomputes one num_points-element sphere per shell, and both
+    // modes push one sample per point per shell into four parallel vectors. Bounding
+    // only the factors admits 510000 shells of 10000 points -- over 100 GB before any
+    // scoring happens.
+    if (shells * static_cast<double>(num_points) > static_cast<double>(MAX_TOTAL_SAMPLES)) {
+        message << mode << " radial sweep would take "
+                << static_cast<long long>(shells * static_cast<double>(num_points))
+                << " samples per atom (" << static_cast<long long>(shells) << " shells x "
+                << num_points << " points), over the " << MAX_TOTAL_SAMPLES
+                << " limit; raise the step, lower the maximum radius, or use fewer points";
         throw GridError(message.str());
     }
 }
@@ -390,7 +405,7 @@ DensityScoreResult qscore(
     // The two FIXED precompute loops below run before any per-atom work, so an
     // unusable FIXED configuration would hang here rather than at the per-atom check.
     if (options.GetRadialSampling() == RadialSampling::FIXED) {
-        RequireUsableSweep("Fixed", options.GetRadialStep(), options.GetMaxRadius());
+        RequireUsableSweep("Fixed", options.GetRadialStep(), options.GetMaxRadius(), options.GetNumPoints());
     }
 
     // Pre-compute unit sphere offsets for fixed mode
@@ -454,7 +469,7 @@ DensityScoreResult qscore(
                 max_r = options.GetMaxRadius();
             }
             RequireUsableSweep(options.GetRadialSampling() == RadialSampling::ADAPTIVE ? "Adaptive" : "Fixed",
-                               step, max_r);
+                               step, max_r, options.GetNumPoints());
 
             // Collect sample points and reference values
             std::vector<double> sample_x, sample_y, sample_z;
