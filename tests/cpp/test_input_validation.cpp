@@ -4,6 +4,7 @@
 /// tests/python/test_validation.py, which validates scores against reference
 /// data.
 #include <gtest/gtest.h>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -418,4 +419,44 @@ TEST(QScoreOptionsValidationTest, RejectsNonFiniteValues) {
     EXPECT_THROW(options.SetMaxRadius(nan_value), std::invalid_argument);
     EXPECT_THROW(options.SetMaxRadius(pos_inf), std::invalid_argument);
     EXPECT_THROW(options.SetMaxRadius(neg_inf), std::invalid_argument);
+}
+
+TEST(QScoreOptionsValidationTest, RejectsARadialStepBelowTheShellKeyResolution) {
+    // Shell keys are round(R * 1e6), so steps below 1e-6 alias distinct shells onto
+    // one key; subnormal steps cannot advance the accumulator at all.
+    QScoreOptions options;
+    EXPECT_THROW(options.SetRadialStep(std::numeric_limits<double>::denorm_min()),
+                 std::invalid_argument);
+    EXPECT_THROW(options.SetRadialStep(1e-9), std::invalid_argument);
+    EXPECT_NO_THROW(options.SetRadialStep(MIN_RADIAL_STEP));
+    EXPECT_NO_THROW(options.SetRadialStep(0.25));
+}
+
+TEST(QScoreOptionsValidationTest, RejectsAMaxRadiusThatOverflowsTheShellKey) {
+    // (2147.47 + 0.01) * 1e6 is the largest shell key that fits in int.
+    QScoreOptions options;
+    EXPECT_THROW(options.SetMaxRadius(2148.0), std::invalid_argument);
+    EXPECT_THROW(options.SetMaxRadius(std::numeric_limits<double>::max()),
+                 std::invalid_argument);
+    EXPECT_NO_THROW(options.SetMaxRadius(MAX_RADIUS_LIMIT));
+    EXPECT_NO_THROW(options.SetMaxRadius(3.0));
+}
+
+TEST(QScoreOptionsValidationTest, RejectsAnAbsurdSamplePointCount) {
+    QScoreOptions options;
+    EXPECT_THROW(options.SetNumPoints(std::numeric_limits<unsigned int>::max()),
+                 std::invalid_argument);
+    EXPECT_THROW(options.SetNumPoints(MAX_NUM_POINTS + 1), std::invalid_argument);
+    EXPECT_NO_THROW(options.SetNumPoints(MAX_NUM_POINTS));
+    EXPECT_NO_THROW(options.SetNumPoints(8));
+}
+
+TEST(QScoreOptionsValidationTest, RejectsNegativeZeroAndNegativeSubnormals) {
+    // -0.0 compares <= 0.0, so it is already refused; pin that so a future rewrite
+    // of the predicate cannot quietly start accepting it.
+    QScoreOptions options;
+    EXPECT_THROW(options.SetSigma(-0.0), std::invalid_argument);
+    EXPECT_THROW(options.SetSigma(-std::numeric_limits<double>::denorm_min()),
+                 std::invalid_argument);
+    EXPECT_THROW(options.SetMaxRadius(-0.0), std::invalid_argument);
 }

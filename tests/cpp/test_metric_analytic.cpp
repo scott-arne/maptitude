@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
+#include <limits>
 #include <vector>
 
 #include "maptitude/CoverageOptions.h"
+#include "maptitude/Error.h"
 #include "maptitude/Metric.h"
 #include "maptitude/QScoreOptions.h"
 #include "maptitude/RsccOptions.h"
@@ -135,4 +137,44 @@ TEST(MetricAnalyticTest, EdiamIsMonotonicNonDecreasingInUniformLevel) {
         EXPECT_LE(score, 1.0);
         previous = score;
     }
+}
+
+TEST(MetricAnalyticTest, QScoreRejectsAnAdaptiveSweepWithAnUnusableStep) {
+    // ADAPTIVE computes step = min(grid_spacing, resolution / 7) and never consults
+    // the validated options, so it bypasses every setter guard. A subnormal
+    // resolution passes the `resolution <= 0.0` check and then underflows that
+    // division to exactly 0.0, leaving a step of zero and a sweep that never
+    // advances. Before this guard existed the call hung instead of returning.
+    QScoreOptions options;
+    options.SetRadialSampling(RadialSampling::ADAPTIVE);
+    OESystem::OEScalarGrid grid =
+        MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    EXPECT_THROW(qscore(mol, grid, std::numeric_limits<double>::denorm_min(), nullptr, options),
+                 GridError);
+}
+
+TEST(MetricAnalyticTest, QScoreRejectsAFixedSweepWithNoShells) {
+    // Each setter's value is legal on its own; the combination yields zero shells,
+    // a constant reference vector, and a nan correlation.
+    QScoreOptions options;
+    options.SetRadialStep(1.0);
+    options.SetMaxRadius(0.1);
+    OESystem::OEScalarGrid grid =
+        MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    EXPECT_THROW(qscore(mol, grid, RESOLUTION, nullptr, options), GridError);
+}
+
+TEST(MetricAnalyticTest, QScoreStillAcceptsTheDefaultSweep) {
+    // The guard must not narrow the working configuration. This is the neutrality
+    // half of the two tests above.
+    QScoreOptions options;
+    OESystem::OEScalarGrid grid =
+        MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    EXPECT_NO_THROW(qscore(mol, grid, RESOLUTION, nullptr, options));
 }

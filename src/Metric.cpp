@@ -11,6 +11,8 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <sstream>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -21,6 +23,39 @@ using detail::MapStats;
 using detail::pearson_correlation;
 using detail::ediam_sigmoid;
 using detail::fibonacci_sphere_points;
+
+// ---- Radial sweep validation ----
+
+/// Reject a radial sweep that cannot terminate or cannot produce a score.
+///
+/// Both sampling modes converge on the same shell loop, but only FIXED mode's step and
+/// radius arrive through QScoreOptions' validated setters. ADAPTIVE derives its own from the
+/// grid spacing and the resolution and consults no option, so the same invariants have to be
+/// re-established here.
+static void RequireUsableSweep(const char* mode, double step, double max_r) {
+    std::ostringstream message;
+    if (!std::isfinite(step) || step < MIN_RADIAL_STEP) {
+        message << mode << " radial sweep needs a step of at least " << MIN_RADIAL_STEP
+                << " A (got " << step << "); below that the shell accumulator does not advance";
+        throw GridError(message.str());
+    }
+    if (!std::isfinite(max_r) || max_r <= 0.0 || max_r > MAX_RADIUS_LIMIT) {
+        message << mode << " radial sweep needs a maximum radius in (0, " << MAX_RADIUS_LIMIT
+                << "] A (got " << max_r << "); beyond that the shell key overflows int";
+        throw GridError(message.str());
+    }
+    if (step >= max_r + 0.01) {
+        message << mode << " radial sweep produces no shells: step " << step
+                << " A is not smaller than the maximum radius " << max_r << " A";
+        throw GridError(message.str());
+    }
+    if ((max_r + 0.01) / step > static_cast<double>(MAX_SHELLS)) {
+        message << mode << " radial sweep would run "
+                << static_cast<long long>((max_r + 0.01) / step) << " shells, over the "
+                << MAX_SHELLS << " limit; raise the step or lower the maximum radius";
+        throw GridError(message.str());
+    }
+}
 
 // ---- OE-aware wrappers around detail helpers ----
 
@@ -352,6 +387,12 @@ DensityScoreResult qscore(
         spatial_idx = std::make_unique<SpatialIndex>(mol);
     }
 
+    // The two FIXED precompute loops below run before any per-atom work, so an
+    // unusable FIXED configuration would hang here rather than at the per-atom check.
+    if (options.GetRadialSampling() == RadialSampling::FIXED) {
+        RequireUsableSweep("Fixed", options.GetRadialStep(), options.GetMaxRadius());
+    }
+
     // Pre-compute unit sphere offsets for fixed mode
     std::unordered_map<int, std::vector<std::array<double, 3>>> unit_spheres;
     if (options.GetRadialSampling() == RadialSampling::FIXED) {
@@ -412,6 +453,8 @@ DensityScoreResult qscore(
                 step = options.GetRadialStep();
                 max_r = options.GetMaxRadius();
             }
+            RequireUsableSweep(options.GetRadialSampling() == RadialSampling::ADAPTIVE ? "Adaptive" : "Fixed",
+                               step, max_r);
 
             // Collect sample points and reference values
             std::vector<double> sample_x, sample_y, sample_z;
