@@ -19,13 +19,38 @@ namespace {
 // a CIF file, so a malformed one has to reach the caller as the library's own typed
 // exception rather than through the generic std::exception arm of the SWIG wrapper.
 double ParseNumber(const std::string& text, const std::string& component, size_t& consumed) {
+    // std::stod accepts more than this grammar intends: a leading sign, the named
+    // literals "inf"/"infinity"/"nan", and C99 hex floats such as "0x10". None is a
+    // crystallographic translation, and the arithmetic downstream launders some of
+    // them into ordinary values -- 1/inf is a finite 0.0, so neither the zero-
+    // denominator guard nor the finiteness check on the accumulated translation ever
+    // sees it, and "x+1/inf,y,z" parses as the identity. Constrain the token here,
+    // where it is still a string, instead of trying to detect it after the fact.
+    if (text.empty() || !(std::isdigit(static_cast<unsigned char>(text[0])) || text[0] == '.')) {
+        throw SymOpError("Expected a number in symmetry operator component: " + component);
+    }
+
+    double value;
     try {
-        return std::stod(text, &consumed);
+        value = std::stod(text, &consumed);
     } catch (const std::invalid_argument&) {
         throw SymOpError("Expected a number in symmetry operator component: " + component);
     } catch (const std::out_of_range&) {
         throw SymOpError("Number out of range in symmetry operator component: " + component);
     }
+
+    // The leading-character test admits "0x10", whose first character is a digit.
+    // Every character std::stod actually consumed has to belong to an unsigned
+    // decimal with an optional exponent.
+    const std::string token = text.substr(0, consumed);
+    for (const char ch : token) {
+        if (!std::isdigit(static_cast<unsigned char>(ch)) && ch != '.' && ch != 'e' &&
+            ch != 'E' && ch != '+' && ch != '-') {
+            throw SymOpError("Malformed number in symmetry operator component: " + component);
+        }
+    }
+
+    return value;
 }
 
 // Parse a single component of a symmetry operator (e.g., "-x", "y+1/2", "z+1/4")

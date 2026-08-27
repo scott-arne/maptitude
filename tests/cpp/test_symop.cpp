@@ -205,3 +205,26 @@ TEST(SymOpTest, UnusualTranslationsRoundTripExactly) {
     EXPECT_TRUE(first == second) << "serialized as " << first.ToString();
     EXPECT_DOUBLE_EQ(first.t[0], second.t[0]);
 }
+
+TEST(SymOpTest, RejectsNonFiniteAndNonDecimalNumberTokens) {
+    // std::stod accepts "inf", "infinity", "nan", and C99 hex floats. The named
+    // literals reach the parser only in the denominator, because 'i' and 'n' never
+    // enter the digit branch -- and 1/inf is a finite 0.0, so every downstream
+    // finiteness check passes and the component silently becomes the identity.
+    EXPECT_THROW(SymOp::Parse("x+1/inf,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x+1/infinity,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x+1/-inf,y,z"), SymOpError);
+    // A hex float starts with a digit, so only the consumed-token scan rejects it.
+    EXPECT_THROW(SymOp::Parse("x+0x10,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x+1/0x10,y,z"), SymOpError);
+}
+
+TEST(SymOpTest, StillAcceptsEveryDecimalFormTheGrammarIntends) {
+    // The token validation must not narrow the numbers real operators use.
+    EXPECT_NO_THROW(SymOp::Parse("x+1/2,y,z"));
+    EXPECT_NO_THROW(SymOp::Parse("x+0.5,y,z"));
+    EXPECT_NO_THROW(SymOp::Parse("x+.5,y,z"));
+    EXPECT_NO_THROW(SymOp::Parse("x+5e-1,y,z"));
+    const SymOp op = SymOp::Parse("x+5e-1,y,z");
+    EXPECT_NEAR(op.t[0], 0.5, 1e-12);
+}
