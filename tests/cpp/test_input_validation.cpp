@@ -309,7 +309,7 @@ TEST(OrthorhombicGuardTest, AcceptsOrthorhombicCells) {
 TEST(OrthorhombicGuardTest, RejectsMonoclinicAndTriclinicCells) {
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
     EXPECT_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.0, 105.0, 90.0), symops), CellError);
-    EXPECT_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.0, 90.0, 120.0), symops), CellError);
+    EXPECT_THROW(DensityCalculator(UnitCell(10.0, 10.0, 15.0, 90.0, 90.0, 120.0), symops), CellError);
     EXPECT_THROW(DensityCalculator(UnitCell(10.0, 12.0, 14.0, 88.0, 95.0, 101.0), symops), CellError);
 }
 
@@ -317,17 +317,28 @@ TEST(OrthorhombicGuardTest, ToleranceIsOnTheCosineNotTheAngle) {
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
     // cos(90 deg) is ~6.1e-17 in IEEE-754: well inside the tolerance.
     EXPECT_NO_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0), symops));
-    // cos(90.0000001 deg) is ~1.7e-9: outside it.
+    // cos(90.00000001 deg) is ~1.7e-10: inside the cosine tolerance, would fail
+    // a degree tolerance. This case distinguishes the two rules.
+    EXPECT_NO_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.00000001, 90.0, 90.0), symops));
+    // cos(90.0000001 deg) is ~1.7e-9: outside the cosine tolerance (note: one
+    // fewer decimal place in the angle, 10x larger cosine).
     EXPECT_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.0000001, 90.0, 90.0), symops),
                  CellError);
 }
 
 TEST(OrthorhombicGuardTest, CellValidityIsCheckedBeforeTheLatticeType) {
     // A cell that is both invalid and non-orthorhombic should report the
-    // geometric failure, which is the more specific diagnosis.
+    // geometric failure, which is the more specific diagnosis. UnitCell's
+    // members are public and mutable, so we construct a valid cell then mutate
+    // it to reach DensityCalculator's constructor (passing angles=(150,150,150)
+    // directly to UnitCell(...) throws before DensityCalculator is entered).
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    cell.alpha = 150.0;
+    cell.beta = 150.0;
+    cell.gamma = 150.0;
     try {
-        DensityCalculator(UnitCell(20.0, 25.0, 30.0, 150.0, 150.0, 150.0), symops);
+        DensityCalculator(cell, symops);
         FAIL() << "expected CellError";
     } catch (const CellError& e) {
         EXPECT_NE(std::string(e.what()).find("geometrically impossible"), std::string::npos)
