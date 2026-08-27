@@ -2,6 +2,7 @@
 #include "maptitude/Error.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <regex>
 #include <sstream>
