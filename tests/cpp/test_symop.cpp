@@ -89,3 +89,44 @@ TEST(SymOpTest, ToString) {
     std::string s = op.ToString();
     EXPECT_FALSE(s.empty());
 }
+
+TEST(SymOpTest, RejectsHighByteCharactersWithoutUndefinedBehavior) {
+    // std::isdigit on a negative char is UB. These inputs must produce a clean
+    // SymOpError, not a crash or a garbage parse.
+    EXPECT_THROW(SymOp::Parse("\xc3\xa9,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x,\xff,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x,y,\x80"), SymOpError);
+}
+
+TEST(SymOpTest, RejectsRepeatedAxisInOneComponent) {
+    EXPECT_THROW(SymOp::Parse("x+x,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x-x,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x,y+y,z"), SymOpError);
+}
+
+TEST(SymOpTest, StillAcceptsRealSymmetryOperators) {
+    EXPECT_NO_THROW(SymOp::Parse("x,y,z"));
+    EXPECT_NO_THROW(SymOp::Parse("-x,-y,z"));
+    EXPECT_NO_THROW(SymOp::Parse("-x,y+1/2,-z+1/2"));
+    EXPECT_NO_THROW(SymOp::Parse("y,x,-z"));
+    EXPECT_NO_THROW(SymOp::Parse("1/2-x,1/2+y,-z"));
+}
+
+TEST(SymOpTest, EveryAcceptedOperatorRoundTripsThroughToString) {
+    // ToString can only emit coefficients in {-1, 0, +1}. Once the parser
+    // rejects anything it cannot serialize, parse -> ToString -> parse is
+    // stable for every accepted input.
+    const char* operators[] = {"x,y,z", "-x,-y,z", "y,x,-z", "-x,y+1/2,-z+1/2",
+                               "1/2-x,1/2+y,-z"};
+    for (const char* text : operators) {
+        SymOp first = SymOp::Parse(text);
+        SymOp second = SymOp::Parse(first.ToString());
+        EXPECT_EQ(first.ToString(), second.ToString()) << "input: " << text;
+
+        auto a = first.Apply(0.3, 0.4, 0.5);
+        auto b = second.Apply(0.3, 0.4, 0.5);
+        EXPECT_NEAR(a[0], b[0], 1e-12) << "input: " << text;
+        EXPECT_NEAR(a[1], b[1], 1e-12) << "input: " << text;
+        EXPECT_NEAR(a[2], b[2], 1e-12) << "input: " << text;
+    }
+}

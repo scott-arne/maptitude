@@ -20,6 +20,7 @@ void ParseComponent(const std::string& component, const int row, std::array<doub
     double trans = 0.0;
     size_t pos = 0;
     double sign = 1.0;
+    bool axis_seen[3] = {false, false, false};
 
     while (pos < s.size()) {
         const char ch = s[pos];
@@ -30,19 +31,24 @@ void ParseComponent(const std::string& component, const int row, std::array<doub
         } else if (ch == '-') {
             sign = -1.0;
             ++pos;
-        } else if (ch == 'x' || ch == 'X') {
-            R[row * 3 + 0] = sign;
+        } else if (ch == 'x' || ch == 'X' || ch == 'y' || ch == 'Y' || ch == 'z' || ch == 'Z') {
+            // Crystallographic rotation rows in the standard setting hold at most one
+            // non-zero entry, in {-1, +1}. A repeated axis means the second write would
+            // silently overwrite the first ("x+x" parsing as a coefficient of 1) rather
+            // than summing, so reject it instead.
+            const int axis = (ch == 'x' || ch == 'X') ? 0 : (ch == 'y' || ch == 'Y') ? 1 : 2;
+            if (axis_seen[axis]) {
+                throw SymOpError("Axis '" + std::string(1, ch) +
+                                 "' appears more than once in symmetry operator component: " +
+                                 component);
+            }
+            axis_seen[axis] = true;
+            R[row * 3 + axis] = sign;
             sign = 1.0;
             ++pos;
-        } else if (ch == 'y' || ch == 'Y') {
-            R[row * 3 + 1] = sign;
-            sign = 1.0;
-            ++pos;
-        } else if (ch == 'z' || ch == 'Z') {
-            R[row * 3 + 2] = sign;
-            sign = 1.0;
-            ++pos;
-        } else if (std::isdigit(ch) || ch == '.') {
+        // The <cctype> classifiers are only defined for values representable as
+        // unsigned char; a negative char is undefined behavior.
+        } else if (std::isdigit(static_cast<unsigned char>(ch)) || ch == '.') {
             // Parse a number - could be a fraction numerator or decimal
             size_t end;
             const double num = std::stod(s.substr(pos), &end);
