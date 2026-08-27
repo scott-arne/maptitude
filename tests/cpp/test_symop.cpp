@@ -112,12 +112,32 @@ TEST(SymOpTest, StillAcceptsRealSymmetryOperators) {
     EXPECT_NO_THROW(SymOp::Parse("1/2-x,1/2+y,-z"));
 }
 
+TEST(SymOpTest, StillAcceptsTrigonalAndHexagonalOperators) {
+    // Space groups 143-194 have rows with two non-zero entries, so "at most one
+    // non-zero per row" is NOT the rule the repeated-axis guard enforces -- it
+    // rejects a repeated axis, which is a different and much narrower claim.
+    // Tightening it to one-per-row would silently lose every trigonal and
+    // hexagonal setting, so pin the distinction rather than leave it to a comment.
+    EXPECT_NO_THROW(SymOp::Parse("x-y,x,z"));      // P3, 3+ about c
+    EXPECT_NO_THROW(SymOp::Parse("-y,x-y,z"));     // P3, 3- about c
+    EXPECT_NO_THROW(SymOp::Parse("y-x,-x,z"));     // P6, 6- about c
+    EXPECT_NO_THROW(SymOp::Parse("-x+y,-x,z+1/3"));  // P3(1), screw component
+
+    // The rotation really is populated, not silently dropped: "x-y,x,z" sends
+    // (u, v, w) to (u - v, u, w).
+    const SymOp op = SymOp::Parse("x-y,x,z");
+    const auto image = op.Apply(0.3, 0.4, 0.5);
+    EXPECT_NEAR(image[0], -0.1, 1e-12);
+    EXPECT_NEAR(image[1], 0.3, 1e-12);
+    EXPECT_NEAR(image[2], 0.5, 1e-12);
+}
+
 TEST(SymOpTest, EveryAcceptedOperatorRoundTripsThroughToString) {
     // ToString can only emit coefficients in {-1, 0, +1}. Once the parser
     // rejects anything it cannot serialize, parse -> ToString -> parse is
     // stable for every accepted input.
     const char* operators[] = {"x,y,z", "-x,-y,z", "y,x,-z", "-x,y+1/2,-z+1/2",
-                               "1/2-x,1/2+y,-z"};
+                               "1/2-x,1/2+y,-z", "x-y,x,z", "-y,x-y,z+1/3"};
     for (const char* text : operators) {
         SymOp first = SymOp::Parse(text);
         SymOp second = SymOp::Parse(first.ToString());

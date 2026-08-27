@@ -33,10 +33,11 @@ void ParseComponent(const std::string& component, const int row, std::array<doub
             sign = -1.0;
             ++pos;
         } else if (ch == 'x' || ch == 'X' || ch == 'y' || ch == 'Y' || ch == 'z' || ch == 'Z') {
-            // Crystallographic rotation rows in the standard setting hold at most one
-            // non-zero entry, in {-1, +1}. A repeated axis means the second write would
-            // silently overwrite the first ("x+x" parsing as a coefficient of 1) rather
-            // than summing, so reject it instead.
+            // Each axis may appear at most once per component. A repeated axis is not a
+            // symmetry operation, and the write below would silently overwrite the earlier
+            // coefficient rather than sum it -- "x+x" parsing as 1 and "x-x" as -1. Note
+            // this is a per-axis rule, not one non-zero entry per row: trigonal and
+            // hexagonal operators such as "x-y,x,z" legitimately populate two columns.
             const int axis = (ch == 'x' || ch == 'X') ? 0 : (ch == 'y' || ch == 'Y') ? 1 : 2;
             if (axis_seen[axis]) {
                 throw SymOpError("Axis '" + std::string(1, ch) +
