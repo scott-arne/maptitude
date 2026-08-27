@@ -193,7 +193,10 @@ static void* _maptitude_extract_swig_ptr(PyObject* obj) {
 }
 
 // ---- Type checker generator macro ----
-// Generates a cached isinstance checker for an OpenEye Python type.
+// Generates a cached type checker for an OpenEye Python type. Uses the object's
+// real type (Py_TYPE), not PyObject_IsInstance, because the extracted pointer is
+// reinterpret_cast to a C++ type and a spoofed __class__ property would otherwise
+// let any object claim to be one.
 // TAG:    identifier suffix (e.g., oemolbase)
 // MODULE: Python module string (e.g., "openeye.oechem")
 // CLASS:  Python class name string (e.g., "OEMolBase")
@@ -203,12 +206,23 @@ static void* _maptitude_extract_swig_ptr(PyObject* obj) {
         if (!_maptitude_oe_##TAG##_type) { \
             PyObject* mod = PyImport_ImportModule(MODULE); \
             if (mod) { \
-                _maptitude_oe_##TAG##_type = PyObject_GetAttrString(mod, CLASS); \
+                PyObject* cls = PyObject_GetAttrString(mod, CLASS); \
                 Py_DECREF(mod); \
+                /* Only a real type object supports a spoof-resistant check. */ \
+                if (cls && !PyType_Check(cls)) { \
+                    Py_DECREF(cls); \
+                    cls = NULL; \
+                } \
+                _maptitude_oe_##TAG##_type = cls; \
             } \
-            if (!_maptitude_oe_##TAG##_type) return false; \
+            if (!_maptitude_oe_##TAG##_type) { \
+                PyErr_Clear(); \
+                return false; \
+            } \
         } \
-        return PyObject_IsInstance(obj, _maptitude_oe_##TAG##_type) == 1; \
+        if (obj == NULL) return false; \
+        return PyType_IsSubtype(Py_TYPE(obj), \
+                                (PyTypeObject*)_maptitude_oe_##TAG##_type) != 0; \
     }
 
 // ---- Molecule types (openeye.oechem) ----
