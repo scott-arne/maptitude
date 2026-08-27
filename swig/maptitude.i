@@ -286,7 +286,7 @@ DEFINE_OE_TYPE_CHECKER(oereceptor,   "openeye.oedocking", "OEReceptor")
 
 #undef DEFINE_OE_TYPE_CHECKER
 
-// ---- OEScalarGrid return-type helper (zero-copy pointer swap) ----
+// ---- OEScalarGrid return-type helper (copy-assign into Python object) ----
 static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
     if (!grid) {
         Py_RETURN_NONE;
@@ -315,9 +315,32 @@ static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
         delete grid;
         return NULL;
     }
+    /* Copy the value into the Python-side grid rather than swapping pointers.
+       The object under `thisAttr` was allocated inside OpenEye's shared
+       library; deleting it here would run this module's operator delete on
+       another runtime's allocation, and pointing it at our grid would then
+       have OpenEye's destructor free our memory. Each allocation must be
+       released by the allocator that made it.
+
+       Assignment, not an element loop: `oe_grid` is default-constructed by
+       PyObject_CallNoArgs above, so it has no geometry yet. operator= copies
+       dimensions, spacing, midpoints, title, and data together. */
     _SwigPyObjectCompat* swig_this = (_SwigPyObjectCompat*)thisAttr;
-    delete reinterpret_cast<OESystem::OEScalarGrid*>(swig_this->ptr);
-    swig_this->ptr = grid;
+    OESystem::OEScalarGrid* dest =
+        reinterpret_cast<OESystem::OEScalarGrid*>(swig_this->ptr);
+    if (dest == NULL) {
+        Py_DECREF(thisAttr);
+        Py_DECREF(oe_grid);
+        delete grid;
+        PyErr_SetString(PyExc_RuntimeError,
+                        "failed to access the wrapped OEScalarGrid");
+        return NULL;
+    }
+
+    *dest = *grid;
+
+    /* We own `grid`; the Python object owns `dest` and always has. */
+    delete grid;
     Py_DECREF(thisAttr);
     return oe_grid;
 }
