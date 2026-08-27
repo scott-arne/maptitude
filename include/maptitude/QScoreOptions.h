@@ -6,7 +6,25 @@
 #ifndef MAPTITUDE_QSCOREOPTIONS_H
 #define MAPTITUDE_QSCOREOPTIONS_H
 
+#include <cmath>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+
 namespace Maptitude {
+
+namespace detail {
+/// Reject a non-finite or non-positive option value with a message naming the
+/// setter, so the caller can find it without a debugger.
+inline void RequirePositiveFinite(const char* what, double value) {
+    if (!std::isfinite(value) || value <= 0.0) {
+        std::ostringstream message;
+        message << "QScoreOptions::" << what << " requires a finite positive value (got " << value
+                << ")";
+        throw std::invalid_argument(message.str());
+    }
+}
+}  // namespace detail
 
 /**
  * @brief Radial sampling strategy for Q-score computation.
@@ -28,16 +46,34 @@ enum class RadialSampling {
  */
 class QScoreOptions {
 public:
-    void SetSigma(double sigma) { sigma_ = sigma; }
+    void SetSigma(double sigma) {
+        detail::RequirePositiveFinite("SetSigma", sigma);
+        sigma_ = sigma;
+    }
     double GetSigma() const { return sigma_; }
 
-    void SetRadialStep(double d_rad) { d_rad_ = d_rad; }
+    void SetRadialStep(double d_rad) {
+        // A non-positive step makes the radial sweep non-terminating.
+        detail::RequirePositiveFinite("SetRadialStep", d_rad);
+        d_rad_ = d_rad;
+    }
     double GetRadialStep() const { return d_rad_; }
 
-    void SetMaxRadius(double to_rad) { to_rad_ = to_rad; }
+    void SetMaxRadius(double to_rad) {
+        detail::RequirePositiveFinite("SetMaxRadius", to_rad);
+        to_rad_ = to_rad;
+    }
     double GetMaxRadius() const { return to_rad_; }
 
-    void SetNumPoints(unsigned int num_points) { num_points_ = num_points; }
+    void SetNumPoints(unsigned int num_points) {
+        if (num_points == 0) {
+            // num_points is unsigned, so zero is the only reachable bad value; name
+            // it anyway, per the "errors carry their values" rule in spec 5.3.
+            throw std::invalid_argument("QScoreOptions::SetNumPoints requires at least one point, got " +
+                                        std::to_string(num_points));
+        }
+        num_points_ = num_points;
+    }
     unsigned int GetNumPoints() const { return num_points_; }
 
     void SetNormalizeMap(bool normalize) { normalize_map_ = normalize; }

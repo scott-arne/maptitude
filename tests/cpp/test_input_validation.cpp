@@ -5,10 +5,12 @@
 /// data.
 #include <gtest/gtest.h>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include "maptitude/DensityCalculator.h"
 #include "maptitude/Error.h"
+#include "maptitude/QScoreOptions.h"
 #include "maptitude/SymOp.h"
 #include "maptitude/UnitCell.h"
 
@@ -344,4 +346,53 @@ TEST(OrthorhombicGuardTest, CellValidityIsCheckedBeforeTheLatticeType) {
         EXPECT_NE(std::string(e.what()).find("geometrically impossible"), std::string::npos)
             << "got: " << e.what();
     }
+}
+
+// ---- QScoreOptions validation ----
+
+TEST(QScoreOptionsValidationTest, AcceptsTheDefaults) {
+    QScoreOptions options;
+    EXPECT_GT(options.GetSigma(), 0.0);
+    EXPECT_GT(options.GetRadialStep(), 0.0);
+    EXPECT_GT(options.GetMaxRadius(), 0.0);
+    EXPECT_GE(options.GetNumPoints(), 1u);
+}
+
+TEST(QScoreOptionsValidationTest, RejectsNonPositiveSigma) {
+    QScoreOptions options;
+    EXPECT_THROW(options.SetSigma(0.0), std::invalid_argument);
+    EXPECT_THROW(options.SetSigma(-0.5), std::invalid_argument);
+    EXPECT_NO_THROW(options.SetSigma(0.8));
+    EXPECT_DOUBLE_EQ(options.GetSigma(), 0.8);
+}
+
+TEST(QScoreOptionsValidationTest, RejectsNonPositiveRadialStep) {
+    // A non-positive step makes the radial sweep never advance: the process
+    // hangs rather than returning a wrong number.
+    QScoreOptions options;
+    EXPECT_THROW(options.SetRadialStep(0.0), std::invalid_argument);
+    EXPECT_THROW(options.SetRadialStep(-0.1), std::invalid_argument);
+    EXPECT_NO_THROW(options.SetRadialStep(0.25));
+}
+
+TEST(QScoreOptionsValidationTest, RejectsNonPositiveMaxRadius) {
+    QScoreOptions options;
+    EXPECT_THROW(options.SetMaxRadius(0.0), std::invalid_argument);
+    EXPECT_THROW(options.SetMaxRadius(-2.0), std::invalid_argument);
+    EXPECT_NO_THROW(options.SetMaxRadius(3.0));
+}
+
+TEST(QScoreOptionsValidationTest, RejectsZeroSamplePoints) {
+    QScoreOptions options;
+    EXPECT_THROW(options.SetNumPoints(0), std::invalid_argument);
+    EXPECT_NO_THROW(options.SetNumPoints(1));
+    EXPECT_NO_THROW(options.SetNumPoints(16));
+}
+
+TEST(QScoreOptionsValidationTest, RejectsNonFiniteValues) {
+    const double nan_value = std::numeric_limits<double>::quiet_NaN();
+    QScoreOptions options;
+    EXPECT_THROW(options.SetSigma(nan_value), std::invalid_argument);
+    EXPECT_THROW(options.SetRadialStep(nan_value), std::invalid_argument);
+    EXPECT_THROW(options.SetMaxRadius(nan_value), std::invalid_argument);
 }
