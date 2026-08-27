@@ -168,6 +168,20 @@ TEST(MetricAnalyticTest, QScoreRejectsAFixedSweepWithNoShells) {
     EXPECT_THROW(qscore(mol, grid, RESOLUTION, nullptr, options), GridError);
 }
 
+TEST(MetricAnalyticTest, QScoreRejectsAFixedSweepWithTooManyShells) {
+    // The smallest legal step against the default radius is the other end of the
+    // same cross-field failure: (2.0 + 0.01) / 1e-6 is just over two million
+    // shells, each allocating a full sample set per atom. Both values pass their
+    // own setter, so only the consumption-point check can catch the combination.
+    QScoreOptions options;
+    options.SetRadialStep(MIN_RADIAL_STEP);
+    OESystem::OEScalarGrid grid =
+        MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    EXPECT_THROW(qscore(mol, grid, RESOLUTION, nullptr, options), GridError);
+}
+
 TEST(MetricAnalyticTest, QScoreStillAcceptsTheDefaultSweep) {
     // The guard must not narrow the working configuration. This is the neutrality
     // half of the two tests above.
