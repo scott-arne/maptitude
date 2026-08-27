@@ -1016,6 +1016,43 @@ _cpp_diff_to_calc = diff_to_calc
 _cpp_wrap_and_pad_grid = wrap_and_pad_grid
 
 
+def _copy_rscc_options(options):
+    """Return a copy of an RsccOptions so callers' objects are never mutated.
+
+    :param options: Source options.
+    :returns: An independent copy carrying the same settings.
+    """
+    copied = RsccOptions()
+    copied.SetAtomRadiusMethod(options.GetAtomRadiusMethod())
+    copied.SetFixedAtomRadius(options.GetFixedAtomRadius())
+    copied.SetAtomRadiusScaling(options.GetAtomRadiusScaling())
+    return copied
+
+
+def _copy_rsr_options(options):
+    """Return a copy of an RsrOptions so callers' objects are never mutated.
+
+    :param options: Source options.
+    :returns: An independent copy carrying the same settings.
+    """
+    copied = RsrOptions()
+    copied.SetAtomRadiusMethod(options.GetAtomRadiusMethod())
+    copied.SetFixedAtomRadius(options.GetFixedAtomRadius())
+    copied.SetAtomRadiusScaling(options.GetAtomRadiusScaling())
+    return copied
+
+
+def _copy_coverage_options(options):
+    """Return a copy of a CoverageOptions so callers' objects are never mutated.
+
+    :param options: Source options.
+    :returns: An independent copy carrying the same settings.
+    """
+    copied = CoverageOptions()
+    copied.SetSigma(options.GetSigma())
+    return copied
+
+
 def fc_density(obj, obs_grid, resolution, cell, mask=None,
                k_sol=0.35, b_sol=46.0, symops=None,
                include_h=False, n_scale_shells=1):
@@ -1070,6 +1107,9 @@ def rscc(obj, grid, resolution, mask=None, calc_grid=None,
                 "binned": AtomRadius_BINNED,
             }
             atom_radius = _radius_map[atom_radius.lower()]
+        # Copy: mutating the caller's options object would leak this call's
+        # settings into their next call.
+        options = _copy_rscc_options(options)
         options.SetAtomRadiusMethod(atom_radius)
     return _cpp_rscc(obj, grid, resolution, mask, calc_grid, options)
 
@@ -1098,6 +1138,9 @@ def rsr(obj, grid, resolution, mask=None, calc_grid=None,
                 "adaptive": AtomRadius_ADAPTIVE,
             }
             atom_radius = _radius_map[atom_radius.lower()]
+        # Copy: mutating the caller's options object would leak this call's
+        # settings into their next call.
+        options = _copy_rsr_options(options)
         options.SetAtomRadiusMethod(atom_radius)
     return _cpp_rsr(obj, grid, resolution, mask, calc_grid, options)
 
@@ -1129,19 +1172,21 @@ def ediam(obj, grid, resolution, mask=None):
     return _cpp_ediam(obj, grid, resolution, mask)
 
 
-def coverage(obj, grid, sigma=1.0, mask=None, options=None):
+def coverage(obj, grid, sigma=None, mask=None, options=None):
     """Coverage: fraction of atoms observed in density.
 
     :param obj: Input molecule.
     :param grid: Observed electron density map.
-    :param sigma: Number of standard deviations above mean.
+    :param sigma: Number of standard deviations above mean. When None, the
+        value carried by ``options`` is used. An explicit value overrides it.
     :param mask: Optional atom predicate.
-    :param options: CoverageOptions configuration object.
+    :param options: CoverageOptions configuration object. Never mutated.
     :returns: DensityScoreResult with coverage fractions.
     """
     if options is None:
         options = CoverageOptions()
-    if sigma != 1.0:
+    if sigma is not None:
+        options = _copy_coverage_options(options)
         options.SetSigma(sigma)
     return _cpp_coverage(obj, grid, mask, options)
 

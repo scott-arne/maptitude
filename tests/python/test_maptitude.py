@@ -200,12 +200,3 @@ def test_density_scorer_rscc():
 
     result = rscc(mol, obs_grid, 2.0, calc_grid=calc_grid)
     assert hasattr(result, "overall")
-
-
-def _has_openeye():
-    """Check if OpenEye toolkits are available."""
-    try:
-        from openeye import oechem, oegrid  # noqa: F401
-        return True
-    except ImportError:
-        return False
