@@ -3,6 +3,7 @@
 #include "maptitude/Error.h"
 
 #include <cmath>
+#include <string>
 
 using namespace Maptitude;
 
@@ -161,7 +162,19 @@ TEST(SymOpTest, MalformedNumbersRaiseSymOpErrorNotStdExceptions) {
 TEST(SymOpTest, RejectsZeroDenominator) {
     // "x+1/0" did not fail: it parsed to t[0] = inf and serialized as "x+inf,y,z",
     // carrying a non-finite translation into density expansion.
-    EXPECT_THROW(SymOp::Parse("x+1/0,y,z"), SymOpError);
+    //
+    // Assert on the message, not just the type. The trailing !std::isfinite(trans)
+    // check would reject this input on its own, so a type-only assertion stays green
+    // when the zero-denominator branch is deleted and the diagnostic silently
+    // degrades to "Non-finite translation". Pinning the message is what makes the
+    // specific branch load-bearing.
+    try {
+        SymOp::Parse("x+1/0,y,z");
+        FAIL() << "expected SymOpError for a zero denominator";
+    } catch (const SymOpError& error) {
+        EXPECT_NE(std::string(error.what()).find("Zero denominator"), std::string::npos)
+            << "rejected by the wrong branch: " << error.what();
+    }
 }
 
 TEST(SymOpTest, RejectsMalformedSignSequences) {
