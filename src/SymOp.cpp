@@ -4,12 +4,29 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 
 namespace Maptitude {
 
 namespace {
+
+// std::stod signals failure with std::invalid_argument and std::out_of_range, and
+// neither is a SymOpError. A symmetry operator is user data out of a CCP4 header or
+// a CIF file, so a malformed one has to reach the caller as the library's own typed
+// exception rather than through the generic std::exception arm of the SWIG wrapper.
+double ParseNumber(const std::string& text, const std::string& component, size_t& consumed) {
+    try {
+        return std::stod(text, &consumed);
+    } catch (const std::invalid_argument&) {
+        throw SymOpError("Expected a number in symmetry operator component: " + component);
+    } catch (const std::out_of_range&) {
+        throw SymOpError("Number out of range in symmetry operator component: " + component);
+    }
+}
 
 // Parse a single component of a symmetry operator (e.g., "-x", "y+1/2", "z+1/4")
 void ParseComponent(const std::string& component, const int row, std::array<double, 9>& R,
@@ -22,15 +39,23 @@ void ParseComponent(const std::string& component, const int row, std::array<doub
     size_t pos = 0;
     double sign = 1.0;
     bool axis_seen[3] = {false, false, false};
+    // 'sign' alone cannot tell a leading '-' from a stray one: it is just a
+    // multiplier the next term happens to pick up. These two flags record the
+    // grammar state the multiplier does not -- whether a sign is still owed a term,
+    // and whether the component contained any term at all.
+    bool pending_sign = false;
+    bool saw_term = false;
 
     while (pos < s.size()) {
         const char ch = s[pos];
 
-        if (ch == '+') {
-            sign = 1.0;
-            ++pos;
-        } else if (ch == '-') {
-            sign = -1.0;
+        if (ch == '+' || ch == '-') {
+            if (pending_sign) {
+                throw SymOpError("Consecutive signs in symmetry operator component: " +
+                                 component);
+            }
+            sign = (ch == '-') ? -1.0 : 1.0;
+            pending_sign = true;
             ++pos;
         } else if (ch == 'x' || ch == 'X' || ch == 'y' || ch == 'Y' || ch == 'z' || ch == 'Z') {
             // Each axis may appear at most once per component. A repeated axis is not a
@@ -48,26 +73,45 @@ void ParseComponent(const std::string& component, const int row, std::array<doub
             R[row * 3 + axis] = sign;
             sign = 1.0;
             ++pos;
+            pending_sign = false;
+            saw_term = true;
         // The <cctype> classifiers are only defined for values representable as
         // unsigned char; a negative char is undefined behavior.
         } else if (std::isdigit(static_cast<unsigned char>(ch)) || ch == '.') {
-            // Parse a number - could be a fraction numerator or decimal
             size_t end;
-            const double num = std::stod(s.substr(pos), &end);
+            const double num = ParseNumber(s.substr(pos), component, end);
             pos += end;
             if (pos < s.size() && s[pos] == '/') {
                 ++pos;
-                const double denom = std::stod(s.substr(pos), &end);
+                const double denom = ParseNumber(s.substr(pos), component, end);
                 pos += end;
+                if (denom == 0.0) {
+                    throw SymOpError("Zero denominator in symmetry operator component: " +
+                                     component);
+                }
                 trans += sign * num / denom;
             } else {
                 trans += sign * num;
             }
             sign = 1.0;
+            pending_sign = false;
+            saw_term = true;
         } else {
             throw SymOpError("Unexpected character '" + std::string(1, ch) +
                              "' in symmetry operator component: " + component);
         }
+    }
+
+    if (pending_sign) {
+        throw SymOpError("Symmetry operator component ends with a sign: " + component);
+    }
+    if (!saw_term) {
+        throw SymOpError("Empty symmetry operator component: " + component);
+    }
+    // A zero denominator is caught above with a specific message, but summed
+    // translations can overflow on their own ("1e308+1e308"), so check the result.
+    if (!std::isfinite(trans)) {
+        throw SymOpError("Non-finite translation in symmetry operator component: " + component);
     }
 
     t[row] = trans;
@@ -180,7 +224,13 @@ std::string SymOp::ToString() const {
                 }
             }
             if (!found_frac) {
+                // Six significant digits is not enough to name a double: 1/13 writes
+                // as 0.0769231 and reads back as a different value. max_digits10 is
+                // the shortest precision that round-trips every double exactly.
+                const std::streamsize previous =
+                    oss.precision(std::numeric_limits<double>::max_digits10);
                 oss << frac;
+                oss.precision(previous);
             }
         }
     }

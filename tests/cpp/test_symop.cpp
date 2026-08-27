@@ -132,21 +132,63 @@ TEST(SymOpTest, StillAcceptsTrigonalAndHexagonalOperators) {
     EXPECT_NEAR(image[2], 0.5, 1e-12);
 }
 
-TEST(SymOpTest, EveryAcceptedOperatorRoundTripsThroughToString) {
-    // ToString can only emit coefficients in {-1, 0, +1}. Once the parser
-    // rejects anything it cannot serialize, parse -> ToString -> parse is
-    // stable for every accepted input.
+TEST(SymOpTest, RepresentativeOperatorsRoundTripThroughToString) {
+    // A representative sample, not a proof over the whole acceptance set -- the
+    // universal claim belongs to UnusualTranslationsRoundTripExactly, which covers
+    // the translations this list does not reach. Compare the operators themselves,
+    // not two ToString() outputs: string equality survives information lost in the
+    // FIRST serialization, because the second serialization loses it identically.
     const char* operators[] = {"x,y,z", "-x,-y,z", "y,x,-z", "-x,y+1/2,-z+1/2",
                                "1/2-x,1/2+y,-z", "x-y,x,z", "-y,x-y,z+1/3"};
     for (const char* text : operators) {
         SymOp first = SymOp::Parse(text);
         SymOp second = SymOp::Parse(first.ToString());
-        EXPECT_EQ(first.ToString(), second.ToString()) << "input: " << text;
-
-        auto a = first.Apply(0.3, 0.4, 0.5);
-        auto b = second.Apply(0.3, 0.4, 0.5);
-        EXPECT_NEAR(a[0], b[0], 1e-12) << "input: " << text;
-        EXPECT_NEAR(a[1], b[1], 1e-12) << "input: " << text;
-        EXPECT_NEAR(a[2], b[2], 1e-12) << "input: " << text;
+        EXPECT_TRUE(first == second) << "input: " << text
+                                     << " serialized as " << first.ToString();
     }
+}
+
+TEST(SymOpTest, MalformedNumbersRaiseSymOpErrorNotStdExceptions) {
+    // std::stod signals failure with std::invalid_argument and std::out_of_range.
+    // Neither is a SymOpError, so both crossed the Python boundary through the
+    // generic std::exception arm as RuntimeError -- invisible to a caller catching
+    // SymOpError around a malformed CCP4 or CIF operator.
+    EXPECT_THROW(SymOp::Parse(".,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x+1/,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x+1e309,y,z"), SymOpError);
+}
+
+TEST(SymOpTest, RejectsZeroDenominator) {
+    // "x+1/0" did not fail: it parsed to t[0] = inf and serialized as "x+inf,y,z",
+    // carrying a non-finite translation into density expansion.
+    EXPECT_THROW(SymOp::Parse("x+1/0,y,z"), SymOpError);
+}
+
+TEST(SymOpTest, RejectsMalformedSignSequences) {
+    // The loop carried 'sign' as mutable state with no record of whether a term was
+    // owed, so a sign with nothing to apply to was silently absorbed.
+    EXPECT_THROW(SymOp::Parse("--x,y,z"), SymOpError);  // parsed as -x
+    EXPECT_THROW(SymOp::Parse("x+,y,z"), SymOpError);   // trailing '+' discarded
+    EXPECT_THROW(SymOp::Parse(",y,z"), SymOpError);     // empty component, all-zero row
+}
+
+TEST(SymOpTest, StillAcceptsAPureTranslationComponent) {
+    // An all-zero rotation row is explicitly still legal: "1/2" is a translation, not
+    // a malformed component. The empty-component rejection must not reach it.
+    const SymOp op = SymOp::Parse("1/2,y,z");
+    EXPECT_NEAR(op.t[0], 0.5, 1e-12);
+    EXPECT_NEAR(op.R[0], 0.0, 1e-12);
+    EXPECT_NEAR(op.R[1], 0.0, 1e-12);
+    EXPECT_NEAR(op.R[2], 0.0, 1e-12);
+}
+
+TEST(SymOpTest, UnusualTranslationsRoundTripExactly) {
+    // ToString only recognizes denominators 2..12. Everything else fell back to the
+    // stream's default six significant digits, so 1/13 serialized as 0.0769231 and
+    // reparsed to a different double -- a lossy round trip the seven-case sample
+    // below never reached.
+    const SymOp first = SymOp::Parse("x+1/13,y,z");
+    const SymOp second = SymOp::Parse(first.ToString());
+    EXPECT_TRUE(first == second) << "serialized as " << first.ToString();
+    EXPECT_DOUBLE_EQ(first.t[0], second.t[0]);
 }
