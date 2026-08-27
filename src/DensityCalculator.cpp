@@ -12,6 +12,7 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <sstream>
 #include <vector>
 
 #ifdef MAPTITUDE_USE_OPENMP
@@ -23,6 +24,27 @@ namespace Maptitude {
 static constexpr double TWO_PI = 6.283185307179586;
 static constexpr double DEFAULT_BFACTOR = 20.0;
 static constexpr double PROBE_RADIUS = 1.4;
+static constexpr double DEG_TO_RAD = 3.14159265358979323846 / 180.0;
+
+/// The structure-factor pipeline computes 1/d^2 as
+/// (h/a)^2 + (k/b)^2 + (l/c)^2 in four places, which is only correct for an
+/// orthorhombic lattice. Non-orthorhombic cells would return a plausible wrong
+/// answer; reject them until general lattice support lands.
+static void RequireOrthorhombic(const UnitCell& cell) {
+    constexpr double COSINE_TOLERANCE = 1e-9;
+    const double cosines[3] = {std::cos(cell.alpha * DEG_TO_RAD), std::cos(cell.beta * DEG_TO_RAD),
+                               std::cos(cell.gamma * DEG_TO_RAD)};
+    const char* names[3] = {"alpha", "beta", "gamma"};
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(cosines[i]) >= COSINE_TOLERANCE) {
+            std::ostringstream message;
+            message << "DensityCalculator supports orthorhombic cells only; angle " << names[i]
+                    << " is " << (i == 0 ? cell.alpha : (i == 1 ? cell.beta : cell.gamma))
+                    << " degrees";
+            throw CellError(message.str());
+        }
+    }
+}
 
 // ---- Impl ----
 
@@ -40,6 +62,7 @@ DensityCalculator::DensityCalculator(const UnitCell& cell,
     // The members of UnitCell are public and mutable, so a cell can be
     // invalidated after construction. Re-check at the consumption point.
     validate_cell(pimpl_->cell);
+    RequireOrthorhombic(pimpl_->cell);
 }
 
 DensityCalculator::~DensityCalculator() = default;

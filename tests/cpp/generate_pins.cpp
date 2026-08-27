@@ -221,14 +221,6 @@ void EmitFcPins(std::ostream& os) {
     std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
     EmitGridSummary(os, "FC_ORTHORHOMBIC", *fc);
 
-    // Monoclinic: produces numbers today. Task 9 makes this throw CellError.
-    // The pin exists so that regression is a reviewed change, not a silent one.
-    UnitCell mono(20.0, 25.0, 30.0, 90.0, 105.0, 90.0);
-    OEChem::OEGraphMol mol2 = MakeAtomMol(6, 5.0, 5.0, 5.0);
-    DensityCalculator calc2(mono, symops);
-    std::unique_ptr<OESystem::OEScalarGrid> fc2(calc2.Calculate(mol2, obs, 2.0));
-    EmitGridSummary(os, "FC_MONOCLINIC", *fc2);
-
     // Orthorhombic with n_scale_shells = 4, to cover the per-shell FFT scaling branch.
     OEChem::OEGraphMol mol3 = MakeAtomMol(6, 5.0, 5.0, 5.0);
     DensityCalculator calc3(ortho, symops);

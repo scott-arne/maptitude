@@ -5,8 +5,11 @@
 /// data.
 #include <gtest/gtest.h>
 #include <limits>
+#include <vector>
 
+#include "maptitude/DensityCalculator.h"
 #include "maptitude/Error.h"
+#include "maptitude/SymOp.h"
 #include "maptitude/UnitCell.h"
 
 using namespace Maptitude;
@@ -293,4 +296,41 @@ TEST(CellValidationTest, AcceptsUsableCellWithSubnormalVolume) {
     // 5e-11 and is perfectly usable. The check gates on usability, not on
     // subnormality.
     EXPECT_NO_THROW(UnitCell(1e-105, 1e-105, 1e-105, 60.0, 70.0, 80.0));
+}
+
+// ---- Orthorhombic lattice constraint (Task 9) ----
+
+TEST(OrthorhombicGuardTest, AcceptsOrthorhombicCells) {
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    EXPECT_NO_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0), symops));
+    EXPECT_NO_THROW(DensityCalculator(UnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0), symops));
+}
+
+TEST(OrthorhombicGuardTest, RejectsMonoclinicAndTriclinicCells) {
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    EXPECT_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.0, 105.0, 90.0), symops), CellError);
+    EXPECT_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.0, 90.0, 120.0), symops), CellError);
+    EXPECT_THROW(DensityCalculator(UnitCell(10.0, 12.0, 14.0, 88.0, 95.0, 101.0), symops), CellError);
+}
+
+TEST(OrthorhombicGuardTest, ToleranceIsOnTheCosineNotTheAngle) {
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    // cos(90 deg) is ~6.1e-17 in IEEE-754: well inside the tolerance.
+    EXPECT_NO_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0), symops));
+    // cos(90.0000001 deg) is ~1.7e-9: outside it.
+    EXPECT_THROW(DensityCalculator(UnitCell(20.0, 25.0, 30.0, 90.0000001, 90.0, 90.0), symops),
+                 CellError);
+}
+
+TEST(OrthorhombicGuardTest, CellValidityIsCheckedBeforeTheLatticeType) {
+    // A cell that is both invalid and non-orthorhombic should report the
+    // geometric failure, which is the more specific diagnosis.
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    try {
+        DensityCalculator(UnitCell(20.0, 25.0, 30.0, 150.0, 150.0, 150.0), symops);
+        FAIL() << "expected CellError";
+    } catch (const CellError& e) {
+        EXPECT_NE(std::string(e.what()).find("geometrically impossible"), std::string::npos)
+            << "got: " << e.what();
+    }
 }
