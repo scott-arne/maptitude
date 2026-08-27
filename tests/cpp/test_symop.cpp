@@ -219,6 +219,24 @@ TEST(SymOpTest, RejectsNonFiniteAndNonDecimalNumberTokens) {
     EXPECT_THROW(SymOp::Parse("x+1/0x10,y,z"), SymOpError);
 }
 
+TEST(SymOpTest, RejectsASignedNumberToken) {
+    // The consumed-token scan allows '+' and '-' because an exponent needs them, so
+    // it cannot reject a leading sign; only the leading-character test can. Signs
+    // belong to the sign branch, which is what tracks pending_sign -- a sign that
+    // reaches ParseNumber has bypassed that state entirely. Without this test the
+    // leading-character test is unpinned and "x+1/+2,y,z" quietly parses as x+1/2.
+    EXPECT_THROW(SymOp::Parse("x+1/+2,y,z"), SymOpError);
+    EXPECT_THROW(SymOp::Parse("x+1/-2,y,z"), SymOpError);
+}
+
+TEST(SymOpTest, RejectsATranslationThatOverflowsWhileSumming) {
+    // Every operand here is finite and every token is well formed, so no per-token
+    // check fires: the sum is what overflows. This is the only input the trailing
+    // !std::isfinite(trans) guard rejects on its own, and the round-2 implementer
+    // correctly reported that nothing exercised it.
+    EXPECT_THROW(SymOp::Parse("x+1e308+1e308,y,z"), SymOpError);
+}
+
 TEST(SymOpTest, StillAcceptsEveryDecimalFormTheGrammarIntends) {
     // The token validation must not narrow the numbers real operators use.
     EXPECT_NO_THROW(SymOp::Parse("x+1/2,y,z"));
