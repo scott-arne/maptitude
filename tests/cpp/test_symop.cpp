@@ -206,6 +206,53 @@ TEST(SymOpTest, UnusualTranslationsRoundTripExactly) {
     EXPECT_DOUBLE_EQ(first.t[0], second.t[0]);
 }
 
+TEST(SymOpTest, SerializesAZeroComponentAsAParseableZero) {
+    // ParseComponent accepts "0" as a pure translation of zero, and ToString suppressed
+    // both the all-zero rotation row and the sub-threshold translation -- so
+    // Parse("0,y,z") serialized to ",y,z", which the empty-component guard added in
+    // 339b3a5 then rejects. The serializer was emitting a string its own parser refuses.
+    const SymOp op = SymOp::Parse("0,y,z");
+    EXPECT_EQ(op.ToString(), "0,y,z");
+    const SymOp round_tripped = SymOp::Parse(op.ToString());
+    EXPECT_TRUE(op == round_tripped);
+}
+
+TEST(SymOpTest, EverySerializedOperatorReparses) {
+    // The contract: every operator Parse() produces serializes to a string Parse()
+    // accepts. Equality is deliberately NOT claimed here -- "1e-11,y,z" serializes to
+    // "0,y,z" because of ToString's 1e-10 suppression threshold, so it reparses
+    // successfully but not to an equal operator. Exact round-tripping is pinned
+    // separately by UnusualTranslationsRoundTripExactly.
+    const char* operators[] = {"0,y,z",  "0,0,0",      "-0,y,z",      "1e-11,y,z",
+                               "1/2,y,z", "3,y,z",     "x,y,z",       "-x,-y,z",
+                               "x-y,x,z", "-y,x-y,z+1/3", "x+1/13,y,z", "x-1/2,y,z"};
+    for (const char* text : operators) {
+        const SymOp op = SymOp::Parse(text);
+        const std::string serialized = op.ToString();
+        EXPECT_NO_THROW(SymOp::Parse(serialized))
+            << "input: " << text << " serialized as " << serialized;
+    }
+}
+
+TEST(SymOpTest, PureTranslationComponentsRoundTripExactly) {
+    // A row with an all-zero rotation is the only place the translation block's
+    // "nothing emitted yet" bookkeeping is observable: if the block forgets to clear the
+    // flag, the row emits its translation AND the trailing zero, so "1/2,y,z" serializes
+    // as "1/20,y,z" and "3,y,z" as "6/20,y,z". Both are grammatically valid, so every
+    // reparses-without-throwing check stays green while the translation silently becomes
+    // 0.05 and 0.3. Only exact equality on a translation-only row detects that, and no
+    // other test serializes one -- StillAcceptsAPureTranslationComponent parses without
+    // serializing, and every operator in the two round-trip samples has a rotation
+    // coefficient in each row carrying a translation.
+    const char* operators[] = {"1/2,y,z", "3,y,z", "-1/2,y,z"};
+    for (const char* text : operators) {
+        const SymOp first = SymOp::Parse(text);
+        const SymOp second = SymOp::Parse(first.ToString());
+        EXPECT_TRUE(first == second) << "input: " << text
+                                     << " serialized as " << first.ToString();
+    }
+}
+
 TEST(SymOpTest, RejectsNonFiniteAndNonDecimalNumberTokens) {
     // std::stod accepts "inf", "infinity", "nan", and C99 hex floats. The named
     // literals reach the parser only in the denominator, because 'i' and 'n' never

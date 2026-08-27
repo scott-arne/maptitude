@@ -273,6 +273,15 @@ std::string SymOp::ToString() const {
                 oss << frac;
                 oss.precision(previous);
             }
+            first = false;
+        }
+
+        // ParseComponent rejects an empty component, so a row that emitted nothing -- an
+        // all-zero rotation and a translation below the suppression threshold -- would make
+        // the serializer produce a string its own parser refuses. "0,y,z" round trips;
+        // ",y,z" does not parse at all.
+        if (first) {
+            oss << "0";
         }
     }
 
