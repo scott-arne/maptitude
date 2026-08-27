@@ -253,6 +253,26 @@ TEST(SymOpTest, PureTranslationComponentsRoundTripExactly) {
     }
 }
 
+TEST(SymOpTest, LargeTranslationsRoundTripWithoutIntegerOverflow) {
+    // ToString's fraction search cast std::round(frac * denom) to int. For a translation
+    // at or above 2^30 that double is outside int's range, which is undefined behavior;
+    // here it saturated, so "x+1073741824,y,z" serialized as "x+2147483647/2,y,z" and
+    // reparsed as 1073741823.5. The corrupted output is grammatically valid, so
+    // EverySerializedOperatorReparses stays green -- only exact equality detects it.
+    // The two values below the boundary are controls: they must keep using the fraction
+    // path rather than being pushed onto the decimal fallback by an over-broad guard.
+    const char* operators[] = {"x+1073741822,y,z", "x+1073741823,y,z",
+                               "x+1073741824,y,z", "x+1073741825,y,z",
+                               "x+2147483647,y,z", "x+1e20,y,z",
+                               "x-1e20,y,z",       "1e20,y,z"};
+    for (const char* text : operators) {
+        const SymOp first = SymOp::Parse(text);
+        const SymOp second = SymOp::Parse(first.ToString());
+        EXPECT_TRUE(first == second) << "input: " << text
+                                     << " serialized as " << first.ToString();
+    }
+}
+
 TEST(SymOpTest, RejectsNonFiniteAndNonDecimalNumberTokens) {
     // std::stod accepts "inf", "infinity", "nan", and C99 hex floats. The named
     // literals reach the parser only in the denominator, because 'i' and 'n' never

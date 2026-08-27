@@ -258,8 +258,19 @@ std::string SymOp::ToString() const {
             for (int denom = 2; denom <= 12; ++denom) {
                 const double numer = frac * denom;
                 if (std::abs(numer - std::round(numer)) < 1e-8) {
-                    const int n = static_cast<int>(std::round(numer));
-                    oss << n << "/" << denom;
+                    const double rounded = std::round(numer);
+                    // Casting a double outside int's range is undefined behavior, and
+                    // frac * 2 passes INT_MAX once the translation reaches 2^30. The
+                    // saturated cast silently rewrote the operator: "x+1073741824,y,z"
+                    // serialized as "x+2147483647/2,y,z" and reparsed as 1073741823.5.
+                    // A larger denominator only grows |numer|, so give up on the fraction
+                    // form entirely and let the max_digits10 decimal path below render it
+                    // exactly.
+                    if (rounded < static_cast<double>(std::numeric_limits<int>::min()) ||
+                        rounded > static_cast<double>(std::numeric_limits<int>::max())) {
+                        break;
+                    }
+                    oss << static_cast<int>(rounded) << "/" << denom;
                     found_frac = true;
                     break;
                 }
