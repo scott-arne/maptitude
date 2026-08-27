@@ -1,4 +1,5 @@
-/// Tier 2 pins for the structure-factor pipeline.
+/// Tier 2 pins for the structure-factor pipeline and behavioral guards for the
+/// FFTW conversion.
 ///
 /// src/DensityCalculator.cpp had no C++ coverage before Phase 1. These pins are
 /// what make the FFTW RAII conversion verifiable. Tolerance is two-regime:
@@ -120,10 +121,11 @@ TEST(DensityCalculatorCharacterizationTest, ThrowingPathDoesNotDestabilizeThePro
 }
 
 // fftw_plan_dft_3d and fftw_destroy_plan mutate global planner state and are
-// not thread-safe. fftw_execute on an already-created plan is thread-safe. Two
-// threads calling Calculate concurrently is reachable from Python with
-// ThreadPoolExecutor since SWIG releases the GIL for long C++ calls. The
-// planner mutex guards only plan creation and destruction.
+// not thread-safe. fftw_execute on an already-created plan is thread-safe. A
+// C++ caller invoking Calculate from multiple threads reaches this directly;
+// Python callers are currently serialized by the GIL since the module is not
+// built with SWIG threading. The planner mutex guards only plan creation and
+// destruction.
 TEST(DensityCalculatorCharacterizationTest, ConcurrentCalculateIsSafe) {
     UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
