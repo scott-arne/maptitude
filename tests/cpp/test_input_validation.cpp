@@ -360,8 +360,11 @@ TEST(QScoreOptionsValidationTest, AcceptsTheDefaults) {
 
 TEST(QScoreOptionsValidationTest, RejectsNonPositiveSigma) {
     QScoreOptions options;
+    const double default_value = options.GetSigma();
     EXPECT_THROW(options.SetSigma(0.0), std::invalid_argument);
+    EXPECT_DOUBLE_EQ(options.GetSigma(), default_value);  // Field unchanged after rejection
     EXPECT_THROW(options.SetSigma(-0.5), std::invalid_argument);
+    EXPECT_DOUBLE_EQ(options.GetSigma(), default_value);  // Still unchanged
     EXPECT_NO_THROW(options.SetSigma(0.8));
     EXPECT_DOUBLE_EQ(options.GetSigma(), 0.8);
 }
@@ -370,29 +373,49 @@ TEST(QScoreOptionsValidationTest, RejectsNonPositiveRadialStep) {
     // A non-positive step makes the radial sweep never advance: the process
     // hangs rather than returning a wrong number.
     QScoreOptions options;
+    const double default_value = options.GetRadialStep();
     EXPECT_THROW(options.SetRadialStep(0.0), std::invalid_argument);
+    EXPECT_DOUBLE_EQ(options.GetRadialStep(), default_value);  // Field unchanged after rejection
     EXPECT_THROW(options.SetRadialStep(-0.1), std::invalid_argument);
+    EXPECT_DOUBLE_EQ(options.GetRadialStep(), default_value);  // Still unchanged
     EXPECT_NO_THROW(options.SetRadialStep(0.25));
+    EXPECT_DOUBLE_EQ(options.GetRadialStep(), 0.25);
 }
 
 TEST(QScoreOptionsValidationTest, RejectsNonPositiveMaxRadius) {
     QScoreOptions options;
+    const double default_value = options.GetMaxRadius();
     EXPECT_THROW(options.SetMaxRadius(0.0), std::invalid_argument);
+    EXPECT_DOUBLE_EQ(options.GetMaxRadius(), default_value);  // Field unchanged after rejection
     EXPECT_THROW(options.SetMaxRadius(-2.0), std::invalid_argument);
+    EXPECT_DOUBLE_EQ(options.GetMaxRadius(), default_value);  // Still unchanged
     EXPECT_NO_THROW(options.SetMaxRadius(3.0));
+    EXPECT_DOUBLE_EQ(options.GetMaxRadius(), 3.0);
 }
 
 TEST(QScoreOptionsValidationTest, RejectsZeroSamplePoints) {
     QScoreOptions options;
+    const unsigned int default_value = options.GetNumPoints();
     EXPECT_THROW(options.SetNumPoints(0), std::invalid_argument);
+    EXPECT_EQ(options.GetNumPoints(), default_value);  // Field unchanged after rejection
     EXPECT_NO_THROW(options.SetNumPoints(1));
+    EXPECT_EQ(options.GetNumPoints(), 1u);
     EXPECT_NO_THROW(options.SetNumPoints(16));
+    EXPECT_EQ(options.GetNumPoints(), 16u);
 }
 
 TEST(QScoreOptionsValidationTest, RejectsNonFiniteValues) {
     const double nan_value = std::numeric_limits<double>::quiet_NaN();
+    const double pos_inf = std::numeric_limits<double>::infinity();
+    const double neg_inf = -std::numeric_limits<double>::infinity();
     QScoreOptions options;
     EXPECT_THROW(options.SetSigma(nan_value), std::invalid_argument);
+    EXPECT_THROW(options.SetSigma(pos_inf), std::invalid_argument);
+    EXPECT_THROW(options.SetSigma(neg_inf), std::invalid_argument);
     EXPECT_THROW(options.SetRadialStep(nan_value), std::invalid_argument);
+    EXPECT_THROW(options.SetRadialStep(pos_inf), std::invalid_argument);
+    EXPECT_THROW(options.SetRadialStep(neg_inf), std::invalid_argument);
     EXPECT_THROW(options.SetMaxRadius(nan_value), std::invalid_argument);
+    EXPECT_THROW(options.SetMaxRadius(pos_inf), std::invalid_argument);
+    EXPECT_THROW(options.SetMaxRadius(neg_inf), std::invalid_argument);
 }
