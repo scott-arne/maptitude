@@ -39,14 +39,15 @@ void scale_map(OESystem::OEScalarGrid& grid, double factor);
 /**
  * @brief Combine two grids element-wise.
  *
- * Both grids must have the same dimensions and spacing. The returned
+ * Both grids must have identical geometry (dimensions, spacing, and
+ * origin/midpoints) as determined by OEGridSameGeometry. The returned
  * grid has the same geometry as the input grids.
  *
  * @param lhs Left-hand side grid.
  * @param rhs Right-hand side grid.
  * @param op Combination operation.
  * @return New grid with combined values. Caller owns the pointer.
- * @throws GridError if grids have incompatible dimensions.
+ * @throws GridError if grids have different geometry.
  */
 OESystem::OEScalarGrid* combine_maps(
     const OESystem::OEScalarGrid& lhs,
@@ -58,12 +59,13 @@ OESystem::OEScalarGrid* combine_maps(
  *
  * Computes: rho_calc = rho_obs - 2 * rho_diff
  *
- * Both grids must have the same dimensions and spacing.
+ * Both grids must have identical geometry (dimensions, spacing, and
+ * origin/midpoints) as determined by OEGridSameGeometry.
  *
  * @param obs_grid Observed density map (2mFo-DFc).
  * @param diff_grid Difference density map (mFo-DFc).
  * @return New grid with calculated density. Caller owns the pointer.
- * @throws GridError if grids have incompatible dimensions.
+ * @throws GridError if grids have different geometry.
  */
 OESystem::OEScalarGrid* diff_to_calc(
     const OESystem::OEScalarGrid& obs_grid,
