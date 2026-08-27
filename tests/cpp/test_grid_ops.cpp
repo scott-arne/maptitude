@@ -7,6 +7,7 @@
 #include <oegrid.h>
 
 #include <cmath>
+#include <memory>
 
 using namespace Maptitude;
 
@@ -199,4 +200,56 @@ TEST(GridOpsTest, WrapAndPadGridCreatesPaddedGrid) {
     EXPECT_NEAR((*result)[0], static_cast<float>(val), 0.1);
 
     delete result;
+}
+
+static OESystem::OEScalarGrid MakeShiftedGrid(double shift) {
+    double minmax[6] = {shift, shift, shift, 9.0 + shift, 9.0 + shift, 9.0 + shift};
+    OESystem::OEScalarGrid grid(minmax, 1.0);
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+        grid[i] = 1.0f;
+    }
+    return grid;
+}
+
+TEST(GridOpsTest, CombineRejectsGridsWithDifferentOrigins) {
+    // Same dims, same spacing, different origin. Element-wise combination would
+    // mix densities from different points in space.
+    OESystem::OEScalarGrid a = MakeShiftedGrid(0.0);
+    OESystem::OEScalarGrid b = MakeShiftedGrid(5.0);
+    EXPECT_THROW(combine_maps(a, b, MapOp::ADD), GridError);
+}
+
+TEST(GridOpsTest, CombineStillAcceptsIdenticalGeometry) {
+    OESystem::OEScalarGrid a = MakeTestGrid();
+    OESystem::OEScalarGrid b = MakeTestGrid();
+    EXPECT_NO_THROW({
+        std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(a, b, MapOp::ADD));
+        ASSERT_NE(result, nullptr);
+    });
+}
+
+TEST(GridOpsTest, DiffToCalcRejectsMismatchedGeometry) {
+    OESystem::OEScalarGrid obs = MakeShiftedGrid(0.0);
+    OESystem::OEScalarGrid diff = MakeShiftedGrid(5.0);
+    EXPECT_THROW(diff_to_calc(obs, diff), GridError);
+}
+
+TEST(GridOpsTest, WrapAndPadThrowsWhenTheMoleculeHasNoHeavyAtoms) {
+    OEChem::OEGraphMol mol;  // empty
+    OESystem::OEScalarGrid grid = MakeTestGrid();
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
+}
+
+TEST(GridOpsTest, WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded) {
+    // A molecule already well inside the grid needs no padding: nullptr means
+    // "unchanged", and nothing else.
+    OEChem::OEGraphMol mol;
+    OEChem::OEAtomBase* atom = mol.NewAtom(6);
+    const double coords[3] = {4.5, 4.5, 4.5};
+    mol.SetCoords(atom, coords);
+
+    OESystem::OEScalarGrid grid = MakeTestGrid();
+    std::unique_ptr<OESystem::OEScalarGrid> result(
+        wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0));
+    EXPECT_EQ(result, nullptr);
 }

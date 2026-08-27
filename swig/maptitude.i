@@ -1123,7 +1123,8 @@ def wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0):
     :param cell_b: Unit cell dimension b (Angstroms).
     :param cell_c: Unit cell dimension c (Angstroms).
     :param padding: Extra margin around atoms (Angstroms).
-    :returns: Grid covering all atom coordinates (original or padded).
+    :returns: A padded grid, or the original grid when no padding is needed.
+    :raises StructureError: If the molecule contains no heavy atoms.
     """
     result = _cpp_wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding)
     return result if result is not None else grid

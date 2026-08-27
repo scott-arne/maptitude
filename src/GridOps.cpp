@@ -7,8 +7,19 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <sstream>
+#include <string>
 
 namespace Maptitude {
+
+/// Render a grid's geometry for an error message: dimensions, centre, spacing.
+static std::string DescribeGeometry(const OESystem::OEScalarGrid& grid) {
+    std::ostringstream out;
+    out << grid.GetXDim() << "x" << grid.GetYDim() << "x" << grid.GetZDim()
+        << " centred at (" << grid.GetXMid() << ", " << grid.GetYMid() << ", "
+        << grid.GetZMid() << ") spacing " << grid.GetSpacing();
+    return out.str();
+}
 
 void scale_map(OESystem::OEScalarGrid& grid, const double factor) {
     const unsigned int size = grid.GetSize();
@@ -21,14 +32,13 @@ OESystem::OEScalarGrid* combine_maps(
     const OESystem::OEScalarGrid& lhs,
     const OESystem::OEScalarGrid& rhs,
     const MapOp op) {
-    if (lhs.GetXDim() != rhs.GetXDim() ||
-        lhs.GetYDim() != rhs.GetYDim() ||
-        lhs.GetZDim() != rhs.GetZDim()) {
-        throw GridError("Grid dimensions must match for combination");
-    }
-
-    if (std::abs(lhs.GetSpacing() - rhs.GetSpacing()) > 1e-6) {
-        throw GridError("Grid spacings must match for combination");
+    // OEGridSameGeometry compares dimensions, midpoints, and spacing. The previous
+    // hand-rolled check ignored the origin, so grids of the same shape at different
+    // positions were combined element-wise -- mixing densities from different
+    // points in space.
+    if (!OESystem::OEGridSameGeometry(lhs, rhs)) {
+        throw GridError("Grids must have identical geometry for combination: left is " +
+                        DescribeGeometry(lhs) + ", right is " + DescribeGeometry(rhs));
     }
 
     auto* result = new OESystem::OEScalarGrid(lhs);
@@ -63,10 +73,9 @@ OESystem::OEScalarGrid* combine_maps(
 OESystem::OEScalarGrid* diff_to_calc(
     const OESystem::OEScalarGrid& obs_grid,
     const OESystem::OEScalarGrid& diff_grid) {
-    if (obs_grid.GetXDim() != diff_grid.GetXDim() ||
-        obs_grid.GetYDim() != diff_grid.GetYDim() ||
-        obs_grid.GetZDim() != diff_grid.GetZDim()) {
-        throw GridError("Grid dimensions must match for diff_to_calc");
+    if (!OESystem::OEGridSameGeometry(obs_grid, diff_grid)) {
+        throw GridError("Observed and difference grids must have identical geometry: observed is " +
+                        DescribeGeometry(obs_grid) + ", difference is " + DescribeGeometry(diff_grid));
     }
 
     auto* result = new OESystem::OEScalarGrid(obs_grid);
@@ -100,7 +109,13 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
         cz += coords[2];
         ++n;
     }
-    if (n == 0) return nullptr;
+    if (n == 0) {
+        // nullptr from this function means "no padding was needed". An empty heavy
+        // atom set is a different condition entirely and must not share that
+        // signal -- the Python wrapper maps nullptr to "return the grid unchanged".
+        throw StructureError("wrap_and_pad_grid requires at least one heavy atom; the molecule has " +
+                             std::to_string(mol.NumAtoms()) + " atom(s), none of them heavy");
+    }
     cx /= n;
     cy /= n;
     cz /= n;

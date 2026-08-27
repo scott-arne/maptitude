@@ -89,7 +89,9 @@ OESystem::OEScalarGrid* diff_to_calc(
  * @param cell_b Unit cell dimension b (Angstroms).
  * @param cell_c Unit cell dimension c (Angstroms).
  * @param padding Extra margin around atoms (Angstroms).
- * @return New padded grid if needed (caller owns), or nullptr if original suffices.
+ * @return A newly allocated padded grid, or nullptr if the molecule already
+ *         fits and no padding is needed. The caller owns the returned grid.
+ * @throws StructureError If the molecule contains no heavy atoms.
  */
 OESystem::OEScalarGrid* wrap_and_pad_grid(
     const OESystem::OEScalarGrid& grid,
