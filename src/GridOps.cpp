@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -15,6 +16,7 @@ namespace Maptitude {
 /// Render a grid's geometry for an error message: dimensions, centre, spacing.
 static std::string DescribeGeometry(const OESystem::OEScalarGrid& grid) {
     std::ostringstream out;
+    out << std::setprecision(std::numeric_limits<float>::max_digits10);
     out << grid.GetXDim() << "x" << grid.GetYDim() << "x" << grid.GetZDim()
         << " centred at (" << grid.GetXMid() << ", " << grid.GetYMid() << ", "
         << grid.GetZMid() << ") spacing " << grid.GetSpacing();
@@ -101,8 +103,7 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
     double cx = 0.0, cy = 0.0, cz = 0.0;
     int n = 0;
     float coords[3];
-    for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
-        if (atom->GetAtomicNum() == 1) continue;
+    for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(OEChem::OEIsHeavy()); atom; ++atom) {
         mol.GetCoords(&(*atom), coords);
         cx += coords[0];
         cy += coords[1];
@@ -149,8 +150,7 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
     double max_y = std::numeric_limits<double>::lowest();
     double max_z = std::numeric_limits<double>::lowest();
 
-    for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
-        if (atom->GetAtomicNum() == 1) continue;
+    for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(OEChem::OEIsHeavy()); atom; ++atom) {
         mol.GetCoords(&(*atom), coords);
         min_x = std::min(min_x, static_cast<double>(coords[0]));
         min_y = std::min(min_y, static_cast<double>(coords[1]));

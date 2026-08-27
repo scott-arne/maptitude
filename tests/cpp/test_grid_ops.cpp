@@ -240,6 +240,26 @@ TEST(GridOpsTest, WrapAndPadThrowsWhenTheMoleculeHasNoHeavyAtoms) {
     EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
 }
 
+TEST(GridOpsTest, WrapAndPadThrowsForAMoleculeOfOnlyDummyAtoms) {
+    OEChem::OEGraphMol mol;
+    OEChem::OEAtomBase* atom = mol.NewAtom(0);  // Dummy atom (Z=0)
+    const float coords[3] = {4.5f, 4.5f, 4.5f};
+    mol.SetCoords(atom, coords);
+
+    OESystem::OEScalarGrid grid = MakeTestGrid();
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
+}
+
+TEST(GridOpsTest, WrapAndPadThrowsForAnAllHydrogenMolecule) {
+    OEChem::OEGraphMol mol;
+    OEChem::OEAtomBase* atom = mol.NewAtom(1);  // Hydrogen (Z=1)
+    const float coords[3] = {4.5f, 4.5f, 4.5f};
+    mol.SetCoords(atom, coords);
+
+    OESystem::OEScalarGrid grid = MakeTestGrid();
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
+}
+
 TEST(GridOpsTest, WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded) {
     // A molecule already well inside the grid needs no padding: nullptr means
     // "unchanged", and nothing else.
