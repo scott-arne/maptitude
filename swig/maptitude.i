@@ -23,6 +23,7 @@
 
 #include <oechem.h>
 #include <oegrid.h>
+#include <cstdio>
 #include <new>
 
 using namespace Maptitude;
@@ -354,6 +355,27 @@ static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
         Py_DECREF(oe_grid);
         delete grid;
         PyErr_SetString(PyExc_RuntimeError, e.what());
+        return NULL;
+    }
+
+    /* Validate that the copy succeeded. operator= routes through OpenEye's
+       geometry setters, which reject values they cannot represent (e.g.,
+       spacing=0.0, spacing=inf) by returning false rather than throwing, and
+       operator= ignores that return value. When that happens the destination
+       silently retains its default 1x1x1 geometry, and returning it would hand
+       a plausible-looking but wrong grid to the caller. Detect and reject that
+       rather than allowing silent corruption. */
+    if (!OESystem::OEGridSameGeometry(*dest, *grid)) {
+        char errmsg[256];
+        std::snprintf(errmsg, sizeof(errmsg),
+                      "Grid geometry copy failed: source is %ux%ux%u spacing=%.3f, "
+                      "destination is %ux%ux%u spacing=%.3f",
+                      grid->GetXDim(), grid->GetYDim(), grid->GetZDim(), grid->GetSpacing(),
+                      dest->GetXDim(), dest->GetYDim(), dest->GetZDim(), dest->GetSpacing());
+        Py_DECREF(thisAttr);
+        Py_DECREF(oe_grid);
+        delete grid;
+        PyErr_SetString(PyExc_RuntimeError, errmsg);
         return NULL;
     }
 

@@ -61,3 +61,35 @@ def test_repeated_allocation_completes_without_error() -> None:
         assert result.GetValue(0) == pytest.approx(3.0)
         del result
     gc.collect()
+
+
+def test_combine_maps_rejects_zero_spacing() -> None:
+    """Grids with zero spacing produce degenerate geometry that operator= silently loses.
+
+    The typemap helper must detect and reject the silent geometry corruption rather
+    than returning a plausible-looking 1x1x1 grid holding 0.0.
+    """
+    grid_a = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.0)
+    for i in range(grid_a.GetSize()):
+        grid_a.SetValue(i, 1.0)
+    grid_b = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.0)
+    for i in range(grid_b.GetSize()):
+        grid_b.SetValue(i, 2.0)
+    with pytest.raises(RuntimeError):
+        maptitude.combine_maps(grid_a, grid_b, maptitude.MapOp.ADD)
+
+
+def test_combine_maps_rejects_infinite_spacing() -> None:
+    """Grids with infinite spacing trigger a setter failure that operator= ignores.
+
+    OpenEye prints 'Warning: SetSpacing unable to handle NaN: inf' and the
+    destination stays at default geometry. The typemap helper must reject that.
+    """
+    grid_a = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), float("inf"))
+    for i in range(grid_a.GetSize()):
+        grid_a.SetValue(i, 1.0)
+    grid_b = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), float("inf"))
+    for i in range(grid_b.GetSize()):
+        grid_b.SetValue(i, 2.0)
+    with pytest.raises(RuntimeError):
+        maptitude.combine_maps(grid_a, grid_b, maptitude.MapOp.ADD)
