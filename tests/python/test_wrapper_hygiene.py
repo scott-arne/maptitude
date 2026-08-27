@@ -47,7 +47,11 @@ def test_coverage_does_not_mutate_caller_options(scoring_inputs) -> None:
 
 
 def test_coverage_sigma_defaults_to_the_options_value(sigma_discriminating_inputs) -> None:
-    """Omitting sigma must leave the options object's value in force."""
+    """Omitting sigma must leave the options object's value in force.
+
+    This does not test the sentinel regression (an explicit sigma=1.0 being
+    swallowed). That is covered by test_coverage_accepts_an_explicit_sigma_of_one.
+    """
     mol, obs = sigma_discriminating_inputs
     options = maptitude.CoverageOptions()
     options.SetSigma(3.0)
@@ -97,3 +101,32 @@ def test_coverage_accepts_an_explicit_sigma_of_one(sigma_discriminating_inputs) 
     # Fixed wrapper: the explicit 1.0 reaches SetSigma -> 1.0.
     explicit_one = maptitude.coverage(mol, obs, sigma=1.0, options=options)
     assert explicit_one.overall == pytest.approx(1.0)
+
+
+def test_rscc_rejects_wrong_options_class_on_override_path(scoring_inputs) -> None:
+    """rscc must reject RsrOptions when atom_radius is set."""
+    mol, obs, calc = scoring_inputs
+    with pytest.raises(TypeError, match="options must be an RsccOptions"):
+        maptitude.rscc(mol, obs, 2.0, calc_grid=calc, atom_radius="fixed", options=maptitude.RsrOptions())
+
+
+def test_rsr_rejects_wrong_options_class_on_override_path(scoring_inputs) -> None:
+    """rsr must reject RsccOptions when atom_radius is set."""
+    mol, obs, calc = scoring_inputs
+    with pytest.raises(TypeError, match="options must be an RsrOptions"):
+        maptitude.rsr(mol, obs, 2.0, calc_grid=calc, atom_radius="fixed", options=maptitude.RsccOptions())
+
+
+def test_coverage_rejects_wrong_options_class_on_override_path(scoring_inputs) -> None:
+    """coverage must reject QScoreOptions when sigma is set."""
+    mol, obs, _ = scoring_inputs
+    with pytest.raises(TypeError, match="options must be a CoverageOptions"):
+        maptitude.coverage(mol, obs, sigma=2.0, options=maptitude.QScoreOptions())
+
+
+def test_non_override_path_still_rejects_wrong_options(scoring_inputs) -> None:
+    """SWIG's own type check must remain when the wrapper does not copy."""
+    mol, obs, calc = scoring_inputs
+    # Non-override path: no atom_radius, so wrapper does not call _copy_rscc_options
+    with pytest.raises(TypeError, match="Wrong number or type of arguments"):
+        maptitude.rscc(mol, obs, 2.0, calc_grid=calc, options=maptitude.RsrOptions())

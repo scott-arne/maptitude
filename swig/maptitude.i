@@ -1021,7 +1021,12 @@ def _copy_rscc_options(options):
 
     :param options: Source options.
     :returns: An independent copy carrying the same settings.
+    :raises TypeError: If ``options`` is not an RsccOptions.
     """
+    if not isinstance(options, RsccOptions):
+        raise TypeError(
+            "options must be an RsccOptions, not %s" % type(options).__name__
+        )
     copied = RsccOptions()
     copied.SetAtomRadiusMethod(options.GetAtomRadiusMethod())
     copied.SetFixedAtomRadius(options.GetFixedAtomRadius())
@@ -1034,7 +1039,12 @@ def _copy_rsr_options(options):
 
     :param options: Source options.
     :returns: An independent copy carrying the same settings.
+    :raises TypeError: If ``options`` is not an RsrOptions.
     """
+    if not isinstance(options, RsrOptions):
+        raise TypeError(
+            "options must be an RsrOptions, not %s" % type(options).__name__
+        )
     copied = RsrOptions()
     copied.SetAtomRadiusMethod(options.GetAtomRadiusMethod())
     copied.SetFixedAtomRadius(options.GetFixedAtomRadius())
@@ -1047,7 +1057,12 @@ def _copy_coverage_options(options):
 
     :param options: Source options.
     :returns: An independent copy carrying the same settings.
+    :raises TypeError: If ``options`` is not a CoverageOptions.
     """
+    if not isinstance(options, CoverageOptions):
+        raise TypeError(
+            "options must be a CoverageOptions, not %s" % type(options).__name__
+        )
     copied = CoverageOptions()
     copied.SetSigma(options.GetSigma())
     return copied
