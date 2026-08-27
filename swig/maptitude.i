@@ -23,6 +23,7 @@
 
 #include <oechem.h>
 #include <oegrid.h>
+#include <new>
 
 using namespace Maptitude;
 
@@ -316,15 +317,16 @@ static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
         return NULL;
     }
     /* Copy the value into the Python-side grid rather than swapping pointers.
-       The object under `thisAttr` was allocated inside OpenEye's shared
+       The grid object under `thisAttr` was allocated inside OpenEye's shared
        library; deleting it here would run this module's operator delete on
        another runtime's allocation, and pointing it at our grid would then
-       have OpenEye's destructor free our memory. Each allocation must be
+       have OpenEye's destructor free our memory. The grid object must be
        released by the allocator that made it.
 
        Assignment, not an element loop: `oe_grid` is default-constructed by
-       PyObject_CallNoArgs above, so it has no geometry yet. operator= copies
-       dimensions, spacing, midpoints, title, and data together. */
+       PyObject_CallNoArgs above, so it starts as a 1x1x1 grid; an element
+       loop would copy exactly one value. operator= resizes the destination
+       and copies dimensions, spacing, midpoints, title, and data together. */
     _SwigPyObjectCompat* swig_this = (_SwigPyObjectCompat*)thisAttr;
     OESystem::OEScalarGrid* dest =
         reinterpret_cast<OESystem::OEScalarGrid*>(swig_this->ptr);
@@ -337,7 +339,23 @@ static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
         return NULL;
     }
 
-    *dest = *grid;
+    /* The out typemap is emitted outside SWIG's generated try/catch, so an
+       exception here would reach CPython unhandled and abort the interpreter.
+       operator= can throw std::bad_alloc during reallocation. */
+    try {
+        *dest = *grid;
+    } catch (const std::bad_alloc&) {
+        Py_DECREF(thisAttr);
+        Py_DECREF(oe_grid);
+        delete grid;
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        Py_DECREF(thisAttr);
+        Py_DECREF(oe_grid);
+        delete grid;
+        PyErr_SetString(PyExc_RuntimeError, e.what());
+        return NULL;
+    }
 
     /* We own `grid`; the Python object owns `dest` and always has. */
     delete grid;
