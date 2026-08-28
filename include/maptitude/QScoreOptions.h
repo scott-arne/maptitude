@@ -46,13 +46,14 @@ constexpr unsigned int MAX_NUM_POINTS = 10000;
 /// aggressive real configuration (200 shells x 200 points) takes 40000, so this ceiling
 /// sits far above any working setup.
 ///
-/// At the ceiling the concurrently live sample buffers come to roughly 112 MB. The
+/// At the ceiling the concurrently live sample buffers come to roughly 144 MB. The
 /// arithmetic, per 2e6 samples: the FIXED precompute holds one `std::array<double, 3>`
 /// each, 24 B, for 48 MB; the sweep then fills four parallel `std::vector<double>` for
 /// the atom being scored (`sample_x`, `sample_y`, `sample_z`, `ref_vals`), 32 B, for
 /// 64 MB. The in-grid subset is copied into two more vectors (`map_vals`, `map_refs`),
-/// up to 32 MB again, and `push_back` growth can transiently double any of them. An
-/// earlier version of this comment quoted 48 MB, which is the precompute alone.
+/// up to 32 MB again, and `push_back` growth can transiently double any of them. Two
+/// earlier versions of this comment quoted 48 MB, the precompute alone, and 112 MB,
+/// which added the four sweep vectors but dropped the in-grid copies.
 constexpr long long MAX_TOTAL_SAMPLES = 2000000;
 
 namespace detail {

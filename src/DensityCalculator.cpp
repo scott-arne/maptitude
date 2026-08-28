@@ -331,8 +331,11 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         std::ostringstream message;
         message << "n_scale_shells must be between 1 and " << MAX_SCALE_SHELLS
                 << " (MAX_SCALE_SHELLS), got " << n_scale_shells
-                << "; lower the bin count. Above the limit `n_scale_shells + 1` wraps the "
-                   "unsigned addition that sizes the shell-edge table";
+                << "; lower the bin count. The bins partition the resolution range and even a "
+                   "0.5 A dataset has far fewer independent shells than the limit. The "
+                   "shell-edge table holds n_scale_shells + 1 doubles, so a value near "
+                   "UINT_MAX asks for tens of gigabytes, and at UINT_MAX itself the unsigned "
+                   "addition wraps to zero";
         throw GridError(message.str());
     }
 

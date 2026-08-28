@@ -232,8 +232,16 @@ TEST(GridOpsTest, CombineRejectsGridsWhoseSpacingDiffersBelowTheOldTolerance) {
     // would reject them and the spacing comparison would never be reached.
     OESystem::OEScalarGrid a(19, 19, 19, 4.5, 4.5, 4.5, 0.5);
     OESystem::OEScalarGrid b(19, 19, 19, 4.5, 4.5, 4.5, static_cast<float>(0.5 + 1e-7));
-    ASSERT_EQ(a.GetXDim(), b.GetXDim()) << "spacing must be the only difference";
-    ASSERT_EQ(a.GetXMid(), b.GetXMid()) << "spacing must be the only difference";
+    // Spacing is the only difference among the quantities OEGridSameGeometry compares --
+    // dimensions, midpoints, and spacing -- which is what makes the rejection below the
+    // spacing's. It is not the only difference between the two grids: OEScalarGrid stores
+    // a midpoint and derives the origin from it, so the spacing delta moves the origin as
+    // well, by 9.54e-7 A here. An earlier version of this comment claimed spacing was the
+    // only difference outright.
+    ASSERT_EQ(a.GetXDim(), b.GetXDim()) << "the dimensions must match or this pins nothing";
+    ASSERT_EQ(a.GetXMid(), b.GetXMid()) << "the midpoints must match or this pins nothing";
+    ASSERT_NEAR(std::fabs(a.GetXMin() - b.GetXMin()), 9.5367431640625e-7, 1e-13)
+        << "the origins were expected to move with the spacing";
     ASSERT_NE(a.GetSpacing(), b.GetSpacing()) << "the two spacings collapsed to one float";
     ASSERT_LT(std::fabs(a.GetSpacing() - b.GetSpacing()), 1e-6)
         << "the delta must sit inside the old tolerance or this pins nothing";

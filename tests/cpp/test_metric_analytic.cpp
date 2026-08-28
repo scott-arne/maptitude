@@ -312,12 +312,14 @@ TEST(MetricAnalyticTest, QScoreRejectsASweepWhoseShellPointProductIsUnbounded) {
 }
 
 TEST(MetricAnalyticTest, QScoreStillAcceptsAMidBandSampleCount) {
-    // Pins MAX_TOTAL_SAMPLES from below, which nothing else does. The product test
-    // above uses a 5.1e9-sample sweep, so every value below that throws from the same
-    // branch with the same message; the default sweep is only 32 samples. Between them
-    // lies the band where ordinary fine sweeps live, and narrowing the constant to
-    // anything under 1608 -- a plausible transcription slip -- would leave the whole
-    // suite green while breaking them. 201 shells x 8 points = 1608 samples.
+    // Pins MAX_TOTAL_SAMPLES from below at 1608 samples: 201 shells x 8 points. Other
+    // tests pin it from below too, but far lower -- QScoreCarbonSigma08 is the highest
+    // of them at 4.02 shells x 16 points = 64.32 samples, and the default sweep is
+    // 32.16 -- so without this case a narrowing anywhere in (64.32, 1608] leaves the
+    // whole suite green. That band is where ordinary fine sweeps live, and 1000 or 200
+    // is a plausible transcription slip. The product test above cannot cover it: it
+    // uses a 5.1e9-sample sweep, so every value below that throws from the same branch
+    // with the same message.
     QScoreOptions options;
     options.SetRadialStep(0.01);
     options.SetMaxRadius(2.0);
