@@ -96,6 +96,8 @@ jobs:
           #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
           # Assert against that, not against the tarball name we asked for --
           # the tarball name is our input, so matching it proves nothing.
+          # The trailing " for " is load-bearing -- without it the match is a
+          # substring test and a 2026.1.0rc1 README would satisfy a 2026.1.0 check.
           README="$(find /opt/openeye -maxdepth 2 -name README.txt -print -quit)"
           if [ -z "${README}" ]; then
             echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
@@ -103,7 +105,7 @@ jobs:
             exit 1
           fi
           echo "SDK README: ${README}"
-          grep -F "OpenEye Toolkits v${OPENEYE_VERSION}" "${README}" || {
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION} for " "${README}" || {
             echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
             head -3 "${README}"
             exit 1
@@ -128,14 +130,13 @@ jobs:
       - name: Assert the OpenEye version
         run: |
           set -euo pipefail
-          EXPECTED="${OPENEYE_VERSION%.*}"   # e.g. 2026.1
-          EXPECTED="$EXPECTED" /opt/venv/bin/python - <<'PY'
+          /opt/venv/bin/python - <<'PY'
           import os, sys
           from openeye import oechem
           release = oechem.OEToolkitsGetRelease()
-          expected = os.environ["EXPECTED"]
+          expected = os.environ["OPENEYE_VERSION"]
           print(f"OEToolkitsGetRelease() = {release!r}, expected {expected!r}")
-          if release.split(".")[:2] != expected.split("."):
+          if release != expected:
               sys.exit(f"OpenEye version mismatch: {release} is not {expected}")
           PY
 
@@ -215,13 +216,13 @@ jobs:
       - name: Assert the wheel records the expected SDK version
         run: |
           set -euo pipefail
-          EXPECTED="${OPENEYE_VERSION%.*}" /opt/venv/bin/python - <<'PY'
+          /opt/venv/bin/python - <<'PY'
           import os, sys
           from maptitude import _build_info
-          expected = os.environ["EXPECTED"]
+          expected = os.environ["OPENEYE_VERSION"]
           actual = _build_info.OPENEYE_BUILD_VERSION
           print("OPENEYE_BUILD_VERSION =", actual)
-          if actual.split(".")[:2] != expected.split("."):
+          if actual != expected:
               sys.exit(f"wheel built against {actual}, expected {expected}")
           PY
 
@@ -296,6 +297,8 @@ jobs:
           #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
           # Assert against that, not against the tarball name we asked for --
           # the tarball name is our input, so matching it proves nothing.
+          # The trailing " for " is load-bearing -- without it the match is a
+          # substring test and a 2026.1.0rc1 README would satisfy a 2026.1.0 check.
           README="$(find ${{ runner.temp }}/openeye -maxdepth 2 -name README.txt -print -quit)"
           if [ -z "${README}" ]; then
             echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
@@ -303,7 +306,7 @@ jobs:
             exit 1
           fi
           echo "SDK README: ${README}"
-          grep -F "OpenEye Toolkits v${OPENEYE_VERSION}" "${README}" || {
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION} for " "${README}" || {
             echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
             head -3 "${README}"
             exit 1
@@ -328,14 +331,13 @@ jobs:
       - name: Assert the OpenEye version
         run: |
           set -euo pipefail
-          EXPECTED="${OPENEYE_VERSION%.*}"
-          EXPECTED="$EXPECTED" python - <<'PY'
+          python - <<'PY'
           import os, sys
           from openeye import oechem
           release = oechem.OEToolkitsGetRelease()
-          expected = os.environ["EXPECTED"]
+          expected = os.environ["OPENEYE_VERSION"]
           print(f"OEToolkitsGetRelease() = {release!r}, expected {expected!r}")
-          if release.split(".")[:2] != expected.split("."):
+          if release != expected:
               sys.exit(f"OpenEye version mismatch: {release} is not {expected}")
           PY
 
@@ -384,13 +386,13 @@ jobs:
       - name: Assert the wheel records the expected SDK version
         run: |
           set -euo pipefail
-          EXPECTED="${OPENEYE_VERSION%.*}" python - <<'PY'
+          python - <<'PY'
           import os, sys
           from maptitude import _build_info
-          expected = os.environ["EXPECTED"]
+          expected = os.environ["OPENEYE_VERSION"]
           actual = _build_info.OPENEYE_BUILD_VERSION
           print("OPENEYE_BUILD_VERSION =", actual)
-          if actual.split(".")[:2] != expected.split("."):
+          if actual != expected:
               sys.exit(f"wheel built against {actual}, expected {expected}")
           PY
 
@@ -484,6 +486,8 @@ jobs:
           #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
           # Assert against that, not against the tarball name we asked for --
           # the tarball name is our input, so matching it proves nothing.
+          # The trailing " for " is load-bearing -- without it the match is a
+          # substring test and a 2026.1.0rc1 README would satisfy a 2026.1.0 check.
           README="$(find "${sdk_inner}" -maxdepth 2 -name README.txt -print -quit)"
           if [ -z "${README}" ]; then
             echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
@@ -491,7 +495,7 @@ jobs:
             exit 1
           fi
           echo "SDK README: ${README}"
-          grep -F "OpenEye Toolkits v${OPENEYE_VERSION}" "${README}" || {
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION} for " "${README}" || {
             echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
             head -3 "${README}"
             exit 1
@@ -517,14 +521,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED="${OPENEYE_VERSION%.*}"
-          EXPECTED="$EXPECTED" python - <<'PY'
+          python - <<'PY'
           import os, sys
           from openeye import oechem
           release = oechem.OEToolkitsGetRelease()
-          expected = os.environ["EXPECTED"]
+          expected = os.environ["OPENEYE_VERSION"]
           print(f"OEToolkitsGetRelease() = {release!r}, expected {expected!r}")
-          if release.split(".")[:2] != expected.split("."):
+          if release != expected:
               sys.exit(f"OpenEye version mismatch: {release} is not {expected}")
           PY
 
@@ -574,13 +577,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          EXPECTED="${OPENEYE_VERSION%.*}" python - <<'PY'
+          python - <<'PY'
           import os, sys
           from maptitude import _build_info
-          expected = os.environ["EXPECTED"]
+          expected = os.environ["OPENEYE_VERSION"]
           actual = _build_info.OPENEYE_BUILD_VERSION
           print("OPENEYE_BUILD_VERSION =", actual)
-          if actual.split(".")[:2] != expected.split("."):
+          if actual != expected:
               sys.exit(f"wheel built against {actual}, expected {expected}")
           PY
 

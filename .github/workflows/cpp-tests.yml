@@ -79,6 +79,8 @@ jobs:
           #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
           # Assert against that, not against the tarball name we asked for --
           # the tarball name is our input, so matching it proves nothing.
+          # The trailing " for " is load-bearing -- without it the match is a
+          # substring test and a 2026.1.0rc1 README would satisfy a 2026.1.0 check.
           README="$(find "${ROOT}" -maxdepth 2 -name README.txt -print -quit)"
           if [ -z "${README}" ]; then
             echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
@@ -86,7 +88,7 @@ jobs:
             exit 1
           fi
           echo "SDK README: ${README}"
-          grep -F "OpenEye Toolkits v${OPENEYE_VERSION}" "${README}" || {
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION} for " "${README}" || {
             echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
             head -3 "${README}"
             exit 1
