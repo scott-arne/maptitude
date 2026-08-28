@@ -327,8 +327,3 @@ is suite coverage, not pin coverage.
   remaining five would move metric values for structures containing Z=0 atoms
   alongside real heavy atoms, and characterization coverage for that case does
   not exist yet, so the change is deferred.
-- The checked-in SWIG proxy `python/maptitude/maptitude.py` carries version
-  constants and a `__version__` string that lag this release until the next
-  build regenerates it. This is a consequence of tracking a generated file, not
-  a defect in the release. It is invisible to callers: `maptitude.__version__`
-  is assigned by `python/maptitude/__init__.py` and never read from the proxy.
