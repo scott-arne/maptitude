@@ -76,8 +76,9 @@ neutrality claim below.
   voxel of the padded grid. These raise `GridError`, except the cell edges,
   which raise `CellError`.
 - `CoverageOptions::SetSigma` rejects a non-finite sigma, which made the density
-  threshold NaN, every `rho >= threshold` comparison false, and coverage return
-  a plausible `0.0`. It rejects *only* non-finite values. `QScoreOptions::SetSigma`
+  threshold NaN or infinite. Measured at `v0.2.4`, NaN and `+inf` returned a
+  plausible `overall = 0.0`; `-inf`, on a map with nonzero spread, a perfect
+  `1.0`. It rejects *only* non-finite values. `QScoreOptions::SetSigma`
   additionally refuses zero and negatives, and the asymmetry is deliberate: the
   two sigmas are different quantities. Q-score's is a Gaussian width, which has
   to be positive; coverage's is a multiplier in the threshold
@@ -200,10 +201,18 @@ within a tolerance. Whether the answer was right is not the test -- exception 1
 is on the list precisely because its answer was wrong. A malformed argument
 fails the other half, and that is what keeps the two rejections with the most
 plausible before-values under Added rather than here. Measured at `v0.2.4`,
-`coverage` with a NaN `sigma` returned `overall = 0.0`, indistinguishable from a
-real score; `resolution = +inf` returned the numbers above. A NaN multiplier and
-an infinite resolution are not requests, and those numbers were artifacts of an
-argument that was never read rather than answers to one.
+`coverage` returned `overall = 0.0` for a NaN `sigma` and `1.0` for
+`sigma = -inf`, both indistinguishable from real scores; `resolution = +inf`
+returned the numbers above. Neither a non-finite multiplier nor an infinite
+resolution is a request a caller can mean, and the two numbers arise
+differently. The `+inf` Q-score is the carve-out above because the path that
+produced it never reads the resolution: the argument did not enter the
+computation, so the number that came back was the score. The sigma does enter
+it, straight into `mean + sigma * stddev`, and what it yields there turns on the
+arithmetic of infinity rather than on the map -- `-inf` is below every density
+only where the spread is nonzero, and makes the threshold NaN where it is zero.
+A `1.0` that holds only for maps with spread is an artifact of the argument
+rather than a coverage, so it is not a second carve-out.
 
 The adaptive no-atom-can-sweep `GridError` is the only new rejection that
 refuses well-formed input which previously ran to completion without an error.
