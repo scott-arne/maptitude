@@ -156,6 +156,39 @@ TEST(MetricAnalyticTest, QScoreRejectsAnAdaptiveSweepWithAnUnusableStep) {
                  GridError);
 }
 
+TEST(MetricAnalyticTest, QScoreAdaptiveFailsOnlyTheAtomWithNoRadius) {
+    // ADAPTIVE derives its maximum radius as twice the atom's own, so an atom that
+    // carries no radius makes the sweep unusable. That is a fact about one atom and not
+    // about the request: this guard used to throw from inside the per-atom loop, so a
+    // single such atom discarded the scores of every other atom in the molecule. The
+    // failure now scopes to the atom, matching how an out-of-grid atom is handled.
+    QScoreOptions options;
+    options.SetRadialSampling(RadialSampling::ADAPTIVE);
+    OESystem::OEScalarGrid grid =
+        MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
+
+    // OEAssignBondiVdWRadii leaves an atomic number of zero at radius 0.0.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    OEChem::OEAtomBase* second = mol.NewAtom(6u);
+    const double second_coords[3] = {1.0, 0.0, 0.0};
+    mol.SetCoords(second, second_coords);
+    OEChem::OEAtomSetResidue(second, OEChem::OEAtomGetResidue(mol.GetAtom(OEChem::OEHasAtomIdx(0))));
+    OEChem::OEAtomBase* radiusless = mol.NewAtom(0u);
+    const double radiusless_coords[3] = {-1.0, 0.0, 0.0};
+    mol.SetCoords(radiusless, radiusless_coords);
+    OEChem::OEAtomSetResidue(radiusless, OEChem::OEAtomGetResidue(mol.GetAtom(OEChem::OEHasAtomIdx(0))));
+
+    DensityScoreResult result;
+    ASSERT_NO_THROW(result = qscore(mol, grid, RESOLUTION, nullptr, options));
+    ASSERT_EQ(result.by_atom.count(2u), 1u) << "the radiusless atom must still be reported";
+    EXPECT_TRUE(std::isnan(result.by_atom.at(2u)));
+    ASSERT_EQ(result.by_atom.count(0u), 1u);
+    ASSERT_EQ(result.by_atom.count(1u), 1u);
+    EXPECT_FALSE(std::isnan(result.by_atom.at(0u))) << "a scorable atom was discarded with it";
+    EXPECT_FALSE(std::isnan(result.by_atom.at(1u))) << "a scorable atom was discarded with it";
+    EXPECT_FALSE(std::isnan(result.overall));
+}
+
 TEST(MetricAnalyticTest, QScoreRejectsAFixedSweepWithNoShells) {
     // Each setter's value is legal on its own; the combination yields zero shells,
     // a constant reference vector, and a nan correlation.

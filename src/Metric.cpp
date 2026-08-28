@@ -26,36 +26,70 @@ using detail::fibonacci_sphere_points;
 
 // ---- Radial sweep validation ----
 
-/// Reject a radial sweep that cannot terminate or cannot produce a score.
+/// Explain why a radial step cannot drive the shell loop, or return an empty string when it
+/// can.
+///
+/// Split out from the sweep check because the step is loop-invariant in both modes: FIXED
+/// reads it from the options and ADAPTIVE derives it from the resolution argument and the
+/// grid spacing. Neither depends on the atom, so an unusable step is always an error about
+/// the call and is reported before any per-atom work begins.
+static std::string DescribeUnusableStep(const char* label, double step) {
+    if (!std::isfinite(step) || step < MIN_RADIAL_STEP) {
+        std::ostringstream message;
+        message << label << " radial sweep needs a step of at least " << MIN_RADIAL_STEP
+                << " A (got " << step << "); below that the shell accumulator does not advance";
+        return message.str();
+    }
+    return {};
+}
+
+/// Explain why a radial sweep cannot terminate or cannot produce a score, or return an
+/// empty string when it can.
 ///
 /// Both sampling modes converge on the same shell loop, but only FIXED mode's step and
 /// radius arrive through QScoreOptions' validated setters. ADAPTIVE derives its own from the
-/// grid spacing and the resolution and consults no option, so the same invariants have to be
-/// re-established here.
-static void RequireUsableSweep(const char* mode, double step, double max_r,
-                               unsigned int num_points) {
+/// grid spacing, the resolution, and the atom, and consults no option, so the same invariants
+/// have to be re-established here.
+///
+/// Reporting rather than throwing is what lets the caller choose the blast radius. A FIXED
+/// sweep is loop-invariant, so an unusable one is a whole-call error; an ADAPTIVE sweep
+/// depends on the atom, so an unusable one must fail only that atom.
+static std::string DescribeUnusableSweep(RadialSampling mode, double step, double max_r,
+                                         unsigned int num_points) {
+    const bool adaptive = (mode == RadialSampling::ADAPTIVE);
+    const char* label = adaptive ? "Adaptive" : "Fixed";
     std::ostringstream message;
-    if (!std::isfinite(step) || step < MIN_RADIAL_STEP) {
-        message << mode << " radial sweep needs a step of at least " << MIN_RADIAL_STEP
-                << " A (got " << step << "); below that the shell accumulator does not advance";
-        throw GridError(message.str());
+    const std::string step_problem = DescribeUnusableStep(label, step);
+    if (!step_problem.empty()) {
+        return step_problem;
     }
-    if (!std::isfinite(max_r) || max_r <= 0.0 || max_r > MAX_RADIUS_LIMIT) {
-        message << mode << " radial sweep needs a maximum radius in (0, " << MAX_RADIUS_LIMIT
-                << "] A (got " << max_r << "); beyond that the shell key overflows int";
-        throw GridError(message.str());
+    // The lower and upper radius bounds are reported separately because they fail for
+    // unrelated reasons. In ADAPTIVE mode the radius is derived as twice the atom's own, so
+    // the lower bound is reached by an atom carrying no radius -- a fact about the molecule,
+    // which the int-overflow ceiling does not describe.
+    if (!std::isfinite(max_r) || max_r <= 0.0) {
+        message << label << " radial sweep needs a positive maximum radius (got " << max_r << ")";
+        if (adaptive) {
+            message << "; the adaptive radius is twice the atom's own, so this atom has none assigned";
+        }
+        return message.str();
+    }
+    if (max_r > MAX_RADIUS_LIMIT) {
+        message << label << " radial sweep needs a maximum radius of at most " << MAX_RADIUS_LIMIT
+                << " A (got " << max_r << "); beyond that the shell key overflows int";
+        return message.str();
     }
     if (step >= max_r + 0.01) {
-        message << mode << " radial sweep produces no shells: step " << step
+        message << label << " radial sweep produces no shells: step " << step
                 << " A is not smaller than the maximum radius " << max_r << " A";
-        throw GridError(message.str());
+        return message.str();
     }
     const double shells = (max_r + 0.01) / step;
     if (shells > static_cast<double>(MAX_SHELLS)) {
-        message << mode << " radial sweep would run " << static_cast<long long>(shells)
+        message << label << " radial sweep would run " << static_cast<long long>(shells)
                 << " shells, over the " << MAX_SHELLS
                 << " limit; raise the step or lower the maximum radius";
-        throw GridError(message.str());
+        return message.str();
     }
     // Shells and points are each bounded on their own, but it is their product that
     // allocates: FIXED precomputes one num_points-element sphere per shell, and both
@@ -63,12 +97,22 @@ static void RequireUsableSweep(const char* mode, double step, double max_r,
     // only the factors admits 510000 shells of 10000 points -- over 100 GB before any
     // scoring happens.
     if (shells * static_cast<double>(num_points) > static_cast<double>(MAX_TOTAL_SAMPLES)) {
-        message << mode << " radial sweep would take "
+        message << label << " radial sweep would take "
                 << static_cast<long long>(shells * static_cast<double>(num_points))
                 << " samples per atom (" << static_cast<long long>(shells) << " shells x "
                 << num_points << " points), over the " << MAX_TOTAL_SAMPLES
                 << " limit; raise the step, lower the maximum radius, or use fewer points";
-        throw GridError(message.str());
+        return message.str();
+    }
+    return {};
+}
+
+/// Reject a radial sweep that cannot terminate or cannot produce a score.
+static void RequireUsableSweep(RadialSampling mode, double step, double max_r,
+                               unsigned int num_points) {
+    const std::string reason = DescribeUnusableSweep(mode, step, max_r, num_points);
+    if (!reason.empty()) {
+        throw GridError(reason);
     }
 }
 
@@ -396,10 +440,23 @@ DensityScoreResult qscore(
         spatial_idx = std::make_unique<SpatialIndex>(mol);
     }
 
-    // The two FIXED precompute loops below run before any per-atom work, so an
-    // unusable FIXED configuration would hang here rather than at the per-atom check.
+    constexpr int MIN_SHELLS = 7;
+    const double grid_spacing = grid.GetSpacing();
+
+    // Validate everything loop-invariant here, before any per-atom work. FIXED's whole
+    // sweep qualifies, and the two precompute loops below would otherwise hang on an
+    // unusable one. ADAPTIVE's step qualifies too -- it comes from the resolution argument
+    // and the grid, not from any atom -- but its maximum radius does not, so that half is
+    // checked per atom.
     if (options.GetRadialSampling() == RadialSampling::FIXED) {
-        RequireUsableSweep("Fixed", options.GetRadialStep(), options.GetMaxRadius(), options.GetNumPoints());
+        RequireUsableSweep(RadialSampling::FIXED, options.GetRadialStep(), options.GetMaxRadius(),
+                           options.GetNumPoints());
+    } else {
+        const std::string reason = DescribeUnusableStep(
+            "Adaptive", std::min(grid_spacing, resolution / MIN_SHELLS));
+        if (!reason.empty()) {
+            throw GridError(reason);
+        }
     }
 
     // Pre-compute unit sphere offsets for fixed mode
@@ -431,9 +488,6 @@ DensityScoreResult qscore(
         }
     }
 
-    constexpr int MIN_SHELLS = 7;
-    const double grid_spacing = grid.GetSpacing();
-
     DensityScoreResult result;
     std::vector<double> all_q;
 
@@ -458,12 +512,21 @@ DensityScoreResult qscore(
                 step = std::min(static_cast<double>(grid_spacing),
                                 resolution / MIN_SHELLS);
                 max_r = atom->GetRadius() * 2.0;
+                // The adaptive radius comes from the atom, so an unusable sweep is a fact
+                // about this atom and not about the request. Score it NaN and carry on, the
+                // way an out-of-grid atom is handled above; throwing here would discard the
+                // scores of every other atom in the molecule. FIXED needs no check at all:
+                // its parameters are loop-invariant and were validated before the loop.
+                if (!DescribeUnusableSweep(RadialSampling::ADAPTIVE, step, max_r,
+                                           options.GetNumPoints()).empty()) {
+                    result.by_atom[atom->GetIdx()] =
+                        std::numeric_limits<double>::quiet_NaN();
+                    continue;
+                }
             } else {
                 step = options.GetRadialStep();
                 max_r = options.GetMaxRadius();
             }
-            RequireUsableSweep(options.GetRadialSampling() == RadialSampling::ADAPTIVE ? "Adaptive" : "Fixed",
-                               step, max_r, options.GetNumPoints());
 
             // Collect sample points and reference values
             std::vector<double> sample_x, sample_y, sample_z;

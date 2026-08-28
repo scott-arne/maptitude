@@ -36,9 +36,14 @@ to that intent are listed under Exceptions to the neutrality claim below.
 - `QScoreOptions` setters reject invalid values. A non-positive radial step
   previously caused a non-terminating loop.
 - A bound on the Q-score radial sweep. The shell count, the per-shell sample
-  count, and their product are each capped, so no combination of options can
-  exhaust memory or hang before scoring begins. Sweeps over the limit raise
-  `GridError` naming the option to adjust.
+  count, and their product are each capped, and the step and maximum radius are
+  each required to be usable, so no combination of options can exhaust memory
+  or hang before scoring begins. An unusable sweep raises `GridError` naming
+  the option to adjust — under a bound as often as over one, since a step too
+  small to advance the accumulator and a radius of zero both fail here. In
+  `RadialSampling::ADAPTIVE` the maximum radius is derived from the atom rather
+  than from the options, so an atom that carries no radius scores `NaN` and the
+  rest of the molecule is still scored.
 - A C++ test suite covering the metrics, the structure-factor pipeline, and
   real CCP4 map I/O. Of its 28 characterization tests, 27 assert pinned values;
   the 28th asserts that a monoclinic cell is rejected, and replaced the five
