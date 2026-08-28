@@ -54,6 +54,10 @@ result = rscc(mol, obs_grid, 2.0)
 print(f"Overall RSCC: {result.overall:.3f}")
 ```
 
+> **Orthorhombic cells only.** `DensityCalculator` and `fc_density` currently
+> support orthorhombic unit cells (all angles 90 degrees). Monoclinic and
+> triclinic cells raise `CellError`. General lattice support is planned.
+
 ## Usage
 
 ### Scoring Metrics
@@ -249,6 +253,34 @@ f0 = coeffs.Evaluate(0.0)  # Scattering factor at sin(theta)/lambda = 0
 | Property | Type    | Default | Description                                              |
 |----------|---------|---------|----------------------------------------------------------|
 | `sigma`  | `float` | `1.0`   | Standard deviations above mean for the density threshold |
+
+## Exceptions
+
+All *domain* exceptions raised by maptitude derive from `MaptitudeError`, so a single
+`except maptitude.MaptitudeError` catches every failure that describes your input. Option setters
+validate separately and raise `RuntimeError` -- see the note below the table.
+
+| Exception        | Raised when                                                          |
+|------------------|----------------------------------------------------------------------|
+| `MaptitudeError` | Base class. Never raised directly.                                   |
+| `StructureError` | The molecule is unsuitable: no heavy atoms, missing coordinates.     |
+| `GridError`      | Grid geometry is wrong or a required grid is missing.                |
+| `SymOpError`     | A symmetry-operator string cannot be parsed.                         |
+| `CellError`      | Unit-cell parameters are invalid or describe an unsupported lattice. |
+
+```python
+import maptitude
+
+try:
+    result = maptitude.rscc(mol, obs_grid, resolution=2.0, calc_grid=calc_grid)
+except maptitude.GridError as exc:
+    print(f"grid problem: {exc}")
+except maptitude.MaptitudeError as exc:
+    print(f"maptitude failed: {exc}")
+```
+
+Option-value errors -- an out-of-range `QScoreOptions` setting, for instance -- raise the standard
+library's `RuntimeError` rather than a maptitude type.
 
 ## References
 
