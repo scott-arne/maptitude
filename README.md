@@ -328,8 +328,11 @@ returned a value, hung, or read uninitialized memory.
 sigma is a Gaussian width and has to be positive. Coverage's is a multiplier in the threshold
 `mean + sigma * stddev`, where zero means "threshold at the mean" and a negative value means
 "threshold below the mean" -- both meaningful requests. Only NaN and the infinities are refused
-there, because a NaN threshold makes every `rho >= threshold` comparison false and coverage returns
-a plausible `0.0`.
+there, because the sigma enters that threshold directly and none of the three leaves one worth
+comparing a density against. NaN makes the threshold NaN, so every `rho >= threshold` is false and
+coverage returns a plausible `0.0`. On a map with nonzero spread, `+inf` makes the threshold `+inf`
+and returns `0.0` as well, while `-inf` makes it `-inf` and returns a perfect `1.0`; on a flat map
+`sigma * stddev` is NaN for either infinity, so both return `0.0`.
 
 Under `RadialSampling.ADAPTIVE` the maximum sampling radius comes from the atom rather than from
 the options, so a sweep that fails on one atom's radius scores that atom `NaN` and leaves the rest
