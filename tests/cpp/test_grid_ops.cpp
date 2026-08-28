@@ -219,6 +219,27 @@ TEST(GridOpsTest, CombineRejectsGridsWithDifferentOrigins) {
     EXPECT_THROW(combine_maps(a, b, MapOp::ADD), GridError);
 }
 
+TEST(GridOpsTest, CombineRejectsGridsWhoseSpacingDiffersBelowTheOldTolerance) {
+    // The other half of the exact-geometry change, and the reachable half: the old
+    // hand-rolled comparison tested dimensions exactly but spacing only to within 1e-6.
+    // 0.5 + 1e-7 lands on the next float32 value, 0.5000001192092896, a delta of
+    // 1.19e-7 -- inside that tolerance and outside exact equality. Without this case,
+    // restoring the tolerance reverts a documented behavior change with the suite still
+    // green, because the origin tests above pass either way.
+    //
+    // The dimensions are given explicitly rather than derived from a bounding box. From
+    // a box the two spacings yield 19 and 18 points per axis, so the old dimension test
+    // would reject them and the spacing comparison would never be reached.
+    OESystem::OEScalarGrid a(19, 19, 19, 4.5, 4.5, 4.5, 0.5);
+    OESystem::OEScalarGrid b(19, 19, 19, 4.5, 4.5, 4.5, static_cast<float>(0.5 + 1e-7));
+    ASSERT_EQ(a.GetXDim(), b.GetXDim()) << "spacing must be the only difference";
+    ASSERT_EQ(a.GetXMid(), b.GetXMid()) << "spacing must be the only difference";
+    ASSERT_NE(a.GetSpacing(), b.GetSpacing()) << "the two spacings collapsed to one float";
+    ASSERT_LT(std::fabs(a.GetSpacing() - b.GetSpacing()), 1e-6)
+        << "the delta must sit inside the old tolerance or this pins nothing";
+    EXPECT_THROW(combine_maps(a, b, MapOp::ADD), GridError);
+}
+
 TEST(GridOpsTest, CombineStillAcceptsIdenticalGeometry) {
     OESystem::OEScalarGrid a = MakeTestGrid();
     OESystem::OEScalarGrid b = MakeTestGrid();

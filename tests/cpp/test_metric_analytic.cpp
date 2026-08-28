@@ -243,6 +243,23 @@ TEST(MetricAnalyticTest, QScoreRejectsASweepWhoseShellPointProductIsUnbounded) {
     }
 }
 
+TEST(MetricAnalyticTest, QScoreStillAcceptsAMidBandSampleCount) {
+    // Pins MAX_TOTAL_SAMPLES from below, which nothing else does. The product test
+    // above uses a 5.1e9-sample sweep, so every value below that throws from the same
+    // branch with the same message; the default sweep is only 32 samples. Between them
+    // lies the band where ordinary fine sweeps live, and narrowing the constant to
+    // anything under 1608 -- a plausible transcription slip -- would leave the whole
+    // suite green while breaking them. 201 shells x 8 points = 1608 samples.
+    QScoreOptions options;
+    options.SetRadialStep(0.01);
+    options.SetMaxRadius(2.0);
+    OESystem::OEScalarGrid grid =
+        MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    EXPECT_NO_THROW(qscore(mol, grid, RESOLUTION, nullptr, options));
+}
+
 TEST(MetricAnalyticTest, QScoreStillAcceptsTheDefaultSweep) {
     // The guard must not narrow the working configuration. This is the neutrality
     // half of the two tests above.
