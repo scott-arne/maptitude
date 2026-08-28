@@ -264,10 +264,10 @@ rather than silently falling back to `BINNED`.
 ## Exceptions
 
 All *domain* exceptions raised by maptitude derive from `MaptitudeError`, so a single
-`except maptitude.MaptitudeError` catches every failure that describes your input. Three builtin
-types are also raised, for failures in how the call was made rather than in the structure or map it
-was given -- they are listed in the second table, and `except maptitude.MaptitudeError` does not
-catch them.
+`except maptitude.MaptitudeError` catches every failure that describes your input. Four builtin
+types are also raised, for failures in how the call was made or in the memory behind it rather than
+in the structure or map it was given -- they are listed in the second table, and
+`except maptitude.MaptitudeError` does not catch them.
 
 | Exception        | Raised when                                                          |
 |------------------|----------------------------------------------------------------------|
@@ -279,11 +279,15 @@ catch them.
 
 | Exception      | Raised when                                                                       |
 |----------------|------------------------------------------------------------------------------------|
-| `RuntimeError` | An option value is out of range. Every option setter validates in C++ and its `std::invalid_argument` surfaces here. |
+| `RuntimeError` | An option value is out of range -- every option setter validates in C++ and its `std::invalid_argument` surfaces here -- or the copy that returns a grid to Python did not preserve the source geometry. |
 | `ValueError`   | A string argument the Python wrappers resolve against a table names nothing: `atom_radius="vdw"`, or `atom_radius="adaptive"` to `rscc`. |
 | `TypeError`    | An argument has the wrong type: a `mask` that is not an OpenEye atom predicate, an `options` object of the wrong class, a `symops` that is not a string or a sequence of `SymOp`. |
+| `MemoryError`  | The copy that returns a grid to Python could not be allocated. |
 
-The table above is the complete set. One rejection appears in two of its rows: `rscc` refuses the
+Those four are what maptitude raises itself. SWIG's argument conversion runs in front of the
+library and raises builtins of its own, so an integer too large for the C++ parameter it feeds
+arrives as an `OverflowError` from the conversion rather than a `RuntimeError` from the setter:
+`num_points = 2**40` is one. One rejection appears in two of the table's rows: `rscc` refuses the
 adaptive radius model as a `ValueError` when it is spelled `atom_radius="adaptive"` and as a
 `RuntimeError` when it is spelled `atom_radius=AtomRadius.ADAPTIVE` or carried on an `RsccOptions`.
 The split is deliberate -- the string is resolved against a three-entry table in Python, where an
@@ -305,8 +309,12 @@ except maptitude.MaptitudeError as exc:
 
 ### Rejected input
 
-These are the input classes the library refuses rather than scoring. All of them previously
-returned a value, hung, or read uninitialized memory.
+These are the input classes the library refuses rather than scoring. Where the same input was
+accepted before this release, it variously returned a plausible wrong value or a NaN, hung,
+exhausted memory, divided by zero, or read uninitialized memory; that list of mechanisms is
+illustrative, not exhaustive. Some rows widen a rejection that already existed rather than adding
+one: at `v0.2.4` a non-positive `resolution` and a metric on a molecule with no heavy atoms both
+raised already.
 
 | Input                                                                | Result                        |
 |----------------------------------------------------------------------|-------------------------------|
