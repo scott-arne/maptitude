@@ -191,13 +191,18 @@ disturb it.
 The measured exception is `qscore`'s fixed radial sweep, which never reads the
 `resolution` argument: at `v0.2.4` it returned a bit-identical score at 0.5,
 1.0, 2.0, 3.5, 10.0 and `+inf` A, so `qscore(mol, grid, +inf)` did return a
-correct Q-score and is now refused. The check is kept because every other path
-does read the argument, including `qscore`'s own adaptive sweep, and none of
-them raised an error at `+inf`: finite scores from `rscc`, `rsr`, and the
-adaptive sweep, a finite grid from `DensityCalculator::Calculate`, and `NaN`
-from `ediam`. A resolution no caller
-can mean is better reported at the call than ignored in one code path and
-honoured in another.
+correct Q-score and is now refused. Whether the argument is read can turn on the
+configuration rather than on the entry point alone: `rscc` and `rsr` also ignore
+it under `AtomRadius::FIXED` and `AtomRadius::SCALED`, at `v0.2.4` as here, since
+both models take the radius from the options or from the atom without consulting
+it. What distinguishes `qscore`'s fixed sweep is that it is the configuration a
+caller reaches by default, `rscc` defaulting to `BINNED` and `rsr` to `ADAPTIVE`,
+both of which size the radius from the resolution. The check is kept because the
+configurations that do read it raised no error at `+inf` either: finite scores
+from `rscc` and `rsr` under those defaults and from `qscore`'s adaptive sweep, a
+finite grid from `DensityCalculator::Calculate`, and `NaN` from `ediam`. A
+resolution no caller can mean is better reported at the call than honoured in one
+configuration and ignored in the next.
 
 The criterion for the list below is narrower than "refuses something", and its
 operative half is the input. Exceptions 1, 2, and 4 each refuse a well-formed
