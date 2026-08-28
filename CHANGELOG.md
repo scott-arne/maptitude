@@ -40,8 +40,10 @@ to that intent are listed under Exceptions to the neutrality claim below.
   exhaust memory or hang before scoring begins. Sweeps over the limit raise
   `GridError` naming the option to adjust.
 - A C++ test suite covering the metrics, the structure-factor pipeline, and
-  real CCP4 map I/O, of which 28 tests carry pinned values. It runs in CI on
-  every push and pull request.
+  real CCP4 map I/O. Of its 28 characterization tests, 27 assert pinned values;
+  the 28th asserts that a monoclinic cell is rejected, and replaced the five
+  `FC_MONOCLINIC_*` pins withdrawn by the change under Removed. It runs in CI
+  on pushes to `master`, on every pull request, and on manual dispatch.
 
 ### Changed
 
