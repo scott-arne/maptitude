@@ -86,6 +86,31 @@ enum class RadialSampling {
     ADAPTIVE   ///< Grid-spacing and atom-radius dependent
 };
 
+namespace detail {
+/// Reject a `RadialSampling` value the enum does not declare.
+///
+/// `RadialSampling` is a scoped enum with underlying type `int`, so
+/// `static_cast<RadialSampling>(42)` is a valid value of the type and SWIG passes one
+/// through from `SetRadialSampling(42)` without a cast. `qscore` tests this enum twice,
+/// and an undeclared value used to take the `else` arm of both tests: validated as
+/// adaptive, then executed as fixed, so the fixed sweep's parameters were never checked.
+/// Validating here makes both tests exhaustive over the values the type can hold.
+///
+/// The switch carries no `default:` label, so a new enumerator is a -Wswitch warning
+/// here; the throw sits after it, where only an undeclared value can arrive.
+inline void RequireDeclaredRadialSampling(RadialSampling method) {
+    switch (method) {
+        case RadialSampling::FIXED:
+        case RadialSampling::ADAPTIVE:
+            return;
+    }
+    std::ostringstream message;
+    message << "QScoreOptions::SetRadialSampling requires a declared RadialSampling value (got "
+            << static_cast<int>(method) << ")";
+    throw std::invalid_argument(message.str());
+}
+}  // namespace detail
+
 /**
  * @brief Configuration for Q-score density scoring (Pintilie et al., 2020).
  *
@@ -149,7 +174,10 @@ public:
     void SetIsolatePoints(bool isolate) { isolate_points_ = isolate; }
     bool GetIsolatePoints() const { return isolate_points_; }
 
-    void SetRadialSampling(RadialSampling method) { radial_sampling_ = method; }
+    void SetRadialSampling(RadialSampling method) {
+        detail::RequireDeclaredRadialSampling(method);
+        radial_sampling_ = method;
+    }
     RadialSampling GetRadialSampling() const { return radial_sampling_; }
 
 private:

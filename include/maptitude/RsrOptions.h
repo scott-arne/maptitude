@@ -21,7 +21,10 @@ namespace Maptitude {
  */
 class RsrOptions {
 public:
-    void SetAtomRadiusMethod(AtomRadius method) { method_ = method; }
+    void SetAtomRadiusMethod(AtomRadius method) {
+        detail::RequireDeclaredAtomRadius("RsrOptions::SetAtomRadiusMethod", method);
+        method_ = method;
+    }
     AtomRadius GetAtomRadiusMethod() const { return method_; }
 
     void SetFixedAtomRadius(double radius) { fixed_radius_ = radius; }

@@ -202,6 +202,63 @@ static void PrepareStructure(OEChem::OEMolBase& mol) {
         "or AtomRadius::BINNED. AtomRadius::ADAPTIVE is supported by rsr only");
 }
 
+/// Reject an `AtomRadius` value the enum does not declare, at the point of use.
+///
+/// Unreachable through the public API: both option classes validate in
+/// `SetAtomRadiusMethod` and hold the value privately, so no caller can present an
+/// undeclared one here. It exists to make the two selectors below total functions --
+/// every path returns a radius or throws -- instead of falling out of a switch with the
+/// result still uninitialized. That shape is what made `static_cast<AtomRadius>(42)` an
+/// indeterminate read, and a `default:` label cannot replace it without costing the
+/// -Wswitch warning these switches are written without one to get.
+[[noreturn]] static void RejectUndeclaredAtomRadius(const char* metric, AtomRadius method) {
+    std::ostringstream message;
+    message << metric << " received an AtomRadius value the enum does not declare ("
+            << static_cast<int>(method) << "); this is a bug in the caller's construction of the "
+            << "options object, which validates in SetAtomRadiusMethod";
+    throw std::invalid_argument(message.str());
+}
+
+/// Select the RSCC scoring radius for one atom.
+static double rscc_atom_radius(const RsccOptions& options, const OEChem::OEAtomBase& atom,
+                               const double resolution) {
+    switch (options.GetAtomRadiusMethod()) {
+        case AtomRadius::FIXED:
+            return options.GetFixedAtomRadius();
+        case AtomRadius::SCALED: {
+            const double scaled = atom.GetRadius() * options.GetAtomRadiusScaling();
+            return (scaled < 0.1) ? 1.5 : scaled;
+        }
+        case AtomRadius::BINNED:
+            return detail::binned_atom_radius(resolution);
+        case AtomRadius::ADAPTIVE:
+            // Unreachable: rejected before the loop. Listed anyway so the switch is
+            // exhaustive without a `default:` label, which is what makes a future
+            // enumerator a compiler warning here instead of another silent
+            // fall-through into whichever model happens to be last.
+            RejectAdaptiveRsccRadius();
+    }
+    RejectUndeclaredAtomRadius("rscc", options.GetAtomRadiusMethod());
+}
+
+/// Select the RSR scoring radius for one atom.
+static double rsr_atom_radius(const RsrOptions& options, const OEChem::OEAtomBase& atom,
+                              const double resolution) {
+    switch (options.GetAtomRadiusMethod()) {
+        case AtomRadius::FIXED:
+            return options.GetFixedAtomRadius();
+        case AtomRadius::SCALED: {
+            const double scaled = atom.GetRadius() * options.GetAtomRadiusScaling();
+            return (scaled < 0.1) ? 1.5 : scaled;
+        }
+        case AtomRadius::BINNED:
+            return detail::binned_atom_radius(resolution);
+        case AtomRadius::ADAPTIVE:
+            return scoring_radius(atom, resolution);
+    }
+    RejectUndeclaredAtomRadius("rsr", options.GetAtomRadiusMethod());
+}
+
 // ==== Density scoring functions ====
 
 DensityScoreResult rscc(
@@ -246,25 +303,7 @@ DensityScoreResult rscc(
                 continue;
             }
 
-            double radius;
-            switch (options.GetAtomRadiusMethod()) {
-                case AtomRadius::FIXED:
-                    radius = options.GetFixedAtomRadius();
-                    break;
-                case AtomRadius::SCALED:
-                    radius = atom->GetRadius() * options.GetAtomRadiusScaling();
-                    if (radius < 0.1) radius = 1.5;
-                    break;
-                case AtomRadius::BINNED:
-                    radius = detail::binned_atom_radius(resolution);
-                    break;
-                case AtomRadius::ADAPTIVE:
-                    // Unreachable: rejected before the loop. Listed anyway so the switch is
-                    // exhaustive without a `default:` label, which is what makes a future
-                    // enumerator a compiler warning here instead of another silent
-                    // fall-through into whichever model happens to be last.
-                    RejectAdaptiveRsccRadius();
-            }
+            const double radius = rscc_atom_radius(options, *atom, resolution);
 
             auto pts = get_atom_grid_points(grid, x, y, z, radius);
             if (pts.empty()) {
@@ -350,23 +389,8 @@ DensityScoreResult rsr(
                 continue;
             }
 
-            double radius;
-            switch (options.GetAtomRadiusMethod()) {
-                case AtomRadius::FIXED:
-                    radius = options.GetFixedAtomRadius();
-                    break;
-                case AtomRadius::SCALED:
-                    radius = atom->GetRadius() * options.GetAtomRadiusScaling();
-                    if (radius < 0.1) radius = 1.5;
-                    break;
-                case AtomRadius::BINNED:
-                    radius = detail::binned_atom_radius(resolution);
-                    break;
-                case AtomRadius::ADAPTIVE:
-                default:
-                    radius = scoring_radius(*atom, resolution);
-                    break;
-            }
+            const double radius = rsr_atom_radius(options, *atom, resolution);
+
             auto pts = get_atom_grid_points(grid, x, y, z, radius);
             if (pts.empty()) {
                 result.by_atom[atom->GetIdx()] =
@@ -530,26 +554,33 @@ DensityScoreResult qscore(
                 continue;
             }
 
-            // Determine radial parameters
+            // Determine radial parameters. This test keys on FIXED, as the pre-loop
+            // validation above does, so a value takes matching arms in both. When they
+            // disagreed, an enum value the type can hold but does not declare took the
+            // `else` of each: validated as adaptive, then executed as fixed, so the fixed
+            // sweep's parameters reached the loop unchecked. The setter rejects those
+            // values now; keeping the two tests in the same form means the pairing does
+            // not depend on it.
             double step, max_r;
-            if (options.GetRadialSampling() == RadialSampling::ADAPTIVE) {
+            if (options.GetRadialSampling() == RadialSampling::FIXED) {
+                // No per-atom check: these parameters are loop-invariant and were
+                // validated before the loop.
+                step = options.GetRadialStep();
+                max_r = options.GetMaxRadius();
+            } else {
                 step = std::min(static_cast<double>(grid_spacing),
                                 resolution / MIN_SHELLS);
                 max_r = atom->GetRadius() * 2.0;
                 // The adaptive radius comes from the atom, so an unusable sweep is a fact
                 // about this atom and not about the request. Score it NaN and carry on, the
                 // way an out-of-grid atom is handled above; throwing here would discard the
-                // scores of every other atom in the molecule. FIXED needs no check at all:
-                // its parameters are loop-invariant and were validated before the loop.
+                // scores of every other atom in the molecule.
                 if (!DescribeUnusableSweep(RadialSampling::ADAPTIVE, step, max_r,
                                            options.GetNumPoints()).empty()) {
                     result.by_atom[atom->GetIdx()] =
                         std::numeric_limits<double>::quiet_NaN();
                     continue;
                 }
-            } else {
-                step = options.GetRadialStep();
-                max_r = options.GetMaxRadius();
             }
 
             // Collect sample points and reference values

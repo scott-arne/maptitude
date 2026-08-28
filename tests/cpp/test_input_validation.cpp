@@ -470,6 +470,126 @@ TEST(QScoreOptionsValidationTest, RejectsNegativeZeroAndNegativeSubnormals) {
     EXPECT_THROW(options.SetMaxRadius(-0.0), std::invalid_argument);
 }
 
+// ---- Enum-valued setters reject values their enum does not declare ----
+//
+// A scoped enum with underlying type `int` can hold any int. `static_cast<AtomRadius>(42)`
+// and `static_cast<RadialSampling>(42)` are valid values of their types, and SWIG hands
+// one straight through from `SetAtomRadiusMethod(42)` in Python without a cast. Every
+// switch over these enums is written without a `default:` label, which is what makes a
+// future enumerator a -Wswitch warning; that property says nothing about values the enum
+// does not declare, so the setters are where those are closed.
+
+TEST(EnumSetterValidationTest, RsccRejectsAnUndeclaredAtomRadius) {
+    // Before this guard the undeclared value matched no arm of the radius switch in
+    // `rscc`, leaving `double radius;` indeterminate where get_atom_grid_points consumes
+    // it. Measured on a Gaussian grid against a matching calc grid, `overall` came back
+    // as a confident 1.0 -- a perfect model-to-map fit -- beside `by_atom` entries that
+    // were all NaN.
+    RsccOptions options;
+    const AtomRadius default_value = options.GetAtomRadiusMethod();
+    for (int undeclared : {42, 999, -1}) {
+        EXPECT_THROW(options.SetAtomRadiusMethod(static_cast<AtomRadius>(undeclared)),
+                     std::invalid_argument)
+            << "accepted " << undeclared;
+        EXPECT_EQ(options.GetAtomRadiusMethod(), default_value)
+            << "field moved after rejecting " << undeclared;
+    }
+}
+
+TEST(EnumSetterValidationTest, RsrRejectsAnUndeclaredAtomRadius) {
+    // RsrOptions carries its own copy of the setter, so it needs its own case: the two
+    // classes share the enum but not the code.
+    RsrOptions options;
+    const AtomRadius default_value = options.GetAtomRadiusMethod();
+    for (int undeclared : {42, 999, -1}) {
+        EXPECT_THROW(options.SetAtomRadiusMethod(static_cast<AtomRadius>(undeclared)),
+                     std::invalid_argument)
+            << "accepted " << undeclared;
+        EXPECT_EQ(options.GetAtomRadiusMethod(), default_value)
+            << "field moved after rejecting " << undeclared;
+    }
+}
+
+TEST(EnumSetterValidationTest, StillAcceptsEveryDeclaredAtomRadius) {
+    // The accepting half. All four enumerators must round-trip through both setters,
+    // including ADAPTIVE on RsccOptions: rscc rejects that model when it scores, not when
+    // it is configured, and moving the rejection into the setter would be a second
+    // behavior change rather than the hole this closes.
+    for (AtomRadius declared : {AtomRadius::FIXED, AtomRadius::SCALED, AtomRadius::BINNED,
+                                AtomRadius::ADAPTIVE}) {
+        RsccOptions rscc_options;
+        EXPECT_NO_THROW(rscc_options.SetAtomRadiusMethod(declared));
+        EXPECT_EQ(rscc_options.GetAtomRadiusMethod(), declared);
+
+        RsrOptions rsr_options;
+        EXPECT_NO_THROW(rsr_options.SetAtomRadiusMethod(declared));
+        EXPECT_EQ(rsr_options.GetAtomRadiusMethod(), declared);
+    }
+}
+
+TEST(EnumSetterValidationTest, ARejectedAtomRadiusLeavesScoringOnTheDeclaredModel) {
+    // The proof that no path can reach an indeterminate radius from the public API: the
+    // rejected set leaves the options carrying their previous model, so the scores are
+    // bit-identical to a pristine object's and no atom scores NaN. The same sequence
+    // returned overall = 1.0 with every by_atom entry NaN before the setter validated.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OEScalarGrid calc = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+
+    RsccOptions pristine;
+    const DensityScoreResult reference = rscc(mol, obs, 2.0, nullptr, &calc, pristine);
+
+    RsccOptions poked;
+    EXPECT_THROW(poked.SetAtomRadiusMethod(static_cast<AtomRadius>(42)), std::invalid_argument);
+    const DensityScoreResult after = rscc(mol, obs, 2.0, nullptr, &calc, poked);
+
+    EXPECT_DOUBLE_EQ(after.overall, reference.overall);
+    ASSERT_EQ(after.by_atom.size(), reference.by_atom.size());
+    for (const auto& [idx, value] : reference.by_atom) {
+        ASSERT_EQ(after.by_atom.count(idx), 1u) << "atom " << idx << " went missing";
+        EXPECT_FALSE(std::isnan(after.by_atom.at(idx))) << "atom " << idx << " scored NaN";
+        EXPECT_DOUBLE_EQ(after.by_atom.at(idx), value);
+    }
+}
+
+TEST(EnumSetterValidationTest, QScoreRejectsAnUndeclaredRadialSampling) {
+    QScoreOptions options;
+    const RadialSampling default_value = options.GetRadialSampling();
+    for (int undeclared : {42, 999, -1}) {
+        EXPECT_THROW(options.SetRadialSampling(static_cast<RadialSampling>(undeclared)),
+                     std::invalid_argument)
+            << "accepted " << undeclared;
+        EXPECT_EQ(options.GetRadialSampling(), default_value)
+            << "field moved after rejecting " << undeclared;
+    }
+}
+
+TEST(EnumSetterValidationTest, StillAcceptsEveryDeclaredRadialSampling) {
+    for (RadialSampling declared : {RadialSampling::FIXED, RadialSampling::ADAPTIVE}) {
+        QScoreOptions options;
+        EXPECT_NO_THROW(options.SetRadialSampling(declared));
+        EXPECT_EQ(options.GetRadialSampling(), declared);
+    }
+}
+
+TEST(EnumSetterValidationTest, ARejectedRadialSamplingLeavesTheFixedSweepGuarded) {
+    // An undeclared sampling mode took the `else` arm of both branches in `qscore`: it
+    // was validated as adaptive, which consults neither the step nor the maximum radius
+    // in the options, and then executed as fixed, which uses both. The fixed sweep's
+    // guard was therefore never applied to the parameters the sweep actually ran on.
+    // Measured with step 1.0 and max_radius 0.1, that returned overall = nan silently
+    // where RadialSampling::FIXED raised GridError.
+    QScoreOptions options;
+    options.SetRadialStep(1.0);
+    options.SetMaxRadius(0.1);
+    EXPECT_THROW(options.SetRadialSampling(static_cast<RadialSampling>(42)),
+                 std::invalid_argument);
+
+    OESystem::OEScalarGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), 3.0, 0.5);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    EXPECT_THROW(qscore(mol, grid, 2.0, nullptr, options), GridError);
+}
+
 // ---- CoverageOptions validation ----
 
 TEST(CoverageOptionsValidationTest, RejectsNonFiniteSigma) {
