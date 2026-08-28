@@ -173,21 +173,48 @@ Six changes are exceptions to that intent. Four were planned; exceptions 5 and
 6 were found by the reconciliation audit and its review, after the work had
 landed.
 
-The new rejections listed under Added are not among them. Each refuses input
-that previously hung, divided by zero, read uninitialized memory, or ran to
-completion and returned NaN, so in none of them was there a usable value to
-move; exceptions 2 and 4 are here because they refuse input that previously
-returned a usable result.
+The new rejections listed under Added are not among them. With one measured
+exception, none of them refuses input that previously produced a correct value:
+the inputs they refuse variously hung, exhausted memory, divided by zero, read
+uninitialized memory, or ran to completion and returned NaN or a plausible wrong
+number. Those mechanisms illustrate rather than enumerate. What the neutrality
+claim rests on is the property, and a mechanism not in that list would not
+disturb it.
 
-That last clause is there for the adaptive no-atom-can-sweep `GridError`, which
-refuses input that previously ran to completion. Measured at
-`v0.2.4`, an adaptive Q-score on a single carbon at resolution 30.0 A and grid
-spacing 4.0 A returned `overall = NaN` with `by_atom = {0: NaN}`: the step is
-`min(spacing, resolution / 7)` = 4.0 A against a maximum radius of
-`2 * 1.7` = 3.4 A, so the sweep spans no shell, only the replicated centre point
-is sampled, and `pearson_correlation` reports the resulting zero variance as NaN
-rather than dividing by zero. A NaN is not a usable result, so by the criterion
-above this rejection is not a seventh exception.
+The measured exception is `qscore`'s fixed radial sweep, which never reads the
+`resolution` argument: at `v0.2.4` it returned a bit-identical score at 0.5,
+1.0, 2.0, 3.5, 10.0 and `+inf` A, so `qscore(mol, grid, +inf)` did return a
+correct Q-score and is now refused. The check is kept because every other path
+does read the argument, including `qscore`'s own adaptive sweep, and none of
+them raised an error at `+inf`: finite scores from `rscc`, `rsr`, and the
+adaptive sweep, a finite grid from `DensityCalculator::Calculate`, and `NaN`
+from `ediam`. A resolution no caller
+can mean is better reported at the call than ignored in one code path and
+honoured in another.
+
+The criterion for the list below is narrower than "refuses something", and its
+operative half is the input. Exceptions 1, 2, and 4 each refuse a well-formed
+request that a caller can legitimately mean and that previously got an answer: a
+monoclinic cell, a molecule with no heavy atoms, two grids whose spacings differ
+within a tolerance. Whether the answer was right is not the test -- exception 1
+is on the list precisely because its answer was wrong. A malformed argument
+fails the other half, and that is what keeps the two rejections with the most
+plausible before-values under Added rather than here. Measured at `v0.2.4`,
+`coverage` with a NaN `sigma` returned `overall = 0.0`, indistinguishable from a
+real score; `resolution = +inf` returned the numbers above. A NaN multiplier and
+an infinite resolution are not requests, and those numbers were artifacts of an
+argument that was never read rather than answers to one.
+
+The adaptive no-atom-can-sweep `GridError` is the only new rejection that
+refuses well-formed input which previously ran to completion without an error.
+Measured at `v0.2.4`, an adaptive Q-score on a single carbon at resolution
+30.0 A and grid spacing 4.0 A returned `overall = NaN` with
+`by_atom = {0: NaN}`: the step is `min(spacing, resolution / 7)` = 4.0 A against
+a maximum radius of `2 * 1.7` = 3.4 A, so the sweep spans no shell, only the
+replicated centre point is sampled, and `pearson_correlation` reports the
+resulting zero variance as NaN rather than dividing by zero. Its input is a
+well-formed grid, but a NaN is not an answer, so it fails the second half of the
+criterion and is not a seventh exception.
 
 1. **Non-orthorhombic cells raise `CellError`.** A capability regression, as
    described under Removed. This is the only exception that removes a pin.
