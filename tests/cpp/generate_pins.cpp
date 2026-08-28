@@ -93,15 +93,6 @@ void EmitMetricPins(std::ostream& os) {
         Emit(os, "RSCC_OXYGEN_OFFSET", rscc(mol, obs, RESOLUTION, nullptr, &calc).overall);
     }
     {
-        // RSCC's radius switch has no ADAPTIVE case, so ADAPTIVE falls through to the
-        // binned default. Equal to RSCC_CARBON_BINNED by construction -- the equality
-        // is the pin. Giving RSCC a real adaptive branch would move this and not that.
-        RsccOptions options;
-        options.SetAtomRadiusMethod(AtomRadius::ADAPTIVE);
-        OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-        Emit(os, "RSCC_CARBON_ADAPTIVE", rscc(mol, obs, RESOLUTION, nullptr, &calc, options).overall);
-    }
-    {
         // RsrOptions defaults to ADAPTIVE, so the binned path must be selected
         // explicitly -- otherwise this pin silently duplicates RSR_CARBON_ADAPTIVE.
         RsrOptions options;

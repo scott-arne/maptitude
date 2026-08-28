@@ -22,6 +22,17 @@ to that intent are listed under Exceptions to the neutrality claim below.
   `(h/a)^2 + (k/b)^2 + (l/c)^2`, which is only correct for an orthorhombic
   lattice, so the returned value was wrong. General lattice support is planned;
   until then an exception is preferable to a plausible wrong answer.
+- **`rscc` no longer accepts `AtomRadius::ADAPTIVE`.** It now raises
+  `std::invalid_argument` (`RuntimeError` in Python). RSCC never had an adaptive
+  radius model: its radius switch listed `FIXED`, `SCALED`, and
+  `BINNED: default:`, so `ADAPTIVE` fell through to the binned radius and
+  returned the binned score under another name, with nothing on the result
+  recording which model had run. The withdrawn pin `RSCC_CARBON_ADAPTIVE` was
+  bit-identical to `RSCC_CARBON_BINNED`, which is what its equality had been
+  pinning; the characterization test now asserts the rejection instead. The
+  switch also lost its `default:` label, so a future enumerator is a compiler
+  warning rather than another silent fall-through. `rsr` is unaffected and
+  still defaults to `ADAPTIVE`.
 
 ### Added
 
@@ -45,10 +56,11 @@ to that intent are listed under Exceptions to the neutrality claim below.
   than from the options, so an atom that carries no radius scores `NaN` and the
   rest of the molecule is still scored.
 - A C++ test suite covering the metrics, the structure-factor pipeline, and
-  real CCP4 map I/O. Of its 28 characterization tests, 27 assert pinned values;
-  the 28th asserts that a monoclinic cell is rejected, and replaced the five
-  `FC_MONOCLINIC_*` pins withdrawn by the change under Removed. It runs in CI
-  on pushes to `master`, on every pull request, and on manual dispatch.
+  real CCP4 map I/O. Of its 28 characterization tests, 26 assert pinned values.
+  The other two assert rejections and replaced the pins withdrawn by the two
+  changes under Removed: five `FC_MONOCLINIC_*` for the monoclinic cell, and
+  `RSCC_CARBON_ADAPTIVE` for the adaptive RSCC radius. It runs in CI on pushes
+  to `master`, on every pull request, and on manual dispatch.
 
 ### Changed
 
@@ -67,7 +79,9 @@ to that intent are listed under Exceptions to the neutrality claim below.
   densities from different points in space. Spacing comparison is now exact
   rather than within `1e-6`.
 - `wrap_and_pad_grid` raises `StructureError` when the molecule contains no
-  heavy atoms. Its `nullptr` return now means only "no padding was needed".
+  heavy atoms. In the C++ API its `nullptr` return now means only "no padding
+  was needed". The Python wrapper never exposes that `nullptr`: it substitutes
+  the original grid, so it always returns a grid and never `None`.
 - Grids returned across the Python boundary are independently owned copies.
   Peak memory doubles for the duration of the copy; an allocation failure
   during the copy raises `MemoryError`, and a grid whose geometry does not

@@ -73,9 +73,13 @@ result = rscc(mol, obs_grid, resolution, calc_grid=calc_grid)
 
 # With custom options
 opts = RsccOptions()
-opts.atom_radius_method = AtomRadius.ADAPTIVE
+opts.atom_radius_method = AtomRadius.SCALED
+opts.atom_radius_scaling = 1.5
 result = rscc(mol, obs_grid, resolution, calc_grid=calc_grid, options=opts)
 ```
+
+`rscc` supports `FIXED`, `SCALED`, and `BINNED`. `AtomRadius.ADAPTIVE` raises
+`RuntimeError`; it is available on `rsr` only.
 
 #### RSR (Real-Space R-Factor)
 
@@ -173,10 +177,9 @@ diff = combine_maps(grid_a, grid_b, MapOp.SUBTRACT)
 # calc = obs - 2 * diff
 calc_grid = diff_to_calc(obs_grid, diff_grid)
 
-# Handle CCP4 unit-cell maps where coordinates extend beyond the cell
-padded = wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0)
-if padded is not None:
-    grid = padded  # Use the padded grid
+# Handle CCP4 unit-cell maps where coordinates extend beyond the cell.
+# Always returns a grid: the original one when no padding was needed.
+grid = wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0)
 
 # Sample density at a point
 value = interpolate_density(grid, x, y, z)
@@ -229,12 +232,16 @@ f0 = coeffs.Evaluate(0.0)  # Scattering factor at sin(theta)/lambda = 0
 
 **AtomRadius methods:**
 
-| Value                 | Description                                      |
-|-----------------------|--------------------------------------------------|
-| `AtomRadius.FIXED`    | Same radius for all atoms                        |
-| `AtomRadius.SCALED`   | Atom vdW radius multiplied by a scaling factor   |
-| `AtomRadius.BINNED`   | Resolution-dependent radius bins                 |
-| `AtomRadius.ADAPTIVE` | B-factor and resolution dependent (Tickle, 2012) |
+| Value                 | Description                                      | Supported by |
+|-----------------------|--------------------------------------------------|--------------|
+| `AtomRadius.FIXED`    | Same radius for all atoms                        | `rscc`, `rsr` |
+| `AtomRadius.SCALED`   | Atom vdW radius multiplied by a scaling factor   | `rscc`, `rsr` |
+| `AtomRadius.BINNED`   | Resolution-dependent radius bins                 | `rscc`, `rsr` |
+| `AtomRadius.ADAPTIVE` | B-factor and resolution dependent (Tickle, 2012) | `rsr` only   |
+
+`ADAPTIVE` is the only value that is not shared. `rscc` has no adaptive radius
+model, so passing it — as the enumerator or as the string `"adaptive"` — raises
+rather than silently falling back to `BINNED`.
 
 ### QScoreOptions
 

@@ -6,6 +6,7 @@
 /// regenerating pin_values.h.
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 #include <gtest/gtest.h>
 
@@ -103,17 +104,22 @@ TEST(MetricCharacterizationTest, RsccOxygenOffset) {
     ExpectPinned(rscc(mol, obs, RESOLUTION, nullptr, &calc).overall, MaptitudePins::RSCC_OXYGEN_OFFSET);
 }
 
-TEST(MetricCharacterizationTest, RsccCarbonAdaptive) {
-    // RSCC's radius switch has no ADAPTIVE case, so ADAPTIVE falls through to the
-    // binned default. Equal to RSCC_CARBON_BINNED by construction -- the equality
-    // is the pin. Giving RSCC a real adaptive branch would move this and not that.
+// Was a pin. Phase 1 narrows the supported domain: RSCC now rejects an adaptive
+// atom radius rather than returning the binned score under another name. The
+// withdrawn RSCC_CARBON_ADAPTIVE was bit-identical to RSCC_CARBON_BINNED, which
+// is what the equality had been pinning. Recorded in CHANGELOG.md as a
+// capability regression.
+TEST(MetricCharacterizationTest, RsccAdaptiveRadiusIsRejected) {
     RsccOptions options;
     options.SetAtomRadiusMethod(AtomRadius::ADAPTIVE);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
     const OESystem::OEScalarGrid obs = ObsGrid();
     const OESystem::OEScalarGrid calc = CalcGrid();
-    ExpectPinned(rscc(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
-                 MaptitudePins::RSCC_CARBON_ADAPTIVE);
+    EXPECT_THROW(rscc(mol, obs, RESOLUTION, nullptr, &calc, options), std::invalid_argument);
+    // The accepting side, so that widening the rejection back over the three
+    // supported models would fail here rather than pass quietly.
+    options.SetAtomRadiusMethod(AtomRadius::BINNED);
+    EXPECT_NO_THROW(rscc(mol, obs, RESOLUTION, nullptr, &calc, options));
 }
 
 TEST(MetricCharacterizationTest, RsrCarbonBinned) {

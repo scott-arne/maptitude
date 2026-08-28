@@ -1016,6 +1016,28 @@ _cpp_diff_to_calc = diff_to_calc
 _cpp_wrap_and_pad_grid = wrap_and_pad_grid
 
 
+def _lookup_atom_radius(metric, radius_map, name):
+    """Resolve an atom-radius method name to its AtomRadius value.
+
+    A bare ``radius_map[name.lower()]`` raised ``KeyError('vdw')`` on a
+    misspelling: outside the typed exception hierarchy the README presents as the
+    complete set to handle, and carrying no list of what would have worked.
+
+    :param metric: Name of the calling metric, for the message.
+    :param radius_map: Lower-case method name to AtomRadius value.
+    :param name: The string the caller supplied.
+    :returns: The AtomRadius value.
+    :raises ValueError: If ``name`` matches no entry in ``radius_map``.
+    """
+    try:
+        return radius_map[name.lower()]
+    except KeyError:
+        raise ValueError(
+            "%s does not support atom_radius=%r; accepted values are %s"
+            % (metric, name, ", ".join(repr(k) for k in sorted(radius_map)))
+        ) from None
+
+
 def _copy_rscc_options(options):
     """Return a copy of an RsccOptions so callers' objects are never mutated.
 
@@ -1080,19 +1102,43 @@ def fc_density(obj, obs_grid, resolution, cell, mask=None,
     :param mask: Optional atom predicate to restrict contributing atoms.
     :param k_sol: Bulk solvent scale factor (default: 0.35 e/A^3).
     :param b_sol: Bulk solvent B-factor (default: 46.0 A^2).
-    :param symops: List of SymOp or string of symmetry operators.
+    :param symops: Symmetry operators, as a semicolon-separated string, an
+        iterable of SymOp, an iterable of operator strings, or None for the
+        identity alone.
     :param include_h: Include hydrogen atoms (default: False).
     :param n_scale_shells: Number of per-shell scaling bins (default: 1).
     :returns: OEScalarGrid with computed model density.
+    :raises TypeError: If ``symops`` is neither a string nor an iterable of
+        SymOp or operator strings.
+    :raises SymOpError: If an operator string cannot be parsed.
     """
     if symops is None:
         symops = [SymOp()]  # Identity only
     elif isinstance(symops, str):
         symops = list(SymOp.ParseAll(symops))
-
-    if isinstance(symops, list) and len(symops) > 0 and not isinstance(symops[0], SymOp):
-        # Convert from SymOpVector if needed
-        symops = list(symops)
+    else:
+        try:
+            elements = list(symops)
+        except TypeError:
+            raise TypeError(
+                "symops must be a string, an iterable of SymOp, or an iterable of "
+                "operator strings, not %s" % type(symops).__name__
+            ) from None
+        # A list of operator strings is the shape this docstring describes, so
+        # accept it here rather than letting SymOpVector reject it with a raw SWIG
+        # overload dump. ParseAll is the same path the bare-string branch takes.
+        normalized = []
+        for element in elements:
+            if isinstance(element, SymOp):
+                normalized.append(element)
+            elif isinstance(element, str):
+                normalized.extend(SymOp.ParseAll(element))
+            else:
+                raise TypeError(
+                    "symops entries must be SymOp or str, not %s"
+                    % type(element).__name__
+                )
+        symops = normalized
 
     calc = DensityCalculator(cell, SymOpVector(symops))
     return calc.Calculate(obj, obs_grid, resolution, mask,
@@ -1108,20 +1154,26 @@ def rscc(obj, grid, resolution, mask=None, calc_grid=None,
     :param resolution: Resolution in Angstroms.
     :param mask: Optional atom predicate.
     :param calc_grid: Optional pre-computed calculated density.
-    :param atom_radius: Atom radius method (str or AtomRadius enum value).
+    :param atom_radius: Atom radius method, as an AtomRadius enum value or one of
+        the strings ``"fixed"``, ``"scaled"``, ``"binned"`` (case-insensitive).
+        ``"adaptive"`` is not accepted: rscc has no adaptive radius model.
     :param options: RsccOptions configuration object. Never mutated.
     :returns: DensityScoreResult with RSCC values.
+    :raises ValueError: If ``atom_radius`` is a string naming no supported method.
     """
     if options is None:
         options = RsccOptions()
     if atom_radius is not None:
         if isinstance(atom_radius, str):
+            # Three entries, not four: rscc has no adaptive radius model and the
+            # enum path rejects AtomRadius.ADAPTIVE, so omitting it here is the
+            # agreeing behavior rather than an oversight.
             _radius_map = {
                 "fixed": AtomRadius_FIXED,
                 "scaled": AtomRadius_SCALED,
                 "binned": AtomRadius_BINNED,
             }
-            atom_radius = _radius_map[atom_radius.lower()]
+            atom_radius = _lookup_atom_radius("rscc", _radius_map, atom_radius)
         # Copy: mutating the caller's options object would leak this call's
         # settings into their next call.
         options = _copy_rscc_options(options)
@@ -1138,9 +1190,12 @@ def rsr(obj, grid, resolution, mask=None, calc_grid=None,
     :param resolution: Resolution in Angstroms.
     :param mask: Optional atom predicate.
     :param calc_grid: Optional pre-computed calculated density.
-    :param atom_radius: Atom radius method (str or AtomRadius enum value).
+    :param atom_radius: Atom radius method, as an AtomRadius enum value or one of
+        the strings ``"fixed"``, ``"scaled"``, ``"binned"``, ``"adaptive"``
+        (case-insensitive).
     :param options: RsrOptions configuration object. Never mutated.
     :returns: DensityScoreResult with RSR values.
+    :raises ValueError: If ``atom_radius`` is a string naming no supported method.
     """
     if options is None:
         options = RsrOptions()
@@ -1152,7 +1207,7 @@ def rsr(obj, grid, resolution, mask=None, calc_grid=None,
                 "binned": AtomRadius_BINNED,
                 "adaptive": AtomRadius_ADAPTIVE,
             }
-            atom_radius = _radius_map[atom_radius.lower()]
+            atom_radius = _lookup_atom_radius("rsr", _radius_map, atom_radius)
         # Copy: mutating the caller's options object would leak this call's
         # settings into their next call.
         options = _copy_rsr_options(options)

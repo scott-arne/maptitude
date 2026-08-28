@@ -12,6 +12,7 @@
 #include <limits>
 #include <numeric>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -186,6 +187,21 @@ static void PrepareStructure(OEChem::OEMolBase& mol) {
     OEChem::OEAssignBondiVdWRadii(mol);
 }
 
+/// Reject `AtomRadius::ADAPTIVE` for RSCC.
+///
+/// RSCC has no adaptive radius model and never had one. Its radius switch listed FIXED,
+/// SCALED, and `BINNED: default:`, so ADAPTIVE fell through to the binned radius and
+/// returned the binned score under another name -- bit-identical to it, with no exception,
+/// no warning, and no field on the result recording which model ran. Giving RSCC a real
+/// adaptive radius is an accuracy change; until then an exception is preferable to a
+/// plausible wrong answer. `std::invalid_argument` surfaces in Python as `RuntimeError`,
+/// the documented channel for option-value errors.
+[[noreturn]] static void RejectAdaptiveRsccRadius() {
+    throw std::invalid_argument(
+        "rscc has no adaptive atom-radius model; use AtomRadius::FIXED, AtomRadius::SCALED, "
+        "or AtomRadius::BINNED. AtomRadius::ADAPTIVE is supported by rsr only");
+}
+
 // ==== Density scoring functions ====
 
 DensityScoreResult rscc(
@@ -196,6 +212,9 @@ DensityScoreResult rscc(
     const OESystem::OEScalarGrid* calc_grid,
     const RsccOptions& options) {
     require_usable_resolution(resolution);
+    if (options.GetAtomRadiusMethod() == AtomRadius::ADAPTIVE) {
+        RejectAdaptiveRsccRadius();
+    }
     PrepareStructure(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
@@ -237,9 +256,14 @@ DensityScoreResult rscc(
                     if (radius < 0.1) radius = 1.5;
                     break;
                 case AtomRadius::BINNED:
-                default:
                     radius = detail::binned_atom_radius(resolution);
                     break;
+                case AtomRadius::ADAPTIVE:
+                    // Unreachable: rejected before the loop. Listed anyway so the switch is
+                    // exhaustive without a `default:` label, which is what makes a future
+                    // enumerator a compiler warning here instead of another silent
+                    // fall-through into whichever model happens to be last.
+                    RejectAdaptiveRsccRadius();
             }
 
             auto pts = get_atom_grid_points(grid, x, y, z, radius);
