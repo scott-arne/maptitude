@@ -304,11 +304,14 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     double b_sol,
     bool include_h,
     unsigned int n_scale_shells) const {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
-    }
-    if (n_scale_shells < 1) {
-        throw GridError("n_scale_shells must be >= 1");
+    require_usable_resolution(resolution);
+    if (n_scale_shells < 1 || n_scale_shells > MAX_SCALE_SHELLS) {
+        std::ostringstream message;
+        message << "n_scale_shells must be between 1 and " << MAX_SCALE_SHELLS
+                << " (MAX_SCALE_SHELLS), got " << n_scale_shells
+                << "; lower the bin count. Above the limit `n_scale_shells + 1` wraps the "
+                   "unsigned addition that sizes the shell-edge table";
+        throw GridError(message.str());
     }
 
     const UnitCell& cell = pimpl_->cell;
@@ -458,6 +461,20 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     const int nx = static_cast<int>(std::round(a / sp));
     const int ny = static_cast<int>(std::round(b / sp));
     const int nz = static_cast<int>(std::round(c / sp));
+
+    // A spacing at or above twice a cell edge rounds that dimension to zero, which
+    // both sizes the FFT allocation at zero and makes the Miller-index wrap below a
+    // division by zero -- undefined behavior, and SIGFPE on x86-64.
+    if (nx < 1 || ny < 1 || nz < 1) {
+        const double edge = (nx < 1) ? a : (ny < 1) ? b : c;
+        const char* axis = (nx < 1) ? "a" : (ny < 1) ? "b" : "c";
+        const int dim = (nx < 1) ? nx : (ny < 1) ? ny : nz;
+        std::ostringstream message;
+        message << "Grid spacing " << sp << " A is too coarse for cell edge " << axis << " = "
+                << edge << " A: the FFT grid would be " << dim
+                << " points along that axis. Use a spacing below half the shortest cell edge";
+        throw GridError(message.str());
+    }
 
     const size_t grid_size = static_cast<size_t>(nx) * ny * nz;
     FftwComplexPtr Fc_3d_owner(fftw_alloc_complex(grid_size));

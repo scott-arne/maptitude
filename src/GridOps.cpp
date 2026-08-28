@@ -97,6 +97,21 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
     OEChem::OEMolBase& mol,
     const double cell_a, const double cell_b, const double cell_c,
     const double padding) {
+    // The periodic wrap below is `std::fmod(offset, cell_edge)`, which is NaN for a zero
+    // divisor and meaningless for a non-finite one, so every voxel of the padded grid
+    // comes back NaN with no error. Validate all three edges up front rather than
+    // guarding only the centroid shift.
+    const double edges[3] = {cell_a, cell_b, cell_c};
+    const char* edge_names[3] = {"cell_a", "cell_b", "cell_c"};
+    for (int i = 0; i < 3; ++i) {
+        if (!std::isfinite(edges[i]) || edges[i] <= 0.0) {
+            std::ostringstream message;
+            message << "wrap_and_pad_grid requires a finite positive " << edge_names[i]
+                    << " (got " << edges[i] << ")";
+            throw CellError(message.str());
+        }
+    }
+
     const double sp = grid.GetSpacing();
 
     // Compute heavy-atom centroid
@@ -126,9 +141,9 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
     const double grid_ymid = grid.GetYMin() + (grid.GetYDim() - 1) * sp / 2.0;
     const double grid_zmid = grid.GetZMin() + (grid.GetZDim() - 1) * sp / 2.0;
 
-    const double shift_x = (cell_a > 0) ? std::round((grid_xmid - cx) / cell_a) * cell_a : 0.0;
-    const double shift_y = (cell_b > 0) ? std::round((grid_ymid - cy) / cell_b) * cell_b : 0.0;
-    const double shift_z = (cell_c > 0) ? std::round((grid_zmid - cz) / cell_c) * cell_c : 0.0;
+    const double shift_x = std::round((grid_xmid - cx) / cell_a) * cell_a;
+    const double shift_y = std::round((grid_ymid - cy) / cell_b) * cell_b;
+    const double shift_z = std::round((grid_zmid - cz) / cell_c) * cell_c;
 
     if (std::abs(shift_x) > 0.01 || std::abs(shift_y) > 0.01 || std::abs(shift_z) > 0.01) {
         for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {

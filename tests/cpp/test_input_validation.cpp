@@ -6,16 +6,25 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
+#include "maptitude/CoverageOptions.h"
 #include "maptitude/DensityCalculator.h"
 #include "maptitude/Error.h"
+#include "maptitude/GridOps.h"
+#include "maptitude/Metric.h"
 #include "maptitude/QScoreOptions.h"
 #include "maptitude/SymOp.h"
 #include "maptitude/UnitCell.h"
 
+#include "fixtures.h"
+
 using namespace Maptitude;
+using MaptitudeTest::MakeAtomMol;
+using MaptitudeTest::MakeEmptyGrid;
+using MaptitudeTest::MakeGaussianGrid;
 
 // ---- Acceptance tests: valid cells must pass ----
 
@@ -459,4 +468,180 @@ TEST(QScoreOptionsValidationTest, RejectsNegativeZeroAndNegativeSubnormals) {
     EXPECT_THROW(options.SetSigma(-std::numeric_limits<double>::denorm_min()),
                  std::invalid_argument);
     EXPECT_THROW(options.SetMaxRadius(-0.0), std::invalid_argument);
+}
+
+// ---- CoverageOptions validation ----
+
+TEST(CoverageOptionsValidationTest, RejectsNonFiniteSigma) {
+    // A NaN sigma makes `mean + sigma * stddev` NaN, every `rho >= threshold`
+    // comparison false, and coverage returns a completely plausible 0.0.
+    const double nan_value = std::numeric_limits<double>::quiet_NaN();
+    CoverageOptions options;
+    const double default_value = options.GetSigma();
+    EXPECT_THROW(options.SetSigma(nan_value), std::invalid_argument);
+    EXPECT_THROW(options.SetSigma(std::numeric_limits<double>::infinity()),
+                 std::invalid_argument);
+    EXPECT_THROW(options.SetSigma(-std::numeric_limits<double>::infinity()),
+                 std::invalid_argument);
+    EXPECT_EQ(options.GetSigma(), default_value);  // Field unchanged after rejection
+}
+
+TEST(CoverageOptionsValidationTest, StillAcceptsZeroAndNegativeSigma) {
+    // The accepting half of the boundary, and the reason this guard is weaker than
+    // QScoreOptions::SetSigma. Coverage's sigma multiplies stddev in
+    // `mean + sigma * stddev`: zero thresholds at the mean and a negative value
+    // thresholds below it. Both are meaningful requests, so narrowing this guard to
+    // match Q-score's would be a regression, not a consistency fix.
+    CoverageOptions options;
+    EXPECT_NO_THROW(options.SetSigma(0.0));
+    EXPECT_EQ(options.GetSigma(), 0.0);
+    EXPECT_NO_THROW(options.SetSigma(-1.0));
+    EXPECT_EQ(options.GetSigma(), -1.0);
+    EXPECT_NO_THROW(options.SetSigma(1.5));
+    EXPECT_EQ(options.GetSigma(), 1.5);
+}
+
+// ---- Resolution validation at the five public entry points ----
+
+TEST(ResolutionValidationTest, EveryEntryPointRejectsNonFiniteResolution) {
+    // NaN <= 0.0 and +inf <= 0.0 are both false, so the old sign-only guard passed
+    // them through. fc_density then returned an all-zero grid with no exception.
+    const double nan_value = std::numeric_limits<double>::quiet_NaN();
+    const double pos_inf = std::numeric_limits<double>::infinity();
+
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OEScalarGrid calc = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+
+    for (double bad : {nan_value, pos_inf, -pos_inf, 0.0, -1.0}) {
+        EXPECT_THROW(rscc(mol, obs, bad, nullptr, &calc), GridError) << "resolution " << bad;
+        EXPECT_THROW(rsr(mol, obs, bad, nullptr, &calc), GridError) << "resolution " << bad;
+        EXPECT_THROW(qscore(mol, obs, bad), GridError) << "resolution " << bad;
+        EXPECT_THROW(ediam(mol, obs, bad), GridError) << "resolution " << bad;
+
+        DensityCalculator density(UnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0),
+                                  SymOp::ParseAll("x,y,z"));
+        EXPECT_THROW(density.Calculate(mol, obs, bad), GridError) << "resolution " << bad;
+    }
+}
+
+TEST(ResolutionValidationTest, StillAcceptsAFinitePositiveResolution) {
+    // The accepting half: one shared guard must not narrow what the five entry
+    // points take.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OEScalarGrid calc = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+
+    EXPECT_NO_THROW(rscc(mol, obs, 2.0, nullptr, &calc));
+    EXPECT_NO_THROW(rsr(mol, obs, 2.0, nullptr, &calc));
+    EXPECT_NO_THROW(qscore(mol, obs, 2.0));
+    EXPECT_NO_THROW(ediam(mol, obs, 2.0));
+
+    DensityCalculator density(UnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0),
+                              SymOp::ParseAll("x,y,z"));
+    EXPECT_NO_THROW(delete density.Calculate(mol, obs, 2.0));
+}
+
+// ---- DensityCalculator numeric argument bounds ----
+
+TEST(DensityCalculatorValidationTest, RejectsAnUnboundedScaleShellCount) {
+    // n_scale_shells is unsigned: at UINT_MAX, `n_scale_shells + 1` wraps to 0, the
+    // shell-edge vector is empty, and `i <= UINT_MAX` never ends -- a non-terminating
+    // loop writing past the end of an empty vector on every iteration.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+    const OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 3.0, 1.0);
+    DensityCalculator density(UnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0),
+                              SymOp::ParseAll("x,y,z"));
+
+    EXPECT_THROW(density.Calculate(mol, obs, 2.0, nullptr, 0.35, 46.0, false, 0), GridError);
+    EXPECT_THROW(density.Calculate(mol, obs, 2.0, nullptr, 0.35, 46.0, false,
+                                   MAX_SCALE_SHELLS + 1),
+                 GridError);
+    EXPECT_THROW(density.Calculate(mol, obs, 2.0, nullptr, 0.35, 46.0, false,
+                                   std::numeric_limits<unsigned int>::max()),
+                 GridError);
+}
+
+TEST(DensityCalculatorValidationTest, StillAcceptsScaleShellCountsUpToTheLimit) {
+    // The accepting half of the bound. MAX_SCALE_SHELLS itself must work, or the
+    // guard has narrowed the usable range rather than closing the wrap.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+    const OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 3.0, 1.0);
+    DensityCalculator density(UnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0),
+                              SymOp::ParseAll("x,y,z"));
+
+    EXPECT_NO_THROW(delete density.Calculate(mol, obs, 2.0, nullptr, 0.35, 46.0, false, 1));
+    EXPECT_NO_THROW(delete density.Calculate(mol, obs, 2.0, nullptr, 0.35, 46.0, false, 4));
+    EXPECT_NO_THROW(
+        delete density.Calculate(mol, obs, 2.0, nullptr, 0.35, 46.0, false, MAX_SCALE_SHELLS));
+}
+
+TEST(DensityCalculatorValidationTest, RejectsASpacingCoarserThanTheCell) {
+    // round(2.0 / 5.0) is 0, so the FFT grid would be 0 x 0 x 0: `% nx` is a division
+    // by zero (SIGFPE on x86-64) and the allocation is zero-sized. Every other guard
+    // on this path passes.
+    //
+    // Assert on the message, not just the type. Without this guard the zero-sized
+    // geometry still reaches FFTW and dies there with "FFTW planning failed", so a
+    // bare EXPECT_THROW(GridError) passes on arm64 whether the guard exists or not.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 5.0, 5.0);
+    DensityCalculator density(UnitCell(2.0, 2.0, 2.0, 90.0, 90.0, 90.0),
+                              SymOp::ParseAll("x,y,z"));
+
+    try {
+        delete density.Calculate(mol, obs, 2.0);
+        FAIL() << "expected GridError for a spacing coarser than the cell";
+    } catch (const GridError& error) {
+        EXPECT_NE(std::string(error.what()).find("too coarse"), std::string::npos)
+            << "rejected by the wrong branch: " << error.what();
+    }
+}
+
+TEST(DensityCalculatorValidationTest, StillAcceptsASpacingThatRoundsToOnePoint) {
+    // One point per axis is the smallest usable grid; the guard rejects below it, not
+    // at it. cell 2 A at 1.5 A spacing rounds to 1.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 4.5, 1.5);
+    DensityCalculator density(UnitCell(2.0, 2.0, 2.0, 90.0, 90.0, 90.0),
+                              SymOp::ParseAll("x,y,z"));
+
+    EXPECT_NO_THROW(delete density.Calculate(mol, obs, 2.0));
+}
+
+// ---- wrap_and_pad_grid cell-edge validation ----
+
+TEST(WrapAndPadValidationTest, RejectsZeroOrNonFiniteCellEdges) {
+    // fmod(x, 0.0) is NaN, so a zero edge filled the padded grid with NaN voxels and
+    // returned it. The old ternary guarded the centroid shift only.
+    const double nan_value = std::numeric_limits<double>::quiet_NaN();
+    const double pos_inf = std::numeric_limits<double>::infinity();
+
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid grid = MakeEmptyGrid(5.0, 1.0);
+
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 0.0, 5.0, 5.0), CellError);
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 5.0, 0.0, 5.0), CellError);
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 5.0, 5.0, 0.0), CellError);
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, nan_value, 5.0, 5.0), CellError);
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, pos_inf, 5.0, 5.0), CellError);
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, -5.0, 5.0, 5.0), CellError);
+}
+
+TEST(WrapAndPadValidationTest, StillAcceptsPositiveCellEdges) {
+    // The atom sits within `padding` of the grid edge, so this actually reaches the
+    // fmod wrap rather than returning nullptr for "no padding needed" -- the
+    // rejection test above throws before that point and cannot cover it. Cell edges
+    // larger than the grid keep the centroid shift at zero, so the atom stays near
+    // the edge and padding is genuinely required.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 4.0, 4.0, 4.0);
+    OESystem::OEScalarGrid grid = MakeEmptyGrid(5.0, 1.0);
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) grid[i] = 1.0f;
+
+    std::unique_ptr<OESystem::OEScalarGrid> padded;
+    ASSERT_NO_THROW(padded.reset(wrap_and_pad_grid(grid, mol, 20.0, 20.0, 20.0)));
+    ASSERT_NE(padded, nullptr) << "expected the padding path, not the nullptr shortcut";
+    for (unsigned int i = 0; i < padded->GetSize(); ++i) {
+        ASSERT_FALSE(std::isnan((*padded)[i])) << "NaN voxel at " << i;
+    }
 }

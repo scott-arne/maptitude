@@ -6,6 +6,8 @@
 #ifndef MAPTITUDE_ERROR_H
 #define MAPTITUDE_ERROR_H
 
+#include <cmath>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -52,6 +54,20 @@ class CellError : public std::runtime_error {
 public:
     explicit CellError(const std::string& message) : std::runtime_error(message) {}
 };
+
+/// Reject a resolution that is not a finite positive value.
+///
+/// Five public entry points take a resolution and every one of them divides by it or by
+/// its square, so `NaN` and `+inf` both have to be rejected here rather than producing a
+/// silently empty map downstream. `NaN <= 0.0` and `+inf <= 0.0` are both false, so a
+/// sign test alone lets them through.
+inline void require_usable_resolution(double resolution) {
+    if (!std::isfinite(resolution) || resolution <= 0.0) {
+        std::ostringstream message;
+        message << "Resolution must be a finite positive value (got " << resolution << ")";
+        throw GridError(message.str());
+    }
+}
 
 }  // namespace Maptitude
 

@@ -151,9 +151,7 @@ DensityScoreResult rscc(
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const OESystem::OEScalarGrid* calc_grid,
     const RsccOptions& options) {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
-    }
+    require_usable_resolution(resolution);
     PrepareStructure(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
@@ -254,9 +252,7 @@ DensityScoreResult rsr(
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const OESystem::OEScalarGrid* calc_grid,
     const RsrOptions& options) {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
-    }
+    require_usable_resolution(resolution);
     PrepareStructure(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
@@ -376,9 +372,7 @@ DensityScoreResult qscore(
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const QScoreOptions& options) {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
-    }
+    require_usable_resolution(resolution);
     PrepareStructure(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
@@ -630,9 +624,7 @@ DensityScoreResult ediam(
     const OESystem::OEScalarGrid& grid,
     const double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask) {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
-    }
+    require_usable_resolution(resolution);
     PrepareStructure(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);

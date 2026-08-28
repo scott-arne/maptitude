@@ -32,6 +32,11 @@ template <class T> class OEUnaryPredicate;
 
 namespace Maptitude {
 
+/// Per-shell scaling bins partition the resolution range; even a 0.5 A dataset has
+/// far fewer independent resolution shells than this. The bound also keeps
+/// `n_scale_shells + 1` from wrapping the unsigned addition that sizes `shell_edges`.
+constexpr unsigned int MAX_SCALE_SHELLS = 1000;
+
 /**
  * @brief Computes model electron density using Fourier synthesis.
  *
@@ -86,7 +91,8 @@ public:
      * @param k_sol Bulk solvent scale factor (default: 0.35 e/A^3).
      * @param b_sol Bulk solvent B-factor (default: 46.0 A^2).
      * @param include_h Include hydrogen atoms (default: false).
-     * @param n_scale_shells Number of per-shell scaling bins (default: 1).
+     * @param n_scale_shells Number of per-shell scaling bins, in
+     *        [1, MAX_SCALE_SHELLS] (default: 1).
      * @return New OEScalarGrid with computed density. Caller owns the pointer.
      */
     OESystem::OEScalarGrid* Calculate(

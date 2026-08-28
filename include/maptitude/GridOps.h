@@ -87,13 +87,14 @@ OESystem::OEScalarGrid* diff_to_calc(
  *
  * @param grid CCP4 unit-cell grid.
  * @param mol Molecule to wrap (modified in-place).
- * @param cell_a Unit cell dimension a (Angstroms).
- * @param cell_b Unit cell dimension b (Angstroms).
- * @param cell_c Unit cell dimension c (Angstroms).
+ * @param cell_a Unit cell dimension a (Angstroms), finite and positive.
+ * @param cell_b Unit cell dimension b (Angstroms), finite and positive.
+ * @param cell_c Unit cell dimension c (Angstroms), finite and positive.
  * @param padding Extra margin around atoms (Angstroms).
  * @return A newly allocated padded grid, or nullptr if the molecule already
  *         fits and no padding is needed. The caller owns the returned grid.
  * @throws StructureError If the molecule contains no heavy atoms.
+ * @throws CellError If any cell dimension is not a finite positive value.
  */
 OESystem::OEScalarGrid* wrap_and_pad_grid(
     const OESystem::OEScalarGrid& grid,
