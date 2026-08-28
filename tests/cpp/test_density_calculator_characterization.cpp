@@ -94,11 +94,14 @@ TEST(DensityCalculatorCharacterizationTest, OrthorhombicAsym) {
     ExpectPinned(s.index_moment, MaptitudePins::FC_ORTHORHOMBIC_ASYM_INDEX_MOMENT);
 }
 
-// Calculate performs nine FFTW allocations and five plans. The RAII conversion
-// guards against leaks when std::bad_alloc or allocation failure escapes from
-// the pipeline. The null checks added during the conversion create new throw
-// sites in the middle of the allocation region, which is what makes the RAII
-// conversion load-bearing rather than precautionary.
+// Calculate performs nine FFTW allocations and five plans, all held by the
+// FftwBuffer and FftwPlan wrappers. This test does not exercise them: it throws
+// from the argument check, before the first fftw_alloc_complex, so what it pins
+// is that the guard fires repeatedly and leaves the pipeline usable. The
+// allocation paths rest on the phase's one-time leak measurement instead --
+// reverting the wrappers to raw allocation plus manual fftw_free on the success
+// path leaves this test, and the whole suite, green. See the corresponding
+// Known limitations entry in CHANGELOG.md.
 TEST(DensityCalculatorCharacterizationTest, ThrowingPathDoesNotDestabilizeTheProcess) {
     UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
@@ -107,10 +110,6 @@ TEST(DensityCalculatorCharacterizationTest, ThrowingPathDoesNotDestabilizeThePro
 
     DensityCalculator calc(cell, symops);
     for (int i = 0; i < 50; ++i) {
-        // A non-positive resolution is rejected early (before any FFTW
-        // allocation), so this test proves the guard works but exercises no
-        // FFTW cleanup. Rely on Step 6's leak measurement for the allocation
-        // paths.
         EXPECT_THROW(calc.Calculate(mol, obs, -1.0), GridError);
     }
 

@@ -33,8 +33,10 @@ constexpr int MAX_SHELLS = 1000000;
 /// Each shell allocates `num_points` samples per atom, and the sweep replicates
 /// `num_points` centre samples besides. Published Q-score sampling uses 8
 /// (Pintilie 2020); this bound is far above any real use and keeps the per-atom sample
-/// vectors bounded. Values above INT_MAX additionally wrap the `static_cast<int>` at
-/// `src/Metric.cpp:446`.
+/// vectors bounded. Values above INT_MAX additionally wrap the three
+/// `static_cast<int>(options.GetNumPoints())` conversions in `qscore` (`src/Metric.cpp`),
+/// which is why this is named rather than cited by line: the line number moved twice
+/// during Phase 1 while the construct did not.
 constexpr unsigned int MAX_NUM_POINTS = 10000;
 
 /// Shells and points are each bounded on their own, but it is their product that
@@ -42,7 +44,15 @@ constexpr unsigned int MAX_NUM_POINTS = 10000;
 /// 10000 points each satisfies both individual bounds and still asks the FIXED
 /// precompute for over 100 GB. The default sweep takes 32 samples per atom and an
 /// aggressive real configuration (200 shells x 200 points) takes 40000, so this ceiling
-/// sits far above any working setup while capping the precompute at roughly 48 MB.
+/// sits far above any working setup.
+///
+/// At the ceiling the concurrently live sample buffers come to roughly 112 MB. The
+/// arithmetic, per 2e6 samples: the FIXED precompute holds one `std::array<double, 3>`
+/// each, 24 B, for 48 MB; the sweep then fills four parallel `std::vector<double>` for
+/// the atom being scored (`sample_x`, `sample_y`, `sample_z`, `ref_vals`), 32 B, for
+/// 64 MB. The in-grid subset is copied into two more vectors (`map_vals`, `map_refs`),
+/// up to 32 MB again, and `push_back` growth can transiently double any of them. An
+/// earlier version of this comment quoted 48 MB, which is the precompute alone.
 constexpr long long MAX_TOTAL_SAMPLES = 2000000;
 
 namespace detail {

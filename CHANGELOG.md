@@ -9,9 +9,13 @@ This project is pre-1.0: breaking changes may land in a minor release.
 
 Foundation and safety. This release adds input validation, a typed exception
 hierarchy, memory and resource safety fixes, and the project's first C++ test
-suite, across 67 commits touching 43 files. It is not an accuracy release: no
-change here was intended to make a metric more correct, and the six exceptions
-to that intent are listed under Exceptions to the neutrality claim below.
+suite. Measured against the release it follows, `v0.2.4` (`5848b0d`), that is 75
+commits touching 48 files as of the final Phase 1 fix round; re-derive with
+`git rev-list --count v0.2.4..` and `git diff --name-only v0.2.4.. | wc -l`
+rather than trusting the number, which drifts with every later commit. It is not
+an accuracy release: no change here was intended to make a metric more correct,
+and the six exceptions to that intent are listed under Exceptions to the
+neutrality claim below.
 
 ### Removed
 
@@ -199,6 +203,14 @@ is suite coverage, not pin coverage.
   sign decision unreachable, so the two candidate implementations are
   equivalent mutants. The separator itself is pinned; only the source of its
   sign decision is not.
+- The FFTW RAII conversion and the nine allocation null checks it added are not
+  covered by a regression test. The only test that throws from `Calculate`
+  throws from the argument check, before the first `fftw_alloc_complex`, so
+  reverting the `FftwBuffer` and `FftwPlan` wrappers to raw allocation plus
+  manual `fftw_free` on the success path leaves the whole suite green. The
+  evidence for the conversion is a one-time manual leak measurement taken
+  during the phase, not something CI re-checks. Injecting an FFTW allocation
+  failure from a test would need an allocator seam the library does not have.
 - The library disagrees with itself about what a heavy atom is. Five sites in
   `DensityCalculator.cpp` and `Metric.cpp` still use a hand-rolled
   `GetAtomicNum() == 1` skip while `Metric.cpp` and `GridOps.cpp` use
