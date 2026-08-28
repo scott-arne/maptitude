@@ -174,9 +174,20 @@ Six changes are exceptions to that intent. Four were planned; exceptions 5 and
 landed.
 
 The new rejections listed under Added are not among them. Each refuses input
-that previously hung, divided by zero, or read uninitialized memory, so there
-was no value to move; exceptions 2 and 4 are here because they refuse input that
-previously returned a usable result.
+that previously hung, divided by zero, read uninitialized memory, or ran to
+completion and returned NaN, so in none of them was there a usable value to
+move; exceptions 2 and 4 are here because they refuse input that previously
+returned a usable result.
+
+That last clause is there for the adaptive no-atom-can-sweep `GridError`, which
+refuses input that previously ran to completion. Measured at
+`v0.2.4`, an adaptive Q-score on a single carbon at resolution 30.0 A and grid
+spacing 4.0 A returned `overall = NaN` with `by_atom = {0: NaN}`: the step is
+`min(spacing, resolution / 7)` = 4.0 A against a maximum radius of
+`2 * 1.7` = 3.4 A, so the sweep spans no shell, only the replicated centre point
+is sampled, and `pearson_correlation` reports the resulting zero variance as NaN
+rather than dividing by zero. A NaN is not a usable result, so by the criterion
+above this rejection is not a seventh exception.
 
 1. **Non-orthorhombic cells raise `CellError`.** A capability regression, as
    described under Removed. This is the only exception that removes a pin.
