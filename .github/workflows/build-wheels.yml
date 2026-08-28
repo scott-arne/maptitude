@@ -92,6 +92,22 @@ jobs:
           tar -xzf /tmp/sdk.tar.gz -C /opt/openeye --strip-components=2
           rm /tmp/sdk.tar.gz
           ls -la /opt/openeye/
+          # The SDK ships its own README naming the release:
+          #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
+          # Assert against that, not against the tarball name we asked for --
+          # the tarball name is our input, so matching it proves nothing.
+          README="$(find /opt/openeye -maxdepth 2 -name README.txt -print -quit)"
+          if [ -z "${README}" ]; then
+            echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
+            ls -laR /opt/openeye | head -50
+            exit 1
+          fi
+          echo "SDK README: ${README}"
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION}" "${README}" || {
+            echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
+            head -3 "${README}"
+            exit 1
+          }
 
       - name: Download OpenEye license from GCS
         run: |
@@ -118,9 +134,9 @@ jobs:
           from openeye import oechem
           release = oechem.OEToolkitsGetRelease()
           expected = os.environ["EXPECTED"]
-          print(f"OEToolkitsGetRelease() = {release!r}, expected prefix {expected!r}")
-          if not release.startswith(expected):
-              sys.exit(f"OpenEye version mismatch: {release} does not start with {expected}")
+          print(f"OEToolkitsGetRelease() = {release!r}, expected {expected!r}")
+          if release.split(".")[:2] != expected.split("."):
+              sys.exit(f"OpenEye version mismatch: {release} is not {expected}")
           PY
 
       - name: Build wheel
@@ -205,7 +221,7 @@ jobs:
           expected = os.environ["EXPECTED"]
           actual = _build_info.OPENEYE_BUILD_VERSION
           print("OPENEYE_BUILD_VERSION =", actual)
-          if not actual.startswith(expected):
+          if actual.split(".")[:2] != expected.split("."):
               sys.exit(f"wheel built against {actual}, expected {expected}")
           PY
 
@@ -276,6 +292,22 @@ jobs:
           tar -xzf /tmp/sdk.tar.gz -C ${{ runner.temp }}/openeye --strip-components=2
           rm /tmp/sdk.tar.gz
           ls -la ${{ runner.temp }}/openeye/
+          # The SDK ships its own README naming the release:
+          #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
+          # Assert against that, not against the tarball name we asked for --
+          # the tarball name is our input, so matching it proves nothing.
+          README="$(find ${{ runner.temp }}/openeye -maxdepth 2 -name README.txt -print -quit)"
+          if [ -z "${README}" ]; then
+            echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
+            ls -laR ${{ runner.temp }}/openeye | head -50
+            exit 1
+          fi
+          echo "SDK README: ${README}"
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION}" "${README}" || {
+            echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
+            head -3 "${README}"
+            exit 1
+          }
 
       - name: Download OpenEye license from GCS
         run: |
@@ -302,9 +334,9 @@ jobs:
           from openeye import oechem
           release = oechem.OEToolkitsGetRelease()
           expected = os.environ["EXPECTED"]
-          print(f"OEToolkitsGetRelease() = {release!r}, expected prefix {expected!r}")
-          if not release.startswith(expected):
-              sys.exit(f"OpenEye version mismatch: {release} does not start with {expected}")
+          print(f"OEToolkitsGetRelease() = {release!r}, expected {expected!r}")
+          if release.split(".")[:2] != expected.split("."):
+              sys.exit(f"OpenEye version mismatch: {release} is not {expected}")
           PY
 
       - name: Build wheel
@@ -358,7 +390,7 @@ jobs:
           expected = os.environ["EXPECTED"]
           actual = _build_info.OPENEYE_BUILD_VERSION
           print("OPENEYE_BUILD_VERSION =", actual)
-          if not actual.startswith(expected):
+          if actual.split(".")[:2] != expected.split("."):
               sys.exit(f"wheel built against {actual}, expected {expected}")
           PY
 
@@ -448,6 +480,22 @@ jobs:
           sdk_inner=$(find "${RUNNER_TEMP}/openeye-extract" -maxdepth 1 -mindepth 1 -type d | head -n1)
           echo "OPENEYE_ROOT=${sdk_inner}" >> $GITHUB_ENV
           ls "${sdk_inner}"
+          # The SDK ships its own README naming the release:
+          #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
+          # Assert against that, not against the tarball name we asked for --
+          # the tarball name is our input, so matching it proves nothing.
+          README="$(find "${sdk_inner}" -maxdepth 2 -name README.txt -print -quit)"
+          if [ -z "${README}" ]; then
+            echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
+            ls -laR "${sdk_inner}" | head -50
+            exit 1
+          fi
+          echo "SDK README: ${README}"
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION}" "${README}" || {
+            echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
+            head -3 "${README}"
+            exit 1
+          }
 
       - name: Download OpenEye license from GCS
         run: |
@@ -475,9 +523,9 @@ jobs:
           from openeye import oechem
           release = oechem.OEToolkitsGetRelease()
           expected = os.environ["EXPECTED"]
-          print(f"OEToolkitsGetRelease() = {release!r}, expected prefix {expected!r}")
-          if not release.startswith(expected):
-              sys.exit(f"OpenEye version mismatch: {release} does not start with {expected}")
+          print(f"OEToolkitsGetRelease() = {release!r}, expected {expected!r}")
+          if release.split(".")[:2] != expected.split("."):
+              sys.exit(f"OpenEye version mismatch: {release} is not {expected}")
           PY
 
       - name: Build wheel
@@ -532,7 +580,7 @@ jobs:
           expected = os.environ["EXPECTED"]
           actual = _build_info.OPENEYE_BUILD_VERSION
           print("OPENEYE_BUILD_VERSION =", actual)
-          if not actual.startswith(expected):
+          if actual.split(".")[:2] != expected.split("."):
               sys.exit(f"wheel built against {actual}, expected {expected}")
           PY
 
