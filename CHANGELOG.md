@@ -58,7 +58,48 @@ neutrality claim below.
   small to advance the accumulator and a radius of zero both fail here. In
   `RadialSampling::ADAPTIVE` the maximum radius is derived from the atom rather
   than from the options, so an atom that carries no radius scores `NaN` and the
-  rest of the molecule is still scored.
+  rest of the molecule is still scored. A sweep that *no* atom in the molecule
+  can satisfy is a statement about the resolution and the grid spacing instead,
+  and raises `GridError`: an adaptive Q-score at a grid spacing of 4.0 A, where
+  no atom has a radius large enough to produce even one shell, is a caller error
+  rather than a molecule of unscorable atoms.
+- Validation of the public numeric arguments that reached unchecked arithmetic.
+  `resolution` must be finite and positive at all five entry points; NaN and
+  `+inf` both passed the old `resolution <= 0.0` test, and every entry point
+  divides by the resolution or its square. `n_scale_shells` must be in
+  `[1, 1000]` (`MAX_SCALE_SHELLS`); at `UINT_MAX` the `n_scale_shells + 1` that
+  sizes the shell-edge table wrapped to zero and the loop filling it could not
+  terminate. A grid spacing at or above twice a cell edge is rejected: it rounds
+  that FFT dimension to zero, making the Miller-index wrap a division by zero.
+  `wrap_and_pad_grid` validates all three cell edges, which it had passed
+  straight to `std::fmod` — NaN for a zero divisor, and that NaN reached every
+  voxel of the padded grid. These raise `GridError`, except the cell edges,
+  which raise `CellError`.
+- `CoverageOptions::SetSigma` rejects a non-finite sigma, which made the density
+  threshold NaN, every `rho >= threshold` comparison false, and coverage return
+  a plausible `0.0`. It rejects *only* non-finite values. `QScoreOptions::SetSigma`
+  additionally refuses zero and negatives, and the asymmetry is deliberate: the
+  two sigmas are different quantities. Q-score's is a Gaussian width, which has
+  to be positive; coverage's is a multiplier in the threshold
+  `mean + sigma * stddev`, where zero means "threshold at the mean" and a
+  negative value means "threshold below the mean", both meaningful requests.
+- A bound on the Miller-index box, `MAX_MILLER_BOX_POINTS` (2e8 points). The
+  index sweep spans `2*ceil(edge/resolution)+1` points per axis, so its volume
+  grows as `(2a/resolution)^3` and a finite positive resolution does not bound
+  it: 1e-9 A is an ordinary double, not a subnormal, and the loop does not
+  finish. The bound is on the box rather than on the resolution because the two
+  depend on the three cell edges jointly. A 200 A cubic cell at 1.0 A resolution
+  uses under a third of it. Raises `GridError` naming the resolution, the three
+  edges, and the limit.
+- The `AtomRadius` and `RadialSampling` setters reject values the enum does not
+  declare. Both are scoped enums with underlying type `int`, so
+  `SetAtomRadiusMethod(42)` was a valid value of the type and SWIG passed it
+  through without a cast. It matched no arm of the RSCC radius switch, which
+  then read its radius uninitialized and returned `overall = 1.0` with every
+  per-atom score `NaN`; and it took the `else` arm of both of `qscore`'s
+  `RadialSampling` tests, so it was validated as adaptive and then executed as
+  fixed, with the fixed sweep's parameters never checked. Raises
+  `std::invalid_argument` (`RuntimeError` in Python).
 - A C++ test suite covering the metrics, the structure-factor pipeline, and
   real CCP4 map I/O. Of its 28 characterization tests, 26 assert pinned values.
   The other two assert rejections and replaced the pins withdrawn by the two
@@ -132,6 +173,11 @@ Six changes are exceptions to that intent. Four were planned; exceptions 5 and
 6 were found by the reconciliation audit and its review, after the work had
 landed.
 
+The new rejections listed under Added are not among them. Each refuses input
+that previously hung, divided by zero, or read uninitialized memory, so there
+was no value to move; exceptions 2 and 4 are here because they refuse input that
+previously returned a usable result.
+
 1. **Non-orthorhombic cells raise `CellError`.** A capability regression, as
    described under Removed. This is the only exception that removes a pin.
 2. **`wrap_and_pad_grid` raises `StructureError` on an empty heavy-atom set.**
@@ -195,22 +241,27 @@ is suite coverage, not pin coverage.
   gap from the inside.
 - Several validation guards are pinned only by `EXPECT_THROW`, which is
   structurally blind to a narrowed accepting set and to wrong output on the
-  accepting path. `RadialSampling::ADAPTIVE` is the notable case: its only
-  test asserts that a bad input is rejected, and nothing asserts a value from
-  an adaptive sweep on valid input.
+  accepting path. `RadialSampling::ADAPTIVE` is the notable case. Three tests
+  now assert that an adaptive sweep on valid input returns a real score rather
+  than `NaN`, which closes the narrowed-accepting-set half, but no pin records
+  an adaptive Q-score: `RSR_CARBON_ADAPTIVE` pins the unrelated
+  `AtomRadius::ADAPTIVE`. The accepting path is covered for shape and not for
+  value, so a change that moved every adaptive score would leave the suite
+  green.
 - One branch of `SymOp::ToString` is unpinnable by construction. Suppressing a
   zero-numerator translation makes the distinguishing input for the separator's
   sign decision unreachable, so the two candidate implementations are
   equivalent mutants. The separator itself is pinned; only the source of its
   sign decision is not.
 - The FFTW RAII conversion and the nine allocation null checks it added are not
-  covered by a regression test. The only test that throws from `Calculate`
-  throws from the argument check, before the first `fftw_alloc_complex`, so
-  reverting the `FftwBuffer` and `FftwPlan` wrappers to raw allocation plus
-  manual `fftw_free` on the success path leaves the whole suite green. The
-  evidence for the conversion is a one-time manual leak measurement taken
-  during the phase, not something CI re-checks. Injecting an FFTW allocation
-  failure from a test would need an allocator seam the library does not have.
+  covered by a regression test. Every test that throws from `Calculate` throws
+  before the first `fftw_alloc_complex` — the argument checks and the
+  Miller-index bound all fire during setup — so reverting the `FftwBuffer` and
+  `FftwPlan` wrappers to raw allocation plus manual `fftw_free` on the success
+  path leaves the whole suite green. The evidence for the conversion is a
+  one-time manual leak measurement taken during the phase, not something CI
+  re-checks. Injecting an FFTW allocation failure from a test would need an
+  allocator seam the library does not have.
 - The library disagrees with itself about what a heavy atom is. Five sites in
   `DensityCalculator.cpp` and `Metric.cpp` still use a hand-rolled
   `GetAtomicNum() == 1` skip while `Metric.cpp` and `GridOps.cpp` use

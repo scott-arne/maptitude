@@ -264,16 +264,33 @@ rather than silently falling back to `BINNED`.
 ## Exceptions
 
 All *domain* exceptions raised by maptitude derive from `MaptitudeError`, so a single
-`except maptitude.MaptitudeError` catches every failure that describes your input. Option setters
-validate separately and raise `RuntimeError` -- see the note below the table.
+`except maptitude.MaptitudeError` catches every failure that describes your input. Three builtin
+types are also raised, for failures in how the call was made rather than in the structure or map it
+was given -- they are listed in the second table, and `except maptitude.MaptitudeError` does not
+catch them.
 
 | Exception        | Raised when                                                          |
 |------------------|----------------------------------------------------------------------|
 | `MaptitudeError` | Base class. Never raised directly.                                   |
 | `StructureError` | The molecule is unsuitable: no heavy atoms, missing coordinates.     |
-| `GridError`      | Grid geometry is wrong or a required grid is missing.                |
+| `GridError`      | Grid geometry is wrong, a required grid is missing, or a numeric argument is outside its usable range. |
 | `SymOpError`     | A symmetry-operator string cannot be parsed.                         |
 | `CellError`      | Unit-cell parameters are invalid or describe an unsupported lattice. |
+
+| Exception      | Raised when                                                                       |
+|----------------|------------------------------------------------------------------------------------|
+| `RuntimeError` | An option value is out of range. Every option setter validates in C++ and its `std::invalid_argument` surfaces here. |
+| `ValueError`   | A string argument the Python wrappers resolve against a table names nothing: `atom_radius="vdw"`, or `atom_radius="adaptive"` to `rscc`. |
+| `TypeError`    | An argument has the wrong type: a `mask` that is not an OpenEye atom predicate, an `options` object of the wrong class, a `symops` that is not a string or a sequence of `SymOp`. |
+
+The table above is the complete set. One rejection appears in two of its rows: `rscc` refuses the
+adaptive radius model as a `ValueError` when it is spelled `atom_radius="adaptive"` and as a
+`RuntimeError` when it is spelled `atom_radius=AtomRadius.ADAPTIVE` or carried on an `RsccOptions`.
+The split is deliberate -- the string is resolved against a three-entry table in Python, where an
+unmatched name is a `ValueError` like any other, while the enum value names a real method that this
+metric does not implement and is refused in C++ along with every other option-value rejection --
+but it means catching both types is the only way to catch the rejection whatever spelling reaches
+you.
 
 ```python
 import maptitude
@@ -286,8 +303,38 @@ except maptitude.MaptitudeError as exc:
     print(f"maptitude failed: {exc}")
 ```
 
-Option-value errors -- an out-of-range `QScoreOptions` setting, for instance -- raise the standard
-library's `RuntimeError` rather than a maptitude type.
+### Rejected input
+
+These are the input classes the library refuses rather than scoring. All of them previously
+returned a value, hung, or read uninitialized memory.
+
+| Input                                                                | Result                        |
+|----------------------------------------------------------------------|-------------------------------|
+| A non-finite or non-positive `resolution`, at any entry point         | `GridError`                   |
+| A `resolution` and unit cell needing a Miller-index box over 2e8 points | `GridError`                 |
+| A grid spacing at or above twice a cell edge                          | `GridError`                   |
+| `n_scale_shells` outside `[1, 1000]`                                  | `GridError`                   |
+| A non-orthorhombic unit cell                                          | `CellError`                   |
+| A zero, negative, or non-finite cell edge to `wrap_and_pad_grid`      | `CellError`                   |
+| A molecule with no heavy atoms                                        | `StructureError`              |
+| A Q-score radial sweep that cannot terminate or produce a shell       | `GridError`                   |
+| An `AtomRadius` or `RadialSampling` value the enum does not declare   | `RuntimeError`                |
+| `AtomRadius.ADAPTIVE` to `rscc`                                       | `RuntimeError`                |
+| `atom_radius="adaptive"` to `rscc`, or any unrecognised radius name   | `ValueError`                  |
+| A non-finite `CoverageOptions.sigma`                                  | `RuntimeError`                |
+| A non-finite, zero, or negative `QScoreOptions.sigma`                 | `RuntimeError`                |
+
+`CoverageOptions.sigma` and `QScoreOptions.sigma` are validated differently on purpose. Q-score's
+sigma is a Gaussian width and has to be positive. Coverage's is a multiplier in the threshold
+`mean + sigma * stddev`, where zero means "threshold at the mean" and a negative value means
+"threshold below the mean" -- both meaningful requests. Only NaN and the infinities are refused
+there, because a NaN threshold makes every `rho >= threshold` comparison false and coverage returns
+a plausible `0.0`.
+
+Under `RadialSampling.ADAPTIVE` the maximum sampling radius comes from the atom rather than from
+the options, so a sweep that fails on one atom's radius scores that atom `NaN` and leaves the rest
+of the molecule scored. A sweep no atom in the molecule can satisfy is a property of the resolution
+and the grid spacing instead, and raises `GridError`.
 
 ## References
 

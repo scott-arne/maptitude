@@ -1106,16 +1106,38 @@ def fc_density(obj, obs_grid, resolution, cell, mask=None,
         iterable of SymOp, an iterable of operator strings, or None for the
         identity alone.
     :param include_h: Include hydrogen atoms (default: False).
-    :param n_scale_shells: Number of per-shell scaling bins (default: 1).
+    :param n_scale_shells: Number of per-shell scaling bins, in ``[1, 1000]``
+        (default: 1). The upper bound is ``MAX_SCALE_SHELLS``: the bins partition
+        the resolution range and even a 0.5 A dataset has far fewer independent
+        shells, while a value near ``UINT_MAX`` sizes the shell-edge table into
+        tens of gigabytes and at ``UINT_MAX`` itself wraps it to zero.
     :returns: OEScalarGrid with computed model density.
     :raises TypeError: If ``symops`` is neither a string nor an iterable of
         SymOp or operator strings.
     :raises SymOpError: If an operator string cannot be parsed.
+    :raises GridError: If ``resolution`` is not finite and positive, if
+        ``n_scale_shells`` is outside ``[1, 1000]``, if ``obs_grid``'s spacing is
+        at or above twice a cell edge, or if the resolution and the cell together
+        need a Miller-index box of more than 2e8 points.
+    :raises CellError: If ``cell`` is invalid or is not orthorhombic.
     """
     if symops is None:
         symops = [SymOp()]  # Identity only
     elif isinstance(symops, str):
         symops = list(SymOp.ParseAll(symops))
+    elif isinstance(symops, SymOp):
+        # A lone SymOp is not iterable, so it would reach the generic message below
+        # and be reported as "not SymOp" -- a type this function does accept, inside
+        # a sequence. Name the wrapping the caller has to do instead.
+        raise TypeError(
+            "symops must be a sequence of SymOp, not a single SymOp; pass [symops]"
+        )
+    elif isinstance(symops, (bytes, bytearray)):
+        # bytes and bytearray iterate as ints, so the per-element check below would
+        # report "not int" for input the caller never wrote as integers.
+        raise TypeError(
+            "symops must be a str, not %s; decode it first" % type(symops).__name__
+        )
     else:
         try:
             elements = list(symops)
@@ -1159,7 +1181,15 @@ def rscc(obj, grid, resolution, mask=None, calc_grid=None,
         ``"adaptive"`` is not accepted: rscc has no adaptive radius model.
     :param options: RsccOptions configuration object. Never mutated.
     :returns: DensityScoreResult with RSCC values.
-    :raises ValueError: If ``atom_radius`` is a string naming no supported method.
+    :raises ValueError: If ``atom_radius`` is a string naming no supported method,
+        including ``"adaptive"``.
+    :raises RuntimeError: If ``atom_radius`` is ``AtomRadius.ADAPTIVE``, or if
+        ``options`` carries it. The two spellings of the same rejection raise
+        different types because they are found in different places: the string is
+        resolved against a table here, where "no such method" is a ValueError,
+        while the enum value is a real method that this metric does not implement
+        and is refused by the C++ layer, whose ``std::invalid_argument`` surfaces
+        as RuntimeError like every other option-value rejection.
     """
     if options is None:
         options = RsccOptions()
@@ -1314,12 +1344,17 @@ def wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0):
 
     :param grid: CCP4 unit-cell grid.
     :param mol: Molecule to wrap (modified in-place).
-    :param cell_a: Unit cell dimension a (Angstroms).
-    :param cell_b: Unit cell dimension b (Angstroms).
-    :param cell_c: Unit cell dimension c (Angstroms).
+    :param cell_a: Unit cell dimension a (Angstroms). Must be finite and positive.
+    :param cell_b: Unit cell dimension b (Angstroms). Must be finite and positive.
+    :param cell_c: Unit cell dimension c (Angstroms). Must be finite and positive.
     :param padding: Extra margin around atoms (Angstroms).
     :returns: A padded grid, or the original grid when no padding is needed.
+        Never ``None``: the C++ function returns a null grid to mean "no padding
+        was needed", and this wrapper substitutes the original.
     :raises StructureError: If the molecule contains no heavy atoms.
+    :raises CellError: If any cell edge is zero, negative, or non-finite. The
+        wrap uses ``fmod`` against each edge, which is NaN for a zero divisor and
+        previously filled the padded grid with NaN voxels.
     """
     result = _cpp_wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding)
     return result if result is not None else grid
