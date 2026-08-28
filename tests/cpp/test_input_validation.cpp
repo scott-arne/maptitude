@@ -780,6 +780,64 @@ TEST(DensityCalculatorValidationTest, StillAcceptsRealCrystallographicMillerBoxe
     EXPECT_NO_THROW(delete density.Calculate(mol, obs, 0.8));
 }
 
+TEST(DensityCalculatorValidationTest, KeepsEveryMillerIndexInsideTheResolutionShell) {
+    // MAX_MILLER_BOX_POINTS bounds the product of the three extents, not any one of
+    // them, so a cell with one long edge and two short ones drives h far past the point
+    // where `h * h` fits in an int while the box stays orders of magnitude under the
+    // limit. s2 was accumulated from int products; the overflow wrapped it negative,
+    // which passes `s2 <= s_max2` and admitted reflections from outside the shell. The
+    // grid that came back looked plausible and was wrong, so the failure this pins is
+    // silent -- nothing throws, and only the returned indices show it.
+    //
+    // a = 50000 A at 1.0 A gives extents 50000, 1, 1 and a box of 100001 * 3 * 3 =
+    // 900009 points, about 222x under MAX_MILLER_BOX_POINTS. No tightening of that
+    // constant reaches this case, which is why the fix is in the arithmetic instead.
+    const double a = 50000.0, b = 1.0, c = 1.0, resolution = 1.0;
+    const double s_max2 = (1.0 / resolution) * (1.0 / resolution);
+
+    const auto indices = detail::GenerateMillerIndices(a, b, c, resolution);
+    ASSERT_FALSE(indices.empty());
+
+    // Largest |h| whose square still fits in an int, floor(sqrt(INT_MAX)) = 46340.
+    const int MAX_NON_OVERFLOWING_INDEX =
+        static_cast<int>(std::sqrt(static_cast<double>(std::numeric_limits<int>::max())));
+
+    // Recomputed in double from h, k, l rather than read back from `stol2`, which is
+    // derived from the very expression under test and would let a wrapped value certify
+    // itself.
+    int out_of_shell = 0;
+    int max_abs_h = 0;
+    detail::MillerIndex worst{0, 0, 0, 0.0};
+    double worst_s2 = 0.0;
+    for (const auto& index : indices) {
+        const int abs_h = index.h < 0 ? -index.h : index.h;
+        if (abs_h > max_abs_h) max_abs_h = abs_h;
+
+        const double hd = index.h, kd = index.k, ld = index.l;
+        const double s2 = (hd * hd) / (a * a) + (kd * kd) / (b * b) + (ld * ld) / (c * c);
+        if (s2 > s_max2) {
+            if (out_of_shell == 0) {
+                worst = index;
+                worst_s2 = s2;
+            }
+            ++out_of_shell;
+        }
+    }
+
+    // Without an index past the int-square limit the overflow cannot occur and the
+    // assertion below would hold for a reason unrelated to the defect. Asserted rather
+    // than expected so a cell edited to a safe size fails here instead of passing
+    // vacuously downstream.
+    ASSERT_GT(max_abs_h, MAX_NON_OVERFLOWING_INDEX)
+        << "cell no longer drives an extent past " << MAX_NON_OVERFLOWING_INDEX
+        << ", so this test cannot observe the overflow it exists to pin";
+
+    EXPECT_EQ(out_of_shell, 0)
+        << out_of_shell << " of " << indices.size() << " returned indices lie outside the "
+        << resolution << " A shell; first is (" << worst.h << ", " << worst.k << ", " << worst.l
+        << ") at s2 = " << worst_s2 << ", over the limit of " << s_max2;
+}
+
 // ---- wrap_and_pad_grid cell-edge validation ----
 
 TEST(WrapAndPadValidationTest, RejectsZeroOrNonFiniteCellEdges) {

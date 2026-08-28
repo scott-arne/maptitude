@@ -58,6 +58,34 @@ constexpr unsigned int MAX_SCALE_SHELLS = 1000;
 /// `int`.
 constexpr double MAX_MILLER_BOX_POINTS = 2e8;
 
+namespace detail {
+
+/// One Miller index and the `sin^2(theta)/lambda^2` that placed it in the shell.
+struct MillerIndex {
+    int h, k, l;
+    double stol2;  ///< sin^2(theta)/lambda^2 = s^2/4
+};
+
+/// Enumerate the Miller indices of an orthorhombic cell that lie inside the resolution
+/// shell, that is those with `(h/a)^2 + (k/b)^2 + (l/c)^2 <= (1/resolution)^2`.
+///
+/// Exposed here rather than left at file scope in `DensityCalculator.cpp` so that the
+/// shell property can be asserted on the returned indices directly. Going through
+/// `Calculate` cannot assert it: the indices are summed into structure factors and never
+/// surface, so an index admitted from outside the shell shows up only as a small shift in
+/// a density value, which is indistinguishable from the interpolation and solvent terms
+/// applied after it.
+///
+/// @param a Cell edge a in Angstroms; finite and positive.
+/// @param b Cell edge b in Angstroms; finite and positive.
+/// @param c Cell edge c in Angstroms; finite and positive.
+/// @param resolution Resolution limit in Angstroms; finite and positive.
+/// @return In-shell indices, excluding (0, 0, 0). Order is h-major, then k, then l.
+/// @throws GridError if the enclosing box exceeds MAX_MILLER_BOX_POINTS.
+std::vector<MillerIndex> GenerateMillerIndices(double a, double b, double c, double resolution);
+
+}  // namespace detail
+
 /**
  * @brief Computes model electron density using Fourier synthesis.
  *

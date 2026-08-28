@@ -80,14 +80,11 @@ struct AtomData {
     int type_index;  // index into unique scattering factor types
 };
 
-struct MillerIndex {
-    int h, k, l;
-    double stol2;  // sin^2(theta)/lambda^2 = s^2/4
-};
+using detail::MillerIndex;
 
 // ---- Miller index generation ----
 
-static std::vector<MillerIndex> GenerateMillerIndices(
+std::vector<MillerIndex> detail::GenerateMillerIndices(
     const double a, const double b, const double c, const double resolution) {
     const double s_max = 1.0 / resolution;
     const double s_max2 = s_max * s_max;
@@ -122,9 +119,22 @@ static std::vector<MillerIndex> GenerateMillerIndices(
         for (int k = -k_max; k <= k_max; ++k) {
             for (int l = -l_max; l <= l_max; ++l) {
                 if (h == 0 && k == 0 && l == 0) continue;
-                const double s2 = (h * h) / (a * a) +
-                                   (k * k) / (b * b) +
-                                   (l * l) / (c * c);
+                // Square in double, not int. The box bound above is on the product of
+                // the three extents, so a cell with one long edge and two short ones
+                // reaches a single extent past floor(sqrt(INT_MAX)) = 46340 while the
+                // box stays far under the limit. `h * h` in int then overflowed, and the
+                // wrapped negative s2 passed the test below, admitting reflections from
+                // outside the requested shell. Widening the arithmetic rather than
+                // bounding each axis keeps the anisotropic cells that are legitimate.
+                //
+                // Exact for every input the box bound admits, so no reflection that was
+                // already in the shell moves: the extents are under 1.2e7, whose squares
+                // are well inside the 2^53 range where double represents every integer,
+                // and the int product was converted to this same double before dividing.
+                const double hd = h, kd = k, ld = l;
+                const double s2 = (hd * hd) / (a * a) +
+                                   (kd * kd) / (b * b) +
+                                   (ld * ld) / (c * c);
                 if (s2 <= s_max2) {
                     indices.push_back({h, k, l, s2 / 4.0});
                 }
@@ -399,7 +409,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     // Step 2: Generate Miller indices within resolution sphere
     // ----------------------------------------------------------------
-    auto miller = GenerateMillerIndices(a, b, c, resolution);
+    auto miller = detail::GenerateMillerIndices(a, b, c, resolution);
     const size_t n_refl = miller.size();
 
     // ----------------------------------------------------------------
