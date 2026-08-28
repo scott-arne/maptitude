@@ -129,4 +129,7 @@ jobs:
       - name: Run ctest
         env:
           OE_LICENSE: ${{ runner.temp }}/openeye/oe_license.txt
-        run: ctest --test-dir build --output-on-failure --timeout 60
+        # CTest exits 0 when no tests are registered, so --no-tests=error
+        # ensures that a discovery regression fails the build rather than
+        # reporting green having run nothing.
+        run: ctest --test-dir build --output-on-failure --timeout 60 --no-tests=error
