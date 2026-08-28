@@ -112,11 +112,14 @@ landed.
 2. **`wrap_and_pad_grid` raises `StructureError` on an empty heavy-atom set.**
    `nullptr` from that function now means only "no padding needed"; the return
    value is no longer overloaded. Changes rejection behavior, not scores.
-3. **`coverage(sigma=...)` no longer discards an explicit sigma.** Scores move
-   for exactly one call shape: `coverage(sigma=X, options=<options carrying a
-   different sigma>)`. No C++ pin exercises that path, because the coverage
-   pins are generated from C++ entry points that never route through the
-   Python wrapper.
+3. **`coverage(sigma=...)` no longer discards an explicit `sigma=1.0`.** Scores
+   move for exactly one call shape: `coverage(sigma=1.0, options=<options
+   carrying a different sigma>)`. Only `1.0` was affected, because the old
+   default was `1.0` and the wrapper tested `if sigma != 1.0` to infer whether
+   the caller had supplied the argument at all; any other explicit value
+   already reached `SetSigma` and already won. No C++ pin exercises that path,
+   because the coverage pins are generated from C++ entry points that never
+   route through the Python wrapper.
 4. **Grid combination requires exact geometry equality.** Near-equal spacings
    and mismatched origins that were previously accepted are now rejected.
    Changes rejection behavior, not scores.
