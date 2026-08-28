@@ -29,15 +29,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # SDK filenames are spelled out rather than interpolated from
-        # OPENEYE_VERSION: the env context is not available in strategy.matrix,
-        # so ${{ env.* }} would expand to an empty string and the download would
-        # 404. Keep these in step with OPENEYE_VERSION above.
+        # Only the platform suffix lives in the matrix: the env context is not
+        # available in strategy.matrix, so OPENEYE_VERSION cannot be interpolated
+        # here. The full SDK filename is composed in the download step.
         include:
           - arch: x86_64
             runner: ubuntu-latest
             container: rockylinux:8
-            sdk: OpenEye-toolkits-2026.1.0-redhat-RHEL8-g++8.5-x64.tar.gz
+            sdk_suffix: redhat-RHEL8-g++8.5-x64
             python: python3.11
             dnf_repo: powertools
             manylinux_plat: manylinux_2_28_x86_64
@@ -45,7 +44,7 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
             container: rockylinux:9
-            sdk: OpenEye-toolkits-2026.1.0-Ubuntu-22.04-g++11.11-aarch64.tar.gz
+            sdk_suffix: Ubuntu-22.04-g++11.11-aarch64
             python: python3.11
             dnf_repo: crb
             manylinux_plat: manylinux_2_34_aarch64
@@ -82,10 +81,13 @@ jobs:
 
       - name: Download OpenEye SDK from GCS
         run: |
+          set -euo pipefail
+          SDK="OpenEye-toolkits-${OPENEYE_VERSION}-${{ matrix.sdk_suffix }}.tar.gz"
+          echo "Fetching ${SDK}"
           mkdir -p /opt/openeye
           curl -fsSL \
             -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
-            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/${{ matrix.sdk }}" \
+            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/${SDK}" \
             -o /tmp/sdk.tar.gz
           tar -xzf /tmp/sdk.tar.gz -C /opt/openeye --strip-components=2
           rm /tmp/sdk.tar.gz
@@ -106,7 +108,20 @@ jobs:
             --no-cache-dir
           echo "--- Verifying openeye-toolkits installation ---"
           /opt/venv/bin/pip show openeye-toolkits
-          /opt/venv/bin/python -c "from openeye import oechem; print('OpenEye version:', oechem.OEToolkitsGetRelease())"
+
+      - name: Assert the OpenEye version
+        run: |
+          set -euo pipefail
+          EXPECTED="${OPENEYE_VERSION%.*}"   # e.g. 2026.1
+          EXPECTED="$EXPECTED" /opt/venv/bin/python - <<'PY'
+          import os, sys
+          from openeye import oechem
+          release = oechem.OEToolkitsGetRelease()
+          expected = os.environ["EXPECTED"]
+          print(f"OEToolkitsGetRelease() = {release!r}, expected prefix {expected!r}")
+          if not release.startswith(expected):
+              sys.exit(f"OpenEye version mismatch: {release} does not start with {expected}")
+          PY
 
       - name: Build wheel
         env:
@@ -180,6 +195,19 @@ jobs:
           /opt/venv/bin/pip install pytest numpy
           /opt/venv/bin/pip install dist/maptitude-*.whl
           /opt/venv/bin/pytest tests/python/ -v -s
+
+      - name: Assert the wheel records the expected SDK version
+        run: |
+          set -euo pipefail
+          EXPECTED="${OPENEYE_VERSION%.*}" /opt/venv/bin/python - <<'PY'
+          import os, sys
+          from maptitude import _build_info
+          expected = os.environ["EXPECTED"]
+          actual = _build_info.OPENEYE_BUILD_VERSION
+          print("OPENEYE_BUILD_VERSION =", actual)
+          if not actual.startswith(expected):
+              sys.exit(f"wheel built against {actual}, expected {expected}")
+          PY
 
       - name: List built artifacts
         run: |
@@ -264,7 +292,20 @@ jobs:
             --no-cache-dir
           echo "--- Verifying openeye-toolkits installation ---"
           pip show openeye-toolkits
-          python -c "from openeye import oechem; print('OpenEye version:', oechem.OEToolkitsGetRelease())"
+
+      - name: Assert the OpenEye version
+        run: |
+          set -euo pipefail
+          EXPECTED="${OPENEYE_VERSION%.*}"
+          EXPECTED="$EXPECTED" python - <<'PY'
+          import os, sys
+          from openeye import oechem
+          release = oechem.OEToolkitsGetRelease()
+          expected = os.environ["EXPECTED"]
+          print(f"OEToolkitsGetRelease() = {release!r}, expected prefix {expected!r}")
+          if not release.startswith(expected):
+              sys.exit(f"OpenEye version mismatch: {release} does not start with {expected}")
+          PY
 
       - name: Build wheel
         env:
@@ -307,6 +348,19 @@ jobs:
           pip install pytest numpy
           pip install dist/maptitude-*.whl
           pytest tests/python/ -v -s
+
+      - name: Assert the wheel records the expected SDK version
+        run: |
+          set -euo pipefail
+          EXPECTED="${OPENEYE_VERSION%.*}" python - <<'PY'
+          import os, sys
+          from maptitude import _build_info
+          expected = os.environ["EXPECTED"]
+          actual = _build_info.OPENEYE_BUILD_VERSION
+          print("OPENEYE_BUILD_VERSION =", actual)
+          if not actual.startswith(expected):
+              sys.exit(f"wheel built against {actual}, expected {expected}")
+          PY
 
       - name: List built artifacts
         run: |
@@ -410,7 +464,21 @@ jobs:
             --no-cache-dir
           echo "--- Verifying openeye-toolkits installation ---"
           pip show openeye-toolkits
-          python -c "from openeye import oechem; print('OpenEye version:', oechem.OEToolkitsGetRelease())"
+
+      - name: Assert the OpenEye version
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED="${OPENEYE_VERSION%.*}"
+          EXPECTED="$EXPECTED" python - <<'PY'
+          import os, sys
+          from openeye import oechem
+          release = oechem.OEToolkitsGetRelease()
+          expected = os.environ["EXPECTED"]
+          print(f"OEToolkitsGetRelease() = {release!r}, expected prefix {expected!r}")
+          if not release.startswith(expected):
+              sys.exit(f"OpenEye version mismatch: {release} does not start with {expected}")
+          PY
 
       - name: Build wheel
         run: |
@@ -453,6 +521,20 @@ jobs:
           pip install pytest numpy
           pip install dist/maptitude-*.whl
           pytest tests/python/ -v -s
+
+      - name: Assert the wheel records the expected SDK version
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED="${OPENEYE_VERSION%.*}" python - <<'PY'
+          import os, sys
+          from maptitude import _build_info
+          expected = os.environ["EXPECTED"]
+          actual = _build_info.OPENEYE_BUILD_VERSION
+          print("OPENEYE_BUILD_VERSION =", actual)
+          if not actual.startswith(expected):
+              sys.exit(f"wheel built against {actual}, expected {expected}")
+          PY
 
       - name: List built artifacts
         run: |
