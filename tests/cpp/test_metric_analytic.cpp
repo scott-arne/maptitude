@@ -189,6 +189,74 @@ TEST(MetricAnalyticTest, QScoreAdaptiveFailsOnlyTheAtomWithNoRadius) {
     EXPECT_FALSE(std::isnan(result.overall));
 }
 
+TEST(MetricAnalyticTest, QScoreRejectsAnAdaptiveStepNoAtomCanSweep) {
+    // The adaptive step is min(grid_spacing, resolution / 7): a fact about the call, not
+    // about any atom. A step that no atom in the molecule can sweep with is therefore a
+    // caller error however the sweep check happens to be reached, and must be as loud as
+    // the step floor above. Both geometries here returned a silent overall = nan once the
+    // sweep check moved into the per-atom loop.
+    struct Case { double resolution; double spacing; };
+    for (const Case& c : {Case{30.0, 4.0}, Case{25.0, 3.5}}) {
+        QScoreOptions options;
+        options.SetRadialSampling(RadialSampling::ADAPTIVE);
+        OESystem::OEScalarGrid grid =
+            MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, c.spacing);
+        OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+        EXPECT_THROW(qscore(mol, grid, c.resolution, nullptr, options), GridError)
+            << "resolution " << c.resolution << " A at spacing " << c.spacing << " A";
+    }
+}
+
+TEST(MetricAnalyticTest, QScoreStillAcceptsAnAdaptiveSweepAtWorkingSpacing) {
+    // Positive control for the rejection above: the same single carbon at a spacing and
+    // resolution a real map would use must still score. The value is not pinned here --
+    // that is pin_values.h's job -- only that it is a real score rather than NaN.
+    QScoreOptions options;
+    options.SetRadialSampling(RadialSampling::ADAPTIVE);
+    OESystem::OEScalarGrid grid =
+        MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    DensityScoreResult result;
+    ASSERT_NO_THROW(result = qscore(mol, grid, RESOLUTION, nullptr, options));
+    EXPECT_FALSE(std::isnan(result.overall));
+    EXPECT_GT(result.overall, 0.9);
+}
+
+TEST(MetricAnalyticTest, QScoreAdaptiveFailsOnlyTheAtomTooSmallForTheStep) {
+    // The shell-count conditions read the step and the maximum radius jointly, so they
+    // are call-level only when no atom can satisfy them. When one atom can, a second that
+    // cannot is a fact about that atom's radius and has to scope to it -- otherwise the
+    // rejection above swings too far and discards a scorable molecule.
+    //
+    // Radii are assigned explicitly: PrepareStructure leaves a molecule alone once any
+    // heavy atom carries one, so the Bondi table never runs and the two radii here are
+    // the test's own. At step 2 / 7 = 0.286 A the 0.1 A atom's sweep spans 0.2 A and
+    // produces no shell, while the 1.7 A atom's spans 3.4 A and sweeps normally.
+    QScoreOptions options;
+    options.SetRadialSampling(RadialSampling::ADAPTIVE);
+    OESystem::OEScalarGrid grid =
+        MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
+
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    OEChem::OEAtomBase* scorable = mol.GetAtom(OEChem::OEHasAtomIdx(0));
+    scorable->SetRadius(1.7);
+    OEChem::OEAtomBase* too_small = mol.NewAtom(6u);
+    const double too_small_coords[3] = {3.5, 0.0, 0.0};
+    mol.SetCoords(too_small, too_small_coords);
+    too_small->SetRadius(0.1);
+    OEChem::OEAtomSetResidue(too_small, OEChem::OEAtomGetResidue(scorable));
+
+    DensityScoreResult result;
+    ASSERT_NO_THROW(result = qscore(mol, grid, RESOLUTION, nullptr, options));
+    ASSERT_EQ(result.by_atom.count(1u), 1u) << "the too-small atom must still be reported";
+    EXPECT_TRUE(std::isnan(result.by_atom.at(1u)));
+    ASSERT_EQ(result.by_atom.count(0u), 1u);
+    EXPECT_FALSE(std::isnan(result.by_atom.at(0u))) << "a scorable atom was discarded with it";
+    EXPECT_FALSE(std::isnan(result.overall));
+}
+
 TEST(MetricAnalyticTest, QScoreRejectsAFixedSweepWithNoShells) {
     // Each setter's value is legal on its own; the combination yields zero shells,
     // a constant reference vector, and a nan correlation.

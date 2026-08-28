@@ -44,30 +44,18 @@ static std::string DescribeUnusableStep(const char* label, double step) {
     return {};
 }
 
-/// Explain why a radial sweep cannot terminate or cannot produce a score, or return an
-/// empty string when it can.
+/// Explain why a maximum radius on its own cannot drive a radial sweep, or return an empty
+/// string when it can.
 ///
-/// Both sampling modes converge on the same shell loop, but only FIXED mode's step and
-/// radius arrive through QScoreOptions' validated setters. ADAPTIVE derives its own from the
-/// grid spacing, the resolution, and the atom, and consults no option, so the same invariants
-/// have to be re-established here.
+/// Split from the shell-count check because these two bounds read the radius alone. In
+/// ADAPTIVE mode the radius is twice the atom's own, so a failure here can differ between
+/// atoms of the same call whatever the step is, and belongs to the atom.
 ///
-/// Reporting rather than throwing is what lets the caller choose the blast radius. A FIXED
-/// sweep is loop-invariant, so an unusable one is a whole-call error; an ADAPTIVE sweep
-/// depends on the atom, so an unusable one must fail only that atom.
-static std::string DescribeUnusableSweep(RadialSampling mode, double step, double max_r,
-                                         unsigned int num_points) {
-    const bool adaptive = (mode == RadialSampling::ADAPTIVE);
-    const char* label = adaptive ? "Adaptive" : "Fixed";
+/// The lower and upper bounds are reported separately because they fail for unrelated
+/// reasons: the lower bound is reached by an atom carrying no radius -- a fact about the
+/// molecule, which the int-overflow ceiling does not describe.
+static std::string DescribeUnusableRadius(const char* label, bool adaptive, double max_r) {
     std::ostringstream message;
-    const std::string step_problem = DescribeUnusableStep(label, step);
-    if (!step_problem.empty()) {
-        return step_problem;
-    }
-    // The lower and upper radius bounds are reported separately because they fail for
-    // unrelated reasons. In ADAPTIVE mode the radius is derived as twice the atom's own, so
-    // the lower bound is reached by an atom carrying no radius -- a fact about the molecule,
-    // which the int-overflow ceiling does not describe.
     if (!std::isfinite(max_r) || max_r <= 0.0) {
         message << label << " radial sweep needs a positive maximum radius (got " << max_r << ")";
         if (adaptive) {
@@ -80,6 +68,22 @@ static std::string DescribeUnusableSweep(RadialSampling mode, double step, doubl
                 << " A (got " << max_r << "); beyond that the shell key overflows int";
         return message.str();
     }
+    return {};
+}
+
+/// Explain why a step and a maximum radius cannot produce a usable shell count together, or
+/// return an empty string when they can.
+///
+/// Split from the radius check because every bound here reads both quantities, so in
+/// ADAPTIVE mode a failure is attributable to neither on its own: it says the step this call
+/// derived does not fit this atom's radius. `qscore` resolves that by quantifying over the
+/// molecule -- see `RequireSomeAtomCanSweep`.
+///
+/// Expects a step and a radius that have already passed their own checks; the shell count
+/// below is only meaningful once both are finite and positive.
+static std::string DescribeUnusableShellCount(const char* label, double step, double max_r,
+                                              unsigned int num_points) {
+    std::ostringstream message;
     if (step >= max_r + 0.01) {
         message << label << " radial sweep produces no shells: step " << step
                 << " A is not smaller than the maximum radius " << max_r << " A";
@@ -106,6 +110,32 @@ static std::string DescribeUnusableSweep(RadialSampling mode, double step, doubl
         return message.str();
     }
     return {};
+}
+
+/// Explain why a radial sweep cannot terminate or cannot produce a score, or return an
+/// empty string when it can.
+///
+/// Both sampling modes converge on the same shell loop, but only FIXED mode's step and
+/// radius arrive through QScoreOptions' validated setters. ADAPTIVE derives its own from the
+/// grid spacing, the resolution, and the atom, and consults no option, so the same invariants
+/// have to be re-established here.
+///
+/// This is the whole check, in the order the three parts fail. FIXED evaluates it once, as
+/// one loop-invariant statement about the call; ADAPTIVE evaluates the parts separately,
+/// because only the radius part is a statement about a single atom.
+static std::string DescribeUnusableSweep(RadialSampling mode, double step, double max_r,
+                                         unsigned int num_points) {
+    const bool adaptive = (mode == RadialSampling::ADAPTIVE);
+    const char* label = adaptive ? "Adaptive" : "Fixed";
+    const std::string step_problem = DescribeUnusableStep(label, step);
+    if (!step_problem.empty()) {
+        return step_problem;
+    }
+    const std::string radius_problem = DescribeUnusableRadius(label, adaptive, max_r);
+    if (!radius_problem.empty()) {
+        return radius_problem;
+    }
+    return DescribeUnusableShellCount(label, step, max_r, num_points);
 }
 
 /// Reject a radial sweep that cannot terminate or cannot produce a score.
@@ -458,6 +488,60 @@ DensityScoreResult rsr(
     return result;
 }
 
+/// Reject an adaptive step that no atom in this molecule can sweep with.
+///
+/// The shell-count bounds read the step and the maximum radius jointly, so in ADAPTIVE mode
+/// neither is on its own responsible for a failure. Which of the two it belongs to is
+/// settled by quantifying over the molecule: if some atom can be scored, an atom that cannot
+/// differs from it only in its own radius and is scored NaN in the loop below, as an atom
+/// with no radius at all is; if no atom can, the statement no longer mentions any particular
+/// atom and is a fact about the step, which comes from the resolution argument and the grid
+/// spacing. A caller error must throw wherever it is evaluated, so that case throws here.
+///
+/// This matters most for the branch that fails when the radius is too small for the step.
+/// At a grid spacing of 4 A no atom in the periodic table has a radius large enough, so
+/// leaving it per-atom turned a plainly unusable resolution-and-spacing pair into a result
+/// object full of NaN. It is genuinely atom-dependent in form -- a larger atom would pass --
+/// which is why the quantifier decides it rather than a classification fixed in advance.
+///
+/// Atoms that cannot be scored for reasons of their own are skipped rather than counted as
+/// failures: an out-of-grid atom is NaN before the sweep is consulted, and an atom with no
+/// radius fails the radius check whatever the step is. Neither supports a conclusion about
+/// the step, so a molecule of nothing but those still returns per-atom NaN.
+static void RequireSomeAtomCanSweep(
+    const OEChem::OEMolBase& mol, const OESystem::OEScalarGrid& grid,
+    const std::map<Residue, std::vector<const OEChem::OEAtomBase*>>& residue_atoms, double step,
+    unsigned int num_points) {
+    std::string first_failure;
+    for (const auto& [res, atoms] : residue_atoms) {
+        for (const auto* atom : atoms) {
+            double x, y, z;
+            GetAtomCoords(mol, *atom, x, y, z);
+            if (!grid.IsInGrid(static_cast<float>(x), static_cast<float>(y),
+                               static_cast<float>(z))) {
+                continue;
+            }
+            const double max_r = atom->GetRadius() * 2.0;
+            if (!DescribeUnusableRadius("Adaptive", true, max_r).empty()) {
+                continue;
+            }
+            const std::string shell_problem =
+                DescribeUnusableShellCount("Adaptive", step, max_r, num_points);
+            if (shell_problem.empty()) {
+                return;
+            }
+            if (first_failure.empty()) {
+                first_failure = shell_problem;
+            }
+        }
+    }
+    if (!first_failure.empty()) {
+        throw GridError(first_failure +
+                        "; no atom in this molecule can be swept at this step, which comes from "
+                        "the resolution and the grid spacing rather than from any atom");
+    }
+}
+
 DensityScoreResult qscore(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
@@ -491,20 +575,22 @@ DensityScoreResult qscore(
     constexpr int MIN_SHELLS = 7;
     const double grid_spacing = grid.GetSpacing();
 
-    // Validate everything loop-invariant here, before any per-atom work. FIXED's whole
-    // sweep qualifies, and the two precompute loops below would otherwise hang on an
-    // unusable one. ADAPTIVE's step qualifies too -- it comes from the resolution argument
-    // and the grid, not from any atom -- but its maximum radius does not, so that half is
-    // checked per atom.
+    // Reject every failure the call is responsible for here, before any per-atom work.
+    // FIXED's whole sweep qualifies, and the two precompute loops below would otherwise
+    // hang on an unusable one. ADAPTIVE's step qualifies on its own -- it comes from the
+    // resolution argument and the grid, not from any atom -- and its shell count qualifies
+    // when no atom in the molecule can satisfy it. Only the maximum radius is left to the
+    // loop, where it is a statement about one atom.
     if (options.GetRadialSampling() == RadialSampling::FIXED) {
         RequireUsableSweep(RadialSampling::FIXED, options.GetRadialStep(), options.GetMaxRadius(),
                            options.GetNumPoints());
     } else {
-        const std::string reason = DescribeUnusableStep(
-            "Adaptive", std::min(grid_spacing, resolution / MIN_SHELLS));
+        const double step = std::min(grid_spacing, resolution / MIN_SHELLS);
+        const std::string reason = DescribeUnusableStep("Adaptive", step);
         if (!reason.empty()) {
             throw GridError(reason);
         }
+        RequireSomeAtomCanSweep(mol, grid, residue_atoms, step, options.GetNumPoints());
     }
 
     // Pre-compute unit sphere offsets for fixed mode
