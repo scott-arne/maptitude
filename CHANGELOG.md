@@ -65,8 +65,14 @@ neutrality claim below.
   rather than a molecule of unscorable atoms.
 - Validation of the public numeric arguments that reached unchecked arithmetic.
   `resolution` must be finite and positive at all five entry points; NaN and
-  `+inf` both passed the old `resolution <= 0.0` test, and every entry point
-  divides by the resolution or its square. `n_scale_shells` must be in
+  `+inf` both passed the old `resolution <= 0.0` test, and what the argument
+  reaches past that test differs by path. `ediam` and
+  `DensityCalculator::Calculate` divide by the resolution or its square; `rscc`
+  and `rsr` size the scoring radius from it under their default radius models;
+  `qscore` derives the adaptive sweep's step from it. `qscore`'s fixed sweep,
+  which is the default, never reads the argument at all, and is checked for
+  consistency with the adaptive path and with the other four entry points rather
+  than because it divides. `n_scale_shells` must be in
   `[1, 1000]` (`MAX_SCALE_SHELLS`); at `UINT_MAX` the `n_scale_shells + 1` that
   sizes the shell-edge table wrapped to zero and the loop filling it could not
   terminate. A grid spacing at or above twice a cell edge is rejected: it rounds
