@@ -37,6 +37,27 @@ namespace Maptitude {
 /// `n_scale_shells + 1` from wrapping the unsigned addition that sizes `shell_edges`.
 constexpr unsigned int MAX_SCALE_SHELLS = 1000;
 
+/// Miller-index generation sweeps `[-h_max, h_max] x [-k_max, k_max] x [-l_max, l_max]`
+/// with `h_max = ceil(a / resolution)`, so the loop volume grows as `(2*a/resolution)^3`.
+/// A finite positive resolution is not enough to bound it: 1e-9 A is an ordinary double,
+/// not a subnormal, and it diverges long before `1.0 / resolution` overflows. The quantity
+/// that has to be bounded is the box volume, which depends on the resolution and the three
+/// cell edges jointly, so it is bounded here rather than at the resolution check.
+///
+/// 2e8 points leaves the crystallography this pipeline is for well inside the bound: a
+/// 200 A cubic cell at 1.0 A needs 401^3 = 6.4e7 points, 3.1x under it, and a 100 A cubic
+/// cell at 0.8 A needs 251^3 = 1.6e7, 12.6x under. At the bound itself the resolution
+/// sphere holds pi/6 of the box, about 1.05e8 reflections, and memory rather than time is
+/// what binds: `indices` is 24 bytes per reflection for 2.5 GB, `Fc_real` and `Fc_imag`
+/// add 1.7 GB, and `f_s_table` adds 0.84 GB per distinct scattering type, against a few
+/// seconds for the loop itself. The bound is deliberately placed where an over-large
+/// request still fails as an exception rather than as an out-of-memory kill.
+///
+/// Declared as a double because the check has to run in arithmetic that cannot itself
+/// overflow: the box volume is computed and compared in double, before any narrowing to
+/// `int`.
+constexpr double MAX_MILLER_BOX_POINTS = 2e8;
+
 /**
  * @brief Computes model electron density using Fourier synthesis.
  *

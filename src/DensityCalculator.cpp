@@ -91,9 +91,31 @@ static std::vector<MillerIndex> GenerateMillerIndices(
     const double a, const double b, const double c, const double resolution) {
     const double s_max = 1.0 / resolution;
     const double s_max2 = s_max * s_max;
-    const int h_max = static_cast<int>(std::ceil(a * s_max));
-    const int k_max = static_cast<int>(std::ceil(b * s_max));
-    const int l_max = static_cast<int>(std::ceil(c * s_max));
+    const double h_extent = std::ceil(a * s_max);
+    const double k_extent = std::ceil(b * s_max);
+    const double l_extent = std::ceil(c * s_max);
+
+    // Bound the loop volume before narrowing the extents to int. Both steps need this
+    // guard: the triple loop below is O((2a/resolution)^3) and does not finish for a
+    // small enough resolution, and an extent past INT_MAX makes the narrowing itself
+    // undefined behavior. The product is formed in double, which saturates to infinity
+    // instead of wrapping, so the comparison holds however extreme the request is.
+    // NaN cannot arise -- the resolution is checked finite and positive on entry to
+    // Calculate and the cell edges are validated at construction.
+    const double box_points =
+        (2.0 * h_extent + 1.0) * (2.0 * k_extent + 1.0) * (2.0 * l_extent + 1.0);
+    if (box_points > MAX_MILLER_BOX_POINTS) {
+        std::ostringstream message;
+        message << "Resolution " << resolution << " A over cell edges a = " << a << " A, b = "
+                << b << " A, c = " << c << " A needs a Miller-index box of " << box_points
+                << " points, over the " << MAX_MILLER_BOX_POINTS
+                << " limit (MAX_MILLER_BOX_POINTS); raise the resolution or use a smaller cell";
+        throw GridError(message.str());
+    }
+
+    const int h_max = static_cast<int>(h_extent);
+    const int k_max = static_cast<int>(k_extent);
+    const int l_max = static_cast<int>(l_extent);
 
     std::vector<MillerIndex> indices;
     for (int h = -h_max; h <= h_max; ++h) {

@@ -609,6 +609,57 @@ TEST(DensityCalculatorValidationTest, StillAcceptsASpacingThatRoundsToOnePoint) 
     EXPECT_NO_THROW(delete density.Calculate(mol, obs, 2.0));
 }
 
+TEST(DensityCalculatorValidationTest, RejectsAResolutionThatExplodesTheMillerBox) {
+    // A tiny but finite resolution passes require_usable_resolution and then sizes a
+    // triple loop as (2*ceil(a/resolution)+1)^3. Every value here hung the process
+    // before the bound existed, and 1e-9 A is an ordinary double rather than a
+    // subnormal -- the loop diverges long before 1/resolution overflows, so this is
+    // not a subnormal or an overflow special case.
+    //
+    // Assert on the message, not just the type: several other GridError sites sit on
+    // this path, and a bare EXPECT_THROW could not tell the box bound from any of them.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    DensityCalculator density(UnitCell(2.0, 2.0, 2.0, 90.0, 90.0, 90.0),
+                              SymOp::ParseAll("x,y,z"));
+
+    for (double tiny : {1e-9, 1e-300, std::numeric_limits<double>::denorm_min()}) {
+        try {
+            delete density.Calculate(mol, obs, tiny);
+            FAIL() << "expected GridError for resolution " << tiny;
+        } catch (const GridError& error) {
+            EXPECT_NE(std::string(error.what()).find("Miller-index box"), std::string::npos)
+                << "rejected by the wrong branch at resolution " << tiny << ": " << error.what();
+        }
+    }
+}
+
+TEST(DensityCalculatorValidationTest, StillAcceptsRealCrystallographicMillerBoxes) {
+    // The accepting half of the bound, in two parts.
+    //
+    // The two reference geometries are asserted as arithmetic on the constant rather
+    // than run end to end: a 200 A cell at 1.0 A is a legal request that allocates
+    // gigabytes, so calling Calculate on it would make this a memory test rather than a
+    // bound test. Narrowing MAX_MILLER_BOX_POINTS to anything under 6.5e7 -- the kind of
+    // "tighten it a bit" edit this guard invites -- fails here. The expressions mirror
+    // GenerateMillerIndices' own `a * (1.0 / resolution)` so a rounding difference in
+    // ceil cannot make the test disagree with the code it pins.
+    const auto box_points = [](double edge, double resolution) {
+        const double extent = std::ceil(edge * (1.0 / resolution));
+        return (2.0 * extent + 1.0) * (2.0 * extent + 1.0) * (2.0 * extent + 1.0);
+    };
+    EXPECT_LE(box_points(200.0, 1.0), MAX_MILLER_BOX_POINTS);
+    EXPECT_LE(box_points(100.0, 0.8), MAX_MILLER_BOX_POINTS);
+
+    // And one cell small enough to run all the way through, so the guard is shown to
+    // pass real work rather than merely to hold a large number.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+    const OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 3.0, 1.0);
+    DensityCalculator density(UnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0),
+                              SymOp::ParseAll("x,y,z"));
+    EXPECT_NO_THROW(delete density.Calculate(mol, obs, 0.8));
+}
+
 // ---- wrap_and_pad_grid cell-edge validation ----
 
 TEST(WrapAndPadValidationTest, RejectsZeroOrNonFiniteCellEdges) {
