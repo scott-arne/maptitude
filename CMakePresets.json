@@ -9,10 +9,8 @@
         {
             "name": "default",
             "hidden": true,
-            "cacheVariables": {
-                "OPENEYE_ROOT": "/Users/johnss51/Support/openeye/lib/openeye/toolkits/2025.2.1/macOS-14.8-clang++16-universal",
-                "Python3_EXECUTABLE": "/Users/johnss51/Applications/miniforge3/envs/main/bin/python"
-            }
+            "description": "Common settings. Set OPENEYE_ROOT in the environment, or override it in a local CMakeUserPresets.json.",
+            "cacheVariables": {}
         },
         {
             "name": "debug",

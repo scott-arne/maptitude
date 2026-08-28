@@ -23,8 +23,80 @@
 
 #include <oechem.h>
 #include <oegrid.h>
+#include <cstdio>
+#include <new>
 
 using namespace Maptitude;
+
+/* Python exception objects, created on the first %init. Module-level statics:
+   the interpreter owns the references for the life of the process.
+
+   Sharing one set of classes across every interpreter makes this module unsafe
+   under subinterpreters. That is a known, deliberate constraint, and these
+   statics are only one reason for it -- the library also links OpenEye, FFTW,
+   and OpenMP, none of which are subinterpreter-safe either. */
+static PyObject* g_maptitude_error = NULL;
+static PyObject* g_structure_error = NULL;
+static PyObject* g_grid_error = NULL;
+static PyObject* g_symop_error = NULL;
+static PyObject* g_cell_error = NULL;
+
+/* Create one exception class, or reuse the cached one, then bind it on the
+   module being executed. Returns 0 on success, or -1 with a Python error
+   already set.
+
+   The NULL check is load-bearing rather than defensive. SWIG emits %init into
+   a Py_mod_exec slot and gives the generated PyModuleDef an m_size of 0, so
+   the slot can run more than once per process -- dropping the maptitude keys
+   from sys.modules and importing again is enough. Minting a fresh class on the
+   second run would leave every earlier importer holding a superseded object,
+   and the class %exception raises would no longer be the one their `except`
+   clause names. Reusing the cached object is what keeps those identical, and
+   what keeps the four subclasses sharing one MaptitudeError base.
+
+   PyModule_AddObjectRef does not steal, so the module takes its own reference
+   and the static keeps the one PyErr_NewException returned -- %exception
+   dereferences that static long after %init has returned. */
+static int MaptitudeAddException(PyObject* module, const char* qualified_name,
+                                 const char* attribute_name, PyObject* base,
+                                 PyObject** slot) {
+    if (*slot == NULL) {
+        /* The static keeps this reference for the life of the process; it is
+           never released, because %exception dereferences it from arbitrary
+           wrapper functions with no teardown hook to coordinate with. */
+        *slot = PyErr_NewException(qualified_name, base, NULL);
+        if (*slot == NULL) {
+            return -1;
+        }
+    }
+    return PyModule_AddObjectRef(module, attribute_name, *slot) < 0 ? -1 : 0;
+}
+%}
+
+%init %{
+    /* SWIG emits this block into SWIG_mod_exec, a Py_mod_exec slot returning
+       int -- 0 for success, -1 for failure. Returning NULL here would be 0,
+       i.e. a successful import with NULL exception statics. */
+    if (MaptitudeAddException(m, "maptitude.MaptitudeError", "MaptitudeError",
+                              NULL, &g_maptitude_error) < 0) {
+        return -1;
+    }
+    if (MaptitudeAddException(m, "maptitude.StructureError", "StructureError",
+                              g_maptitude_error, &g_structure_error) < 0) {
+        return -1;
+    }
+    if (MaptitudeAddException(m, "maptitude.GridError", "GridError",
+                              g_maptitude_error, &g_grid_error) < 0) {
+        return -1;
+    }
+    if (MaptitudeAddException(m, "maptitude.SymOpError", "SymOpError",
+                              g_maptitude_error, &g_symop_error) < 0) {
+        return -1;
+    }
+    if (MaptitudeAddException(m, "maptitude.CellError", "CellError",
+                              g_maptitude_error, &g_cell_error) < 0) {
+        return -1;
+    }
 %}
 
 // ============================================================================
@@ -87,8 +159,11 @@ namespace OESystem {
 // ============================================================================
 // OpenEye's Python bindings use SWIG runtime v4; our module uses v5.
 // Since the runtimes are separate, SWIG_TypeQuery cannot access OpenEye types.
-// We use Python isinstance for type safety and directly extract the void*
-// pointer from the SwigPyObject struct layout (stable across SWIG versions).
+// We validate the Python wrapper's real type (not isinstance, which honors
+// __class__ properties) and directly extract the void* pointer from the
+// SwigPyObject struct layout (stable across SWIG versions). Type validation
+// is limited to the wrapper because the separate runtimes put OpenEye's SWIG
+// type table out of reach.
 //
 // This approach enables passing OpenEye objects between Python and C++ without
 // serialization. The macros below generate the boilerplate for each type.
@@ -102,7 +177,21 @@ struct _SwigPyObjectCompat {
     void *ptr;
 };
 
+/* Defense in depth, NOT a fix. Struct punning across two SWIG runtimes cannot
+   be made safe, only unreachable from bad input: this function still casts an
+   arbitrary object's `this` attribute to _SwigPyObjectCompat and reads through
+   it, and no guard here can validate that layout. The type checkers in the
+   typemaps are the primary defense: they validate the Python wrapper's real
+   type before extraction. They cannot validate the pointer itself, because
+   `this` is a writable attribute — an accepted predicate whose `this` was
+   reassigned (e.g., pred.this = mol.this) will still be punned. Closing that
+   would require validating the pointee against OpenEye's SWIG type table,
+   which is unreachable across the v4/v5 runtime split. Do not relax a
+   typemap's type check on the belief that this function is hardened -- it is not. */
 static void* _maptitude_extract_swig_ptr(PyObject* obj) {
+    if (obj == NULL || obj == Py_None) {
+        return NULL;
+    }
     PyObject* thisAttr = PyObject_GetAttrString(obj, "this");
     if (!thisAttr) {
         PyErr_Clear();
@@ -114,7 +203,11 @@ static void* _maptitude_extract_swig_ptr(PyObject* obj) {
 }
 
 // ---- Type checker generator macro ----
-// Generates a cached isinstance checker for an OpenEye Python type.
+// Generates a cached type checker for an OpenEye Python type. Uses the object's
+// real type (Py_TYPE), not PyObject_IsInstance, because the extracted pointer is
+// reinterpret_cast to a C++ type and a spoofed __class__ property would otherwise
+// let any object claim to be one. This check covers the wrapper type only; see
+// the _maptitude_extract_swig_ptr comment for the pointer validation limit.
 // TAG:    identifier suffix (e.g., oemolbase)
 // MODULE: Python module string (e.g., "openeye.oechem")
 // CLASS:  Python class name string (e.g., "OEMolBase")
@@ -124,12 +217,23 @@ static void* _maptitude_extract_swig_ptr(PyObject* obj) {
         if (!_maptitude_oe_##TAG##_type) { \
             PyObject* mod = PyImport_ImportModule(MODULE); \
             if (mod) { \
-                _maptitude_oe_##TAG##_type = PyObject_GetAttrString(mod, CLASS); \
+                PyObject* cls = PyObject_GetAttrString(mod, CLASS); \
                 Py_DECREF(mod); \
+                /* Only a real type object supports a spoof-resistant check. */ \
+                if (cls && !PyType_Check(cls)) { \
+                    Py_DECREF(cls); \
+                    cls = NULL; \
+                } \
+                _maptitude_oe_##TAG##_type = cls; \
             } \
-            if (!_maptitude_oe_##TAG##_type) return false; \
+            if (!_maptitude_oe_##TAG##_type) { \
+                PyErr_Clear(); \
+                return false; \
+            } \
         } \
-        return PyObject_IsInstance(obj, _maptitude_oe_##TAG##_type) == 1; \
+        if (obj == NULL) return false; \
+        return PyType_IsSubtype(Py_TYPE(obj), \
+                                (PyTypeObject*)_maptitude_oe_##TAG##_type) != 0; \
     }
 
 // ---- Molecule types (openeye.oechem) ----
@@ -173,6 +277,9 @@ DEFINE_OE_TYPE_CHECKER(oehierchain,  "openeye.oechem", "OEHierChain")
 DEFINE_OE_TYPE_CHECKER(oeinteractionhint,          "openeye.oechem", "OEInteractionHint")
 DEFINE_OE_TYPE_CHECKER(oeinteractionhintcontainer, "openeye.oechem", "OEInteractionHintContainer")
 
+// ---- Predicates (openeye.oechem) ----
+DEFINE_OE_TYPE_CHECKER(oeunaryatompred, "openeye.oechem", "OEUnaryAtomPred")
+
 // ---- Grid (openeye.oegrid) ----
 DEFINE_OE_TYPE_CHECKER(oescalargrid, "openeye.oegrid", "OEScalarGrid")
 
@@ -181,7 +288,7 @@ DEFINE_OE_TYPE_CHECKER(oereceptor,   "openeye.oedocking", "OEReceptor")
 
 #undef DEFINE_OE_TYPE_CHECKER
 
-// ---- OEScalarGrid return-type helper (zero-copy pointer swap) ----
+// ---- OEScalarGrid return-type helper (copy-assign into Python object) ----
 static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
     if (!grid) {
         Py_RETURN_NONE;
@@ -210,9 +317,70 @@ static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
         delete grid;
         return NULL;
     }
+    /* Copy the value into the Python-side grid rather than swapping pointers.
+       The grid object under `thisAttr` was allocated inside OpenEye's shared
+       library; deleting it here would run this module's operator delete on
+       another runtime's allocation, and pointing it at our grid would then
+       have OpenEye's destructor free our memory. The grid object must be
+       released by the allocator that made it.
+
+       Assignment, not an element loop: `oe_grid` is default-constructed by
+       PyObject_CallNoArgs above, so it starts as a 1x1x1 grid; an element
+       loop would copy exactly one value. operator= resizes the destination
+       and copies dimensions, spacing, midpoints, title, and data together. */
     _SwigPyObjectCompat* swig_this = (_SwigPyObjectCompat*)thisAttr;
-    delete reinterpret_cast<OESystem::OEScalarGrid*>(swig_this->ptr);
-    swig_this->ptr = grid;
+    OESystem::OEScalarGrid* dest =
+        reinterpret_cast<OESystem::OEScalarGrid*>(swig_this->ptr);
+    if (dest == NULL) {
+        Py_DECREF(thisAttr);
+        Py_DECREF(oe_grid);
+        delete grid;
+        PyErr_SetString(PyExc_RuntimeError,
+                        "failed to access the wrapped OEScalarGrid");
+        return NULL;
+    }
+
+    /* The out typemap is emitted outside SWIG's generated try/catch, so an
+       exception here would reach CPython unhandled and abort the interpreter.
+       operator= can throw std::bad_alloc during reallocation. */
+    try {
+        *dest = *grid;
+    } catch (const std::bad_alloc&) {
+        Py_DECREF(thisAttr);
+        Py_DECREF(oe_grid);
+        delete grid;
+        return PyErr_NoMemory();
+    } catch (const std::exception& e) {
+        Py_DECREF(thisAttr);
+        Py_DECREF(oe_grid);
+        delete grid;
+        PyErr_SetString(PyExc_RuntimeError, e.what());
+        return NULL;
+    }
+
+    /* Validate that the copy succeeded. operator= routes through OpenEye's
+       geometry setters, which reject values they cannot represent (e.g.,
+       spacing=0.0, spacing=inf) by returning false rather than throwing, and
+       operator= ignores that return value. When that happens the destination
+       silently retains its default 1x1x1 geometry, and returning it would hand
+       a plausible-looking but wrong grid to the caller. Detect and reject that
+       rather than allowing silent corruption. */
+    if (!OESystem::OEGridSameGeometry(*dest, *grid)) {
+        char errmsg[256];
+        std::snprintf(errmsg, sizeof(errmsg),
+                      "Grid geometry copy failed: source is %ux%ux%u spacing=%.3f, "
+                      "destination is %ux%ux%u spacing=%.3f",
+                      grid->GetXDim(), grid->GetYDim(), grid->GetZDim(), grid->GetSpacing(),
+                      dest->GetXDim(), dest->GetYDim(), dest->GetZDim(), dest->GetSpacing());
+        Py_DECREF(thisAttr);
+        Py_DECREF(oe_grid);
+        delete grid;
+        PyErr_SetString(PyExc_RuntimeError, errmsg);
+        return NULL;
+    }
+
+    /* We own `grid`; the Python object owns `dest` and always has. */
+    delete grid;
     Py_DECREF(thisAttr);
     return oe_grid;
 }
@@ -370,25 +538,7 @@ OE_CROSS_RUNTIME_REF_TYPEMAPS(OEDocking::OEReceptor, _maptitude_is_oereceptor, "
 // ============================================================================
 // Typemap: OEUnaryPredicate<OEAtomBase>* (maptitude-specific, optional atom predicate mask)
 // ============================================================================
-%typemap(in) const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* (void *argp = 0) {
-    if ($input == Py_None) {
-        $1 = NULL;
-    } else {
-        int res = SWIG_ConvertPtr($input, &argp, $descriptor, 0);
-        if (!SWIG_IsOK(res)) {
-            argp = _maptitude_extract_swig_ptr($input);
-            if (!argp) {
-                SWIG_exception_fail(SWIG_ArgError(SWIG_TypeError),
-                    "Expected OEUnaryAtomPred or None for mask parameter.");
-            }
-        }
-        $1 = reinterpret_cast< $1_ltype >(argp);
-    }
-}
-
-%typemap(typecheck, precedence=10) const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* {
-    $1 = ($input == Py_None) ? 1 : 1;  // Accept any object; runtime check in %typemap(in)
-}
+OE_CROSS_RUNTIME_NULLABLE_PTR_TYPEMAPS(OESystem::OEUnaryPredicate<OEChem::OEAtomBase>, _maptitude_is_oeunaryatompred, "Expected OEUnaryAtomPred or None for mask parameter.")
 
 // ============================================================================
 // Include STL typemaps
@@ -407,17 +557,34 @@ OE_CROSS_RUNTIME_REF_TYPEMAPS(OEDocking::OEReceptor, _maptitude_is_oereceptor, "
     try {
         $action
     } catch (const Maptitude::StructureError& e) {
-        SWIG_exception(SWIG_ValueError, e.what());
+        PyErr_SetString(g_structure_error, e.what());
+        SWIG_fail;
     } catch (const Maptitude::GridError& e) {
-        SWIG_exception(SWIG_ValueError, e.what());
+        PyErr_SetString(g_grid_error, e.what());
+        SWIG_fail;
     } catch (const Maptitude::SymOpError& e) {
-        SWIG_exception(SWIG_ValueError, e.what());
+        PyErr_SetString(g_symop_error, e.what());
+        SWIG_fail;
+    } catch (const Maptitude::CellError& e) {
+        PyErr_SetString(g_cell_error, e.what());
+        SWIG_fail;
     } catch (const std::exception& e) {
         SWIG_exception(SWIG_RuntimeError, e.what());
     } catch (...) {
         SWIG_exception(SWIG_RuntimeError, "Unknown C++ exception");
     }
 }
+
+%pythoncode %{
+# The exception classes are created in the extension module's init function.
+# SWIG's proxy module does not mirror arbitrary extension attributes, so alias
+# them here; python/maptitude/__init__.py re-exports from this module.
+MaptitudeError = _maptitude.MaptitudeError
+StructureError = _maptitude.StructureError
+GridError = _maptitude.GridError
+SymOpError = _maptitude.SymOpError
+CellError = _maptitude.CellError
+%}
 
 // ============================================================================
 // Template instantiations for container types
@@ -434,8 +601,8 @@ OE_CROSS_RUNTIME_REF_TYPEMAPS(OEDocking::OEReceptor, _maptitude_is_oereceptor, "
 // Version macros
 // ============================================================================
 #define MAPTITUDE_VERSION_MAJOR 0
-#define MAPTITUDE_VERSION_MINOR 2
-#define MAPTITUDE_VERSION_PATCH 4
+#define MAPTITUDE_VERSION_MINOR 3
+#define MAPTITUDE_VERSION_PATCH 0
 
 // ============================================================================
 // MapOp enum
@@ -849,6 +1016,80 @@ _cpp_diff_to_calc = diff_to_calc
 _cpp_wrap_and_pad_grid = wrap_and_pad_grid
 
 
+def _lookup_atom_radius(metric, radius_map, name):
+    """Resolve an atom-radius method name to its AtomRadius value.
+
+    A bare ``radius_map[name.lower()]`` raised ``KeyError('vdw')`` on a
+    misspelling: outside the typed exception hierarchy the README presents as the
+    complete set to handle, and carrying no list of what would have worked.
+
+    :param metric: Name of the calling metric, for the message.
+    :param radius_map: Lower-case method name to AtomRadius value.
+    :param name: The string the caller supplied.
+    :returns: The AtomRadius value.
+    :raises ValueError: If ``name`` matches no entry in ``radius_map``.
+    """
+    try:
+        return radius_map[name.lower()]
+    except KeyError:
+        raise ValueError(
+            "%s does not support atom_radius=%r; accepted values are %s"
+            % (metric, name, ", ".join(repr(k) for k in sorted(radius_map)))
+        ) from None
+
+
+def _copy_rscc_options(options):
+    """Return a copy of an RsccOptions so callers' objects are never mutated.
+
+    :param options: Source options.
+    :returns: An independent copy carrying the same settings.
+    :raises TypeError: If ``options`` is not an RsccOptions.
+    """
+    if not isinstance(options, RsccOptions):
+        raise TypeError(
+            "options must be an RsccOptions, not %s" % type(options).__name__
+        )
+    copied = RsccOptions()
+    copied.SetAtomRadiusMethod(options.GetAtomRadiusMethod())
+    copied.SetFixedAtomRadius(options.GetFixedAtomRadius())
+    copied.SetAtomRadiusScaling(options.GetAtomRadiusScaling())
+    return copied
+
+
+def _copy_rsr_options(options):
+    """Return a copy of an RsrOptions so callers' objects are never mutated.
+
+    :param options: Source options.
+    :returns: An independent copy carrying the same settings.
+    :raises TypeError: If ``options`` is not an RsrOptions.
+    """
+    if not isinstance(options, RsrOptions):
+        raise TypeError(
+            "options must be an RsrOptions, not %s" % type(options).__name__
+        )
+    copied = RsrOptions()
+    copied.SetAtomRadiusMethod(options.GetAtomRadiusMethod())
+    copied.SetFixedAtomRadius(options.GetFixedAtomRadius())
+    copied.SetAtomRadiusScaling(options.GetAtomRadiusScaling())
+    return copied
+
+
+def _copy_coverage_options(options):
+    """Return a copy of a CoverageOptions so callers' objects are never mutated.
+
+    :param options: Source options.
+    :returns: An independent copy carrying the same settings.
+    :raises TypeError: If ``options`` is not a CoverageOptions.
+    """
+    if not isinstance(options, CoverageOptions):
+        raise TypeError(
+            "options must be a CoverageOptions, not %s" % type(options).__name__
+        )
+    copied = CoverageOptions()
+    copied.SetSigma(options.GetSigma())
+    return copied
+
+
 def fc_density(obj, obs_grid, resolution, cell, mask=None,
                k_sol=0.35, b_sol=46.0, symops=None,
                include_h=False, n_scale_shells=1):
@@ -861,19 +1102,65 @@ def fc_density(obj, obs_grid, resolution, cell, mask=None,
     :param mask: Optional atom predicate to restrict contributing atoms.
     :param k_sol: Bulk solvent scale factor (default: 0.35 e/A^3).
     :param b_sol: Bulk solvent B-factor (default: 46.0 A^2).
-    :param symops: List of SymOp or string of symmetry operators.
+    :param symops: Symmetry operators, as a semicolon-separated string, an
+        iterable of SymOp, an iterable of operator strings, or None for the
+        identity alone.
     :param include_h: Include hydrogen atoms (default: False).
-    :param n_scale_shells: Number of per-shell scaling bins (default: 1).
+    :param n_scale_shells: Number of per-shell scaling bins, in ``[1, 1000]``
+        (default: 1). The upper bound is ``MAX_SCALE_SHELLS``: the bins partition
+        the resolution range and even a 0.5 A dataset has far fewer independent
+        shells, while a value near ``UINT_MAX`` sizes the shell-edge table into
+        tens of gigabytes and at ``UINT_MAX`` itself wraps it to zero.
     :returns: OEScalarGrid with computed model density.
+    :raises TypeError: If ``symops`` is neither a string nor an iterable of
+        SymOp or operator strings.
+    :raises SymOpError: If an operator string cannot be parsed.
+    :raises GridError: If ``resolution`` is not finite and positive, if
+        ``n_scale_shells`` is outside ``[1, 1000]``, if ``obs_grid``'s spacing is
+        at or above twice a cell edge, or if the resolution and the cell together
+        need a Miller-index box of more than 2e8 points.
+    :raises CellError: If ``cell`` is invalid or is not orthorhombic.
     """
     if symops is None:
         symops = [SymOp()]  # Identity only
     elif isinstance(symops, str):
         symops = list(SymOp.ParseAll(symops))
-
-    if isinstance(symops, list) and len(symops) > 0 and not isinstance(symops[0], SymOp):
-        # Convert from SymOpVector if needed
-        symops = list(symops)
+    elif isinstance(symops, SymOp):
+        # A lone SymOp is not iterable, so it would reach the generic message below
+        # and be reported as "not SymOp" -- a type this function does accept, inside
+        # a sequence. Name the wrapping the caller has to do instead.
+        raise TypeError(
+            "symops must be a sequence of SymOp, not a single SymOp; pass [symops]"
+        )
+    elif isinstance(symops, (bytes, bytearray)):
+        # bytes and bytearray iterate as ints, so the per-element check below would
+        # report "not int" for input the caller never wrote as integers.
+        raise TypeError(
+            "symops must be a str, not %s; decode it first" % type(symops).__name__
+        )
+    else:
+        try:
+            elements = list(symops)
+        except TypeError:
+            raise TypeError(
+                "symops must be a string, an iterable of SymOp, or an iterable of "
+                "operator strings, not %s" % type(symops).__name__
+            ) from None
+        # A list of operator strings is the shape this docstring describes, so
+        # accept it here rather than letting SymOpVector reject it with a raw SWIG
+        # overload dump. ParseAll is the same path the bare-string branch takes.
+        normalized = []
+        for element in elements:
+            if isinstance(element, SymOp):
+                normalized.append(element)
+            elif isinstance(element, str):
+                normalized.extend(SymOp.ParseAll(element))
+            else:
+                raise TypeError(
+                    "symops entries must be SymOp or str, not %s"
+                    % type(element).__name__
+                )
+        symops = normalized
 
     calc = DensityCalculator(cell, SymOpVector(symops))
     return calc.Calculate(obj, obs_grid, resolution, mask,
@@ -889,20 +1176,37 @@ def rscc(obj, grid, resolution, mask=None, calc_grid=None,
     :param resolution: Resolution in Angstroms.
     :param mask: Optional atom predicate.
     :param calc_grid: Optional pre-computed calculated density.
-    :param atom_radius: Atom radius method (str or AtomRadius enum value).
-    :param options: RsccOptions configuration object.
+    :param atom_radius: Atom radius method, as an AtomRadius enum value or one of
+        the strings ``"fixed"``, ``"scaled"``, ``"binned"`` (case-insensitive).
+        ``"adaptive"`` is not accepted: rscc has no adaptive radius model.
+    :param options: RsccOptions configuration object. Never mutated.
     :returns: DensityScoreResult with RSCC values.
+    :raises ValueError: If ``atom_radius`` is a string naming no supported method,
+        including ``"adaptive"``.
+    :raises RuntimeError: If ``atom_radius`` is ``AtomRadius.ADAPTIVE``, or if
+        ``options`` carries it. The two spellings of the same rejection raise
+        different types because they are found in different places: the string is
+        resolved against a table here, where "no such method" is a ValueError,
+        while the enum value is a real method that this metric does not implement
+        and is refused by the C++ layer, whose ``std::invalid_argument`` surfaces
+        as RuntimeError like every other option-value rejection.
     """
     if options is None:
         options = RsccOptions()
     if atom_radius is not None:
         if isinstance(atom_radius, str):
+            # Three entries, not four: rscc has no adaptive radius model and the
+            # enum path rejects AtomRadius.ADAPTIVE, so omitting it here is the
+            # agreeing behavior rather than an oversight.
             _radius_map = {
                 "fixed": AtomRadius_FIXED,
                 "scaled": AtomRadius_SCALED,
                 "binned": AtomRadius_BINNED,
             }
-            atom_radius = _radius_map[atom_radius.lower()]
+            atom_radius = _lookup_atom_radius("rscc", _radius_map, atom_radius)
+        # Copy: mutating the caller's options object would leak this call's
+        # settings into their next call.
+        options = _copy_rscc_options(options)
         options.SetAtomRadiusMethod(atom_radius)
     return _cpp_rscc(obj, grid, resolution, mask, calc_grid, options)
 
@@ -916,9 +1220,12 @@ def rsr(obj, grid, resolution, mask=None, calc_grid=None,
     :param resolution: Resolution in Angstroms.
     :param mask: Optional atom predicate.
     :param calc_grid: Optional pre-computed calculated density.
-    :param atom_radius: Atom radius method (str or AtomRadius enum value).
-    :param options: RsrOptions configuration object.
+    :param atom_radius: Atom radius method, as an AtomRadius enum value or one of
+        the strings ``"fixed"``, ``"scaled"``, ``"binned"``, ``"adaptive"``
+        (case-insensitive).
+    :param options: RsrOptions configuration object. Never mutated.
     :returns: DensityScoreResult with RSR values.
+    :raises ValueError: If ``atom_radius`` is a string naming no supported method.
     """
     if options is None:
         options = RsrOptions()
@@ -930,7 +1237,10 @@ def rsr(obj, grid, resolution, mask=None, calc_grid=None,
                 "binned": AtomRadius_BINNED,
                 "adaptive": AtomRadius_ADAPTIVE,
             }
-            atom_radius = _radius_map[atom_radius.lower()]
+            atom_radius = _lookup_atom_radius("rsr", _radius_map, atom_radius)
+        # Copy: mutating the caller's options object would leak this call's
+        # settings into their next call.
+        options = _copy_rsr_options(options)
         options.SetAtomRadiusMethod(atom_radius)
     return _cpp_rsr(obj, grid, resolution, mask, calc_grid, options)
 
@@ -962,19 +1272,21 @@ def ediam(obj, grid, resolution, mask=None):
     return _cpp_ediam(obj, grid, resolution, mask)
 
 
-def coverage(obj, grid, sigma=1.0, mask=None, options=None):
+def coverage(obj, grid, sigma=None, mask=None, options=None):
     """Coverage: fraction of atoms observed in density.
 
     :param obj: Input molecule.
     :param grid: Observed electron density map.
-    :param sigma: Number of standard deviations above mean.
+    :param sigma: Number of standard deviations above mean. When None, the
+        value carried by ``options`` is used. An explicit value overrides it.
     :param mask: Optional atom predicate.
-    :param options: CoverageOptions configuration object.
+    :param options: CoverageOptions configuration object. Never mutated.
     :returns: DensityScoreResult with coverage fractions.
     """
     if options is None:
         options = CoverageOptions()
-    if sigma != 1.0:
+    if sigma is not None:
+        options = _copy_coverage_options(options)
         options.SetSigma(sigma)
     return _cpp_coverage(obj, grid, mask, options)
 
@@ -1032,11 +1344,17 @@ def wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0):
 
     :param grid: CCP4 unit-cell grid.
     :param mol: Molecule to wrap (modified in-place).
-    :param cell_a: Unit cell dimension a (Angstroms).
-    :param cell_b: Unit cell dimension b (Angstroms).
-    :param cell_c: Unit cell dimension c (Angstroms).
+    :param cell_a: Unit cell dimension a (Angstroms). Must be finite and positive.
+    :param cell_b: Unit cell dimension b (Angstroms). Must be finite and positive.
+    :param cell_c: Unit cell dimension c (Angstroms). Must be finite and positive.
     :param padding: Extra margin around atoms (Angstroms).
-    :returns: Grid covering all atom coordinates (original or padded).
+    :returns: A padded grid, or the original grid when no padding is needed.
+        Never ``None``: the C++ function returns a null grid to mean "no padding
+        was needed", and this wrapper substitutes the original.
+    :raises StructureError: If the molecule contains no heavy atoms.
+    :raises CellError: If any cell edge is zero, negative, or non-finite. The
+        wrap uses ``fmod`` against each edge, which is NaN for a zero divisor and
+        previously filled the padded grid with NaN voxels.
     """
     result = _cpp_wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding)
     return result if result is not None else grid
@@ -1051,5 +1369,5 @@ def get_scattering_factor_table():
     return entries, len(entries)
 
 
-__version__ = "0.1.4"
+__version__ = "0.3.0"
 %}

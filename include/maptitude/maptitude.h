@@ -24,9 +24,9 @@
 /** @brief Major version number */
 #define MAPTITUDE_VERSION_MAJOR 0
 /** @brief Minor version number */
-#define MAPTITUDE_VERSION_MINOR 2
+#define MAPTITUDE_VERSION_MINOR 3
 /** @brief Patch version number */
-#define MAPTITUDE_VERSION_PATCH 4
+#define MAPTITUDE_VERSION_PATCH 0
 
 /**
  * @namespace Maptitude

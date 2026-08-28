@@ -6,7 +6,78 @@
 #ifndef MAPTITUDE_QSCOREOPTIONS_H
 #define MAPTITUDE_QSCOREOPTIONS_H
 
+#include <cmath>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+
 namespace Maptitude {
+
+/// The Q-score radial sweep keys each shell as `static_cast<int>(std::round(R * 1e6))`
+/// (`src/Metric.cpp`). Two shells closer together than 1e-6 A collide on that key and the
+/// sweep silently merges them; below roughly 1e-13 the accumulator `R += step` stops
+/// advancing altogether and the loop never terminates.
+constexpr double MIN_RADIAL_STEP = 1e-6;
+
+/// The same shell key overflows `int` once `round(R * 1e6)` passes INT_MAX (2147483647),
+/// wrapping to a negative key that aliases another shell. The sweep runs while
+/// `R < max_radius + 0.01`, so the largest key comes from `max_radius + 0.01`:
+/// (2147.47 + 0.01) * 1e6 = 2147480000, which still fits.
+constexpr double MAX_RADIUS_LIMIT = 2147.47;
+
+/// A sweep of more than this many shells is the finite-but-unbounded tail of the same
+/// failure the step floor closes: at the floor a full-range sweep would be 2.1e9 shells.
+/// The defaults give 4 shells; even 0.001 A sampling over 2 A gives 2000.
+constexpr int MAX_SHELLS = 1000000;
+
+/// Each shell allocates `num_points` samples per atom, and the sweep replicates
+/// `num_points` centre samples besides. Published Q-score sampling uses 8
+/// (Pintilie 2020); this bound is far above any real use and keeps the per-atom sample
+/// vectors bounded. Values above INT_MAX additionally wrap the three
+/// `static_cast<int>(options.GetNumPoints())` conversions in `qscore` (`src/Metric.cpp`),
+/// which is why this is named rather than cited by line: the line number moved twice
+/// during Phase 1 while the construct did not.
+constexpr unsigned int MAX_NUM_POINTS = 10000;
+
+/// Shells and points are each bounded on their own, but it is their product that
+/// allocates, so the factors have to be bounded together as well: 510000 shells of
+/// 10000 points each satisfies both individual bounds and still asks the FIXED
+/// precompute for over 100 GB. The default sweep takes 32 samples per atom and an
+/// aggressive real configuration (200 shells x 200 points) takes 40000, so this ceiling
+/// sits far above any working setup.
+///
+/// At the ceiling the concurrently live sample buffers come to roughly 144 MB. The
+/// arithmetic, per 2e6 samples: the FIXED precompute holds one `std::array<double, 3>`
+/// each, 24 B, for 48 MB; the sweep then fills four parallel `std::vector<double>` for
+/// the atom being scored (`sample_x`, `sample_y`, `sample_z`, `ref_vals`), 32 B, for
+/// 64 MB. The in-grid subset is copied into two more vectors (`map_vals`, `map_refs`),
+/// up to 32 MB again, and `push_back` growth can transiently double any of them. Two
+/// earlier versions of this comment quoted 48 MB, the precompute alone, and 112 MB,
+/// which added the four sweep vectors but dropped the in-grid copies.
+constexpr long long MAX_TOTAL_SAMPLES = 2000000;
+
+namespace detail {
+/// Reject a non-finite or non-positive option value with a message naming the
+/// setter, so the caller can find it without a debugger.
+inline void RequirePositiveFinite(const char* what, double value) {
+    if (!std::isfinite(value) || value <= 0.0) {
+        std::ostringstream message;
+        message << "QScoreOptions::" << what << " requires a finite positive value (got " << value
+                << ")";
+        throw std::invalid_argument(message.str());
+    }
+}
+
+/// Reject an option value outside its usable range, naming the setter and the bound.
+inline void RequireAtMost(const char* what, double value, double limit) {
+    if (value > limit) {
+        std::ostringstream message;
+        message << "QScoreOptions::" << what << " requires a value of at most " << limit
+                << " (got " << value << ")";
+        throw std::invalid_argument(message.str());
+    }
+}
+}  // namespace detail
 
 /**
  * @brief Radial sampling strategy for Q-score computation.
@@ -15,6 +86,31 @@ enum class RadialSampling {
     FIXED,     ///< Fixed radial step and max radius
     ADAPTIVE   ///< Grid-spacing and atom-radius dependent
 };
+
+namespace detail {
+/// Reject a `RadialSampling` value the enum does not declare.
+///
+/// `RadialSampling` is a scoped enum with underlying type `int`, so
+/// `static_cast<RadialSampling>(42)` is a valid value of the type and SWIG passes one
+/// through from `SetRadialSampling(42)` without a cast. `qscore` tests this enum twice,
+/// and an undeclared value used to take the `else` arm of both tests: validated as
+/// adaptive, then executed as fixed, so the fixed sweep's parameters were never checked.
+/// Validating here makes both tests exhaustive over the values the type can hold.
+///
+/// The switch carries no `default:` label, so a new enumerator is a -Wswitch warning
+/// here; the throw sits after it, where only an undeclared value can arrive.
+inline void RequireDeclaredRadialSampling(RadialSampling method) {
+    switch (method) {
+        case RadialSampling::FIXED:
+        case RadialSampling::ADAPTIVE:
+            return;
+    }
+    std::ostringstream message;
+    message << "QScoreOptions::SetRadialSampling requires a declared RadialSampling value (got "
+            << static_cast<int>(method) << ")";
+    throw std::invalid_argument(message.str());
+}
+}  // namespace detail
 
 /**
  * @brief Configuration for Q-score density scoring (Pintilie et al., 2020).
@@ -28,16 +124,49 @@ enum class RadialSampling {
  */
 class QScoreOptions {
 public:
-    void SetSigma(double sigma) { sigma_ = sigma; }
+    void SetSigma(double sigma) {
+        detail::RequirePositiveFinite("SetSigma", sigma);
+        sigma_ = sigma;
+    }
     double GetSigma() const { return sigma_; }
 
-    void SetRadialStep(double d_rad) { d_rad_ = d_rad; }
+    void SetRadialStep(double d_rad) {
+        // A non-positive step makes the radial sweep non-terminating.
+        detail::RequirePositiveFinite("SetRadialStep", d_rad);
+        if (d_rad < MIN_RADIAL_STEP) {
+            std::ostringstream message;
+            message << "QScoreOptions::SetRadialStep requires a value of at least "
+                    << MIN_RADIAL_STEP << " (MIN_RADIAL_STEP, got " << d_rad
+                    << "); the radial sweep's shell key has 1e-6 A resolution, so smaller "
+                       "steps alias distinct shells onto one key";
+            throw std::invalid_argument(message.str());
+        }
+        d_rad_ = d_rad;
+    }
     double GetRadialStep() const { return d_rad_; }
 
-    void SetMaxRadius(double to_rad) { to_rad_ = to_rad; }
+    void SetMaxRadius(double to_rad) {
+        detail::RequirePositiveFinite("SetMaxRadius", to_rad);
+        detail::RequireAtMost("SetMaxRadius", to_rad, MAX_RADIUS_LIMIT);
+        to_rad_ = to_rad;
+    }
     double GetMaxRadius() const { return to_rad_; }
 
-    void SetNumPoints(unsigned int num_points) { num_points_ = num_points; }
+    void SetNumPoints(unsigned int num_points) {
+        if (num_points == 0) {
+            // num_points is unsigned, so zero is the only reachable bad value; name
+            // it anyway, per the "errors carry their values" rule in spec 5.3.
+            throw std::invalid_argument("QScoreOptions::SetNumPoints requires at least one point, got " +
+                                        std::to_string(num_points));
+        }
+        if (num_points > MAX_NUM_POINTS) {
+            throw std::invalid_argument("QScoreOptions::SetNumPoints requires at most " +
+                                        std::to_string(MAX_NUM_POINTS) +
+                                        " points (MAX_NUM_POINTS), got " +
+                                        std::to_string(num_points));
+        }
+        num_points_ = num_points;
+    }
     unsigned int GetNumPoints() const { return num_points_; }
 
     void SetNormalizeMap(bool normalize) { normalize_map_ = normalize; }
@@ -46,7 +175,10 @@ public:
     void SetIsolatePoints(bool isolate) { isolate_points_ = isolate; }
     bool GetIsolatePoints() const { return isolate_points_; }
 
-    void SetRadialSampling(RadialSampling method) { radial_sampling_ = method; }
+    void SetRadialSampling(RadialSampling method) {
+        detail::RequireDeclaredRadialSampling(method);
+        radial_sampling_ = method;
+    }
     RadialSampling GetRadialSampling() const { return radial_sampling_; }
 
 private:

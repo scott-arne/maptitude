@@ -11,6 +11,9 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -21,6 +24,128 @@ using detail::MapStats;
 using detail::pearson_correlation;
 using detail::ediam_sigmoid;
 using detail::fibonacci_sphere_points;
+
+// ---- Radial sweep validation ----
+
+/// Explain why a radial step cannot drive the shell loop, or return an empty string when it
+/// can.
+///
+/// Split out from the sweep check because the step is loop-invariant in both modes: FIXED
+/// reads it from the options and ADAPTIVE derives it from the resolution argument and the
+/// grid spacing. Neither depends on the atom, so an unusable step is always an error about
+/// the call and is reported before any per-atom work begins.
+static std::string DescribeUnusableStep(const char* label, double step) {
+    if (!std::isfinite(step) || step < MIN_RADIAL_STEP) {
+        std::ostringstream message;
+        message << label << " radial sweep needs a step of at least " << MIN_RADIAL_STEP
+                << " A (got " << step << "); below that the shell accumulator does not advance";
+        return message.str();
+    }
+    return {};
+}
+
+/// Explain why a maximum radius on its own cannot drive a radial sweep, or return an empty
+/// string when it can.
+///
+/// Split from the shell-count check because these two bounds read the radius alone. In
+/// ADAPTIVE mode the radius is twice the atom's own, so a failure here can differ between
+/// atoms of the same call whatever the step is, and belongs to the atom.
+///
+/// The lower and upper bounds are reported separately because they fail for unrelated
+/// reasons: the lower bound is reached by an atom carrying no radius -- a fact about the
+/// molecule, which the int-overflow ceiling does not describe.
+static std::string DescribeUnusableRadius(const char* label, bool adaptive, double max_r) {
+    std::ostringstream message;
+    if (!std::isfinite(max_r) || max_r <= 0.0) {
+        message << label << " radial sweep needs a positive maximum radius (got " << max_r << ")";
+        if (adaptive) {
+            message << "; the adaptive radius is twice the atom's own, so this atom has none assigned";
+        }
+        return message.str();
+    }
+    if (max_r > MAX_RADIUS_LIMIT) {
+        message << label << " radial sweep needs a maximum radius of at most " << MAX_RADIUS_LIMIT
+                << " A (got " << max_r << "); beyond that the shell key overflows int";
+        return message.str();
+    }
+    return {};
+}
+
+/// Explain why a step and a maximum radius cannot produce a usable shell count together, or
+/// return an empty string when they can.
+///
+/// Split from the radius check because every bound here reads both quantities, so in
+/// ADAPTIVE mode a failure is attributable to neither on its own: it says the step this call
+/// derived does not fit this atom's radius. `qscore` resolves that by quantifying over the
+/// molecule -- see `RequireSomeAtomCanSweep`.
+///
+/// Expects a step and a radius that have already passed their own checks; the shell count
+/// below is only meaningful once both are finite and positive.
+static std::string DescribeUnusableShellCount(const char* label, double step, double max_r,
+                                              unsigned int num_points) {
+    std::ostringstream message;
+    if (step >= max_r + 0.01) {
+        message << label << " radial sweep produces no shells: step " << step
+                << " A is not smaller than the maximum radius " << max_r << " A";
+        return message.str();
+    }
+    const double shells = (max_r + 0.01) / step;
+    if (shells > static_cast<double>(MAX_SHELLS)) {
+        message << label << " radial sweep would run " << static_cast<long long>(shells)
+                << " shells, over the " << MAX_SHELLS
+                << " limit; raise the step or lower the maximum radius";
+        return message.str();
+    }
+    // Shells and points are each bounded on their own, but it is their product that
+    // allocates: FIXED precomputes one num_points-element sphere per shell, and both
+    // modes push one sample per point per shell into four parallel vectors. Bounding
+    // only the factors admits 510000 shells of 10000 points -- over 100 GB before any
+    // scoring happens.
+    if (shells * static_cast<double>(num_points) > static_cast<double>(MAX_TOTAL_SAMPLES)) {
+        message << label << " radial sweep would take "
+                << static_cast<long long>(shells * static_cast<double>(num_points))
+                << " samples per atom (" << static_cast<long long>(shells) << " shells x "
+                << num_points << " points), over the " << MAX_TOTAL_SAMPLES
+                << " limit; raise the step, lower the maximum radius, or use fewer points";
+        return message.str();
+    }
+    return {};
+}
+
+/// Explain why a radial sweep cannot terminate or cannot produce a score, or return an
+/// empty string when it can.
+///
+/// Both sampling modes converge on the same shell loop, but only FIXED mode's step and
+/// radius arrive through QScoreOptions' validated setters. ADAPTIVE derives its own from the
+/// grid spacing, the resolution, and the atom, and consults no option, so the same invariants
+/// have to be re-established here.
+///
+/// This is the whole check, in the order the three parts fail. FIXED evaluates it once, as
+/// one loop-invariant statement about the call; ADAPTIVE evaluates the parts separately,
+/// because only the radius part is a statement about a single atom.
+static std::string DescribeUnusableSweep(RadialSampling mode, double step, double max_r,
+                                         unsigned int num_points) {
+    const bool adaptive = (mode == RadialSampling::ADAPTIVE);
+    const char* label = adaptive ? "Adaptive" : "Fixed";
+    const std::string step_problem = DescribeUnusableStep(label, step);
+    if (!step_problem.empty()) {
+        return step_problem;
+    }
+    const std::string radius_problem = DescribeUnusableRadius(label, adaptive, max_r);
+    if (!radius_problem.empty()) {
+        return radius_problem;
+    }
+    return DescribeUnusableShellCount(label, step, max_r, num_points);
+}
+
+/// Reject a radial sweep that cannot terminate or cannot produce a score.
+static void RequireUsableSweep(RadialSampling mode, double step, double max_r,
+                               unsigned int num_points) {
+    const std::string reason = DescribeUnusableSweep(mode, step, max_r, num_points);
+    if (!reason.empty()) {
+        throw GridError(reason);
+    }
+}
 
 // ---- OE-aware wrappers around detail helpers ----
 
@@ -92,6 +217,78 @@ static void PrepareStructure(OEChem::OEMolBase& mol) {
     OEChem::OEAssignBondiVdWRadii(mol);
 }
 
+/// Reject `AtomRadius::ADAPTIVE` for RSCC.
+///
+/// RSCC has no adaptive radius model and never had one. Its radius switch listed FIXED,
+/// SCALED, and `BINNED: default:`, so ADAPTIVE fell through to the binned radius and
+/// returned the binned score under another name -- bit-identical to it, with no exception,
+/// no warning, and no field on the result recording which model ran. Giving RSCC a real
+/// adaptive radius is an accuracy change; until then an exception is preferable to a
+/// plausible wrong answer. `std::invalid_argument` surfaces in Python as `RuntimeError`,
+/// the documented channel for option-value errors.
+[[noreturn]] static void RejectAdaptiveRsccRadius() {
+    throw std::invalid_argument(
+        "rscc has no adaptive atom-radius model; use AtomRadius::FIXED, AtomRadius::SCALED, "
+        "or AtomRadius::BINNED. AtomRadius::ADAPTIVE is supported by rsr only");
+}
+
+/// Reject an `AtomRadius` value the enum does not declare, at the point of use.
+///
+/// Unreachable through the public API: both option classes validate in
+/// `SetAtomRadiusMethod` and hold the value privately, so no caller can present an
+/// undeclared one here. It exists to make the two selectors below total functions --
+/// every path returns a radius or throws -- instead of falling out of a switch with the
+/// result still uninitialized. That shape is what made `static_cast<AtomRadius>(42)` an
+/// indeterminate read, and a `default:` label cannot replace it without costing the
+/// -Wswitch warning these switches are written without one to get.
+[[noreturn]] static void RejectUndeclaredAtomRadius(const char* metric, AtomRadius method) {
+    std::ostringstream message;
+    message << metric << " received an AtomRadius value the enum does not declare ("
+            << static_cast<int>(method) << "); this is a bug in the caller's construction of the "
+            << "options object, which validates in SetAtomRadiusMethod";
+    throw std::invalid_argument(message.str());
+}
+
+/// Select the RSCC scoring radius for one atom.
+static double rscc_atom_radius(const RsccOptions& options, const OEChem::OEAtomBase& atom,
+                               const double resolution) {
+    switch (options.GetAtomRadiusMethod()) {
+        case AtomRadius::FIXED:
+            return options.GetFixedAtomRadius();
+        case AtomRadius::SCALED: {
+            const double scaled = atom.GetRadius() * options.GetAtomRadiusScaling();
+            return (scaled < 0.1) ? 1.5 : scaled;
+        }
+        case AtomRadius::BINNED:
+            return detail::binned_atom_radius(resolution);
+        case AtomRadius::ADAPTIVE:
+            // Unreachable: rejected before the loop. Listed anyway so the switch is
+            // exhaustive without a `default:` label, which is what makes a future
+            // enumerator a compiler warning here instead of another silent
+            // fall-through into whichever model happens to be last.
+            RejectAdaptiveRsccRadius();
+    }
+    RejectUndeclaredAtomRadius("rscc", options.GetAtomRadiusMethod());
+}
+
+/// Select the RSR scoring radius for one atom.
+static double rsr_atom_radius(const RsrOptions& options, const OEChem::OEAtomBase& atom,
+                              const double resolution) {
+    switch (options.GetAtomRadiusMethod()) {
+        case AtomRadius::FIXED:
+            return options.GetFixedAtomRadius();
+        case AtomRadius::SCALED: {
+            const double scaled = atom.GetRadius() * options.GetAtomRadiusScaling();
+            return (scaled < 0.1) ? 1.5 : scaled;
+        }
+        case AtomRadius::BINNED:
+            return detail::binned_atom_radius(resolution);
+        case AtomRadius::ADAPTIVE:
+            return scoring_radius(atom, resolution);
+    }
+    RejectUndeclaredAtomRadius("rsr", options.GetAtomRadiusMethod());
+}
+
 // ==== Density scoring functions ====
 
 DensityScoreResult rscc(
@@ -101,8 +298,9 @@ DensityScoreResult rscc(
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const OESystem::OEScalarGrid* calc_grid,
     const RsccOptions& options) {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
+    require_usable_resolution(resolution);
+    if (options.GetAtomRadiusMethod() == AtomRadius::ADAPTIVE) {
+        RejectAdaptiveRsccRadius();
     }
     PrepareStructure(mol);
 
@@ -135,20 +333,7 @@ DensityScoreResult rscc(
                 continue;
             }
 
-            double radius;
-            switch (options.GetAtomRadiusMethod()) {
-                case AtomRadius::FIXED:
-                    radius = options.GetFixedAtomRadius();
-                    break;
-                case AtomRadius::SCALED:
-                    radius = atom->GetRadius() * options.GetAtomRadiusScaling();
-                    if (radius < 0.1) radius = 1.5;
-                    break;
-                case AtomRadius::BINNED:
-                default:
-                    radius = detail::binned_atom_radius(resolution);
-                    break;
-            }
+            const double radius = rscc_atom_radius(options, *atom, resolution);
 
             auto pts = get_atom_grid_points(grid, x, y, z, radius);
             if (pts.empty()) {
@@ -204,9 +389,7 @@ DensityScoreResult rsr(
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const OESystem::OEScalarGrid* calc_grid,
     const RsrOptions& options) {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
-    }
+    require_usable_resolution(resolution);
     PrepareStructure(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
@@ -236,23 +419,8 @@ DensityScoreResult rsr(
                 continue;
             }
 
-            double radius;
-            switch (options.GetAtomRadiusMethod()) {
-                case AtomRadius::FIXED:
-                    radius = options.GetFixedAtomRadius();
-                    break;
-                case AtomRadius::SCALED:
-                    radius = atom->GetRadius() * options.GetAtomRadiusScaling();
-                    if (radius < 0.1) radius = 1.5;
-                    break;
-                case AtomRadius::BINNED:
-                    radius = detail::binned_atom_radius(resolution);
-                    break;
-                case AtomRadius::ADAPTIVE:
-                default:
-                    radius = scoring_radius(*atom, resolution);
-                    break;
-            }
+            const double radius = rsr_atom_radius(options, *atom, resolution);
+
             auto pts = get_atom_grid_points(grid, x, y, z, radius);
             if (pts.empty()) {
                 result.by_atom[atom->GetIdx()] =
@@ -320,15 +488,67 @@ DensityScoreResult rsr(
     return result;
 }
 
+/// Reject an adaptive step that no atom in this molecule can sweep with.
+///
+/// The shell-count bounds read the step and the maximum radius jointly, so in ADAPTIVE mode
+/// neither is on its own responsible for a failure. Which of the two it belongs to is
+/// settled by quantifying over the molecule: if some atom can be scored, an atom that cannot
+/// differs from it only in its own radius and is scored NaN in the loop below, as an atom
+/// with no radius at all is; if no atom can, the statement no longer mentions any particular
+/// atom and is a fact about the step, which comes from the resolution argument and the grid
+/// spacing. A caller error must throw wherever it is evaluated, so that case throws here.
+///
+/// This matters most for the branch that fails when the radius is too small for the step.
+/// At a grid spacing of 4 A no atom in the periodic table has a radius large enough, so
+/// leaving it per-atom turned a plainly unusable resolution-and-spacing pair into a result
+/// object full of NaN. It is genuinely atom-dependent in form -- a larger atom would pass --
+/// which is why the quantifier decides it rather than a classification fixed in advance.
+///
+/// Atoms that cannot be scored for reasons of their own are skipped rather than counted as
+/// failures: an out-of-grid atom is NaN before the sweep is consulted, and an atom with no
+/// radius fails the radius check whatever the step is. Neither supports a conclusion about
+/// the step, so a molecule of nothing but those still returns per-atom NaN.
+static void RequireSomeAtomCanSweep(
+    const OEChem::OEMolBase& mol, const OESystem::OEScalarGrid& grid,
+    const std::map<Residue, std::vector<const OEChem::OEAtomBase*>>& residue_atoms, double step,
+    unsigned int num_points) {
+    std::string first_failure;
+    for (const auto& [res, atoms] : residue_atoms) {
+        for (const auto* atom : atoms) {
+            double x, y, z;
+            GetAtomCoords(mol, *atom, x, y, z);
+            if (!grid.IsInGrid(static_cast<float>(x), static_cast<float>(y),
+                               static_cast<float>(z))) {
+                continue;
+            }
+            const double max_r = atom->GetRadius() * 2.0;
+            if (!DescribeUnusableRadius("Adaptive", true, max_r).empty()) {
+                continue;
+            }
+            const std::string shell_problem =
+                DescribeUnusableShellCount("Adaptive", step, max_r, num_points);
+            if (shell_problem.empty()) {
+                return;
+            }
+            if (first_failure.empty()) {
+                first_failure = shell_problem;
+            }
+        }
+    }
+    if (!first_failure.empty()) {
+        throw GridError(first_failure +
+                        "; no atom in this molecule can be swept at this step, which comes from "
+                        "the resolution and the grid spacing rather than from any atom");
+    }
+}
+
 DensityScoreResult qscore(
     OEChem::OEMolBase& mol,
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const QScoreOptions& options) {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
-    }
+    require_usable_resolution(resolution);
     PrepareStructure(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
@@ -350,6 +570,27 @@ DensityScoreResult qscore(
     std::unique_ptr<SpatialIndex> spatial_idx;
     if (options.GetIsolatePoints()) {
         spatial_idx = std::make_unique<SpatialIndex>(mol);
+    }
+
+    constexpr int MIN_SHELLS = 7;
+    const double grid_spacing = grid.GetSpacing();
+
+    // Reject every failure the call is responsible for here, before any per-atom work.
+    // FIXED's whole sweep qualifies, and the two precompute loops below would otherwise
+    // hang on an unusable one. ADAPTIVE's step qualifies on its own -- it comes from the
+    // resolution argument and the grid, not from any atom -- and its shell count qualifies
+    // when no atom in the molecule can satisfy it. Only the maximum radius is left to the
+    // loop, where it is a statement about one atom.
+    if (options.GetRadialSampling() == RadialSampling::FIXED) {
+        RequireUsableSweep(RadialSampling::FIXED, options.GetRadialStep(), options.GetMaxRadius(),
+                           options.GetNumPoints());
+    } else {
+        const double step = std::min(grid_spacing, resolution / MIN_SHELLS);
+        const std::string reason = DescribeUnusableStep("Adaptive", step);
+        if (!reason.empty()) {
+            throw GridError(reason);
+        }
+        RequireSomeAtomCanSweep(mol, grid, residue_atoms, step, options.GetNumPoints());
     }
 
     // Pre-compute unit sphere offsets for fixed mode
@@ -381,9 +622,6 @@ DensityScoreResult qscore(
         }
     }
 
-    constexpr int MIN_SHELLS = 7;
-    const double grid_spacing = grid.GetSpacing();
-
     DensityScoreResult result;
     std::vector<double> all_q;
 
@@ -402,15 +640,33 @@ DensityScoreResult qscore(
                 continue;
             }
 
-            // Determine radial parameters
+            // Determine radial parameters. This test keys on FIXED, as the pre-loop
+            // validation above does, so a value takes matching arms in both. When they
+            // disagreed, an enum value the type can hold but does not declare took the
+            // `else` of each: validated as adaptive, then executed as fixed, so the fixed
+            // sweep's parameters reached the loop unchecked. The setter rejects those
+            // values now; keeping the two tests in the same form means the pairing does
+            // not depend on it.
             double step, max_r;
-            if (options.GetRadialSampling() == RadialSampling::ADAPTIVE) {
+            if (options.GetRadialSampling() == RadialSampling::FIXED) {
+                // No per-atom check: these parameters are loop-invariant and were
+                // validated before the loop.
+                step = options.GetRadialStep();
+                max_r = options.GetMaxRadius();
+            } else {
                 step = std::min(static_cast<double>(grid_spacing),
                                 resolution / MIN_SHELLS);
                 max_r = atom->GetRadius() * 2.0;
-            } else {
-                step = options.GetRadialStep();
-                max_r = options.GetMaxRadius();
+                // The adaptive radius comes from the atom, so an unusable sweep is a fact
+                // about this atom and not about the request. Score it NaN and carry on, the
+                // way an out-of-grid atom is handled above; throwing here would discard the
+                // scores of every other atom in the molecule.
+                if (!DescribeUnusableSweep(RadialSampling::ADAPTIVE, step, max_r,
+                                           options.GetNumPoints()).empty()) {
+                    result.by_atom[atom->GetIdx()] =
+                        std::numeric_limits<double>::quiet_NaN();
+                    continue;
+                }
             }
 
             // Collect sample points and reference values
@@ -572,9 +828,7 @@ DensityScoreResult ediam(
     const OESystem::OEScalarGrid& grid,
     const double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask) {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
-    }
+    require_usable_resolution(resolution);
     PrepareStructure(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);

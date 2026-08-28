@@ -7,7 +7,19 @@ on:
 
 env:
   GCS_BUCKET: openeye-sdks
-  OPENEYE_VERSION: "2025.2.1"
+  # Single source of truth for the OpenEye release used by every job. 2026.1.0
+  # is the first release with cp314 wheels, so the abi3 smoke test below cannot
+  # run on Python 3.14 against anything older.
+  OPENEYE_VERSION: "2026.1.0"
+
+  # pypi.anaconda.org hosts the OpenEye channel and periodically stalls for
+  # GitHub-hosted runners. pip's 15 s default read timeout turns that into a
+  # hard build failure on an index that is otherwise healthy, so give it room
+  # to ride out a slow edge. Set here rather than per-command so every pip
+  # invocation in the workflow, including those inside the Linux containers,
+  # picks it up.
+  PIP_DEFAULT_TIMEOUT: "60"
+  PIP_RETRIES: "10"
 
 jobs:
   build-linux:
@@ -17,11 +29,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Only the platform suffix lives in the matrix: the env context is not
+        # available in strategy.matrix, so OPENEYE_VERSION cannot be interpolated
+        # here. The full SDK filename is composed in the download step.
         include:
           - arch: x86_64
             runner: ubuntu-latest
             container: rockylinux:8
-            sdk: OpenEye-toolkits-2025.2.1-redhat-RHEL8-g++8.5-x64.tar.gz
+            sdk_suffix: redhat-RHEL8-g++8.5-x64
             python: python3.11
             dnf_repo: powertools
             manylinux_plat: manylinux_2_28_x86_64
@@ -29,7 +44,7 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
             container: rockylinux:9
-            sdk: OpenEye-toolkits-2025.2.1-Ubuntu-22.04-g++11.11-aarch64.tar.gz
+            sdk_suffix: Ubuntu-22.04-g++11.11-aarch64
             python: python3.11
             dnf_repo: crb
             manylinux_plat: manylinux_2_34_aarch64
@@ -45,7 +60,7 @@ jobs:
           dnf install -y --allowerasing \
             git curl unzip gcc gcc-c++ cmake ninja-build \
             python3.11 python3.11-devel \
-            zlib-devel cairo fftw3-devel
+            zlib-devel cairo fftw3-devel findutils
 
       - uses: actions/checkout@v6
 
@@ -66,14 +81,35 @@ jobs:
 
       - name: Download OpenEye SDK from GCS
         run: |
+          set -euo pipefail
+          SDK="OpenEye-toolkits-${OPENEYE_VERSION}-${{ matrix.sdk_suffix }}.tar.gz"
+          echo "Fetching ${SDK}"
           mkdir -p /opt/openeye
           curl -fsSL \
             -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
-            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/${{ matrix.sdk }}" \
+            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/${SDK}" \
             -o /tmp/sdk.tar.gz
           tar -xzf /tmp/sdk.tar.gz -C /opt/openeye --strip-components=2
           rm /tmp/sdk.tar.gz
           ls -la /opt/openeye/
+          # The SDK ships its own README naming the release:
+          #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
+          # Assert against that, not against the tarball name we asked for --
+          # the tarball name is our input, so matching it proves nothing.
+          # The trailing " for " is load-bearing -- without it the match is a
+          # substring test and a 2026.1.0rc1 README would satisfy a 2026.1.0 check.
+          README="$(find /opt/openeye -maxdepth 2 -name README.txt -print -quit)"
+          if [ -z "${README}" ]; then
+            echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
+            ls -laR /opt/openeye | head -50
+            exit 1
+          fi
+          echo "SDK README: ${README}"
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION} for " "${README}" || {
+            echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
+            head -3 "${README}"
+            exit 1
+          }
 
       - name: Download OpenEye license from GCS
         run: |
@@ -90,7 +126,19 @@ jobs:
             --no-cache-dir
           echo "--- Verifying openeye-toolkits installation ---"
           /opt/venv/bin/pip show openeye-toolkits
-          /opt/venv/bin/python -c "from openeye import oechem; print('OpenEye version:', oechem.OEToolkitsGetRelease())"
+
+      - name: Assert the OpenEye version
+        run: |
+          set -euo pipefail
+          /opt/venv/bin/python - <<'PY'
+          import os, sys
+          from openeye import oechem
+          release = oechem.OEToolkitsGetRelease()
+          expected = os.environ["OPENEYE_VERSION"]
+          print(f"OEToolkitsGetRelease() = {release!r}, expected {expected!r}")
+          if release != expected:
+              sys.exit(f"OpenEye version mismatch: {release} is not {expected}")
+          PY
 
       - name: Build wheel
         env:
@@ -134,11 +182,49 @@ jobs:
           /opt/venv/bin/python -m wheel pack "$TMPDIR" -d dist/
           rm -rf "$TMPDIR"
 
+      - name: Validate abi3 link table
+        run: |
+          # The wheel advertises cp310-abi3; the extension must resolve Python
+          # symbols against the stable ABI rather than a versioned libpython,
+          # otherwise it silently stops loading on the next Python minor.
+          WHEEL=$(ls dist/maptitude-*.whl)
+          case "$WHEEL" in
+            *cp310-abi3*) echo "OK: wheel tagged cp310-abi3" ;;
+            *) echo "::error::wheel is not tagged cp310-abi3: $WHEEL"; exit 1 ;;
+          esac
+          TMP=$(mktemp -d)
+          unzip -q "$WHEEL" -d "$TMP"
+          SO_FILE=$(find "$TMP" -name '_maptitude*.so' | head -1)
+          if [ -z "$SO_FILE" ]; then
+            echo "::error::no _maptitude extension found in wheel"; exit 1
+          fi
+          readelf -d "$SO_FILE" | grep NEEDED > libs.txt || true
+          cat libs.txt
+          if grep -Eq 'libpython3\.[0-9]+' libs.txt; then
+            echo "::error::abi3 wheel links a versioned Python library"
+            grep -E 'libpython3\.[0-9]+' libs.txt
+            exit 1
+          fi
+          echo "OK: extension links no versioned Python library"
+
       - name: Test wheel
         run: |
           /opt/venv/bin/pip install pytest numpy
           /opt/venv/bin/pip install dist/maptitude-*.whl
           /opt/venv/bin/pytest tests/python/ -v -s
+
+      - name: Assert the wheel records the expected SDK version
+        run: |
+          set -euo pipefail
+          /opt/venv/bin/python - <<'PY'
+          import os, sys
+          from maptitude import _build_info
+          expected = os.environ["OPENEYE_VERSION"]
+          actual = _build_info.OPENEYE_BUILD_VERSION
+          print("OPENEYE_BUILD_VERSION =", actual)
+          if actual != expected:
+              sys.exit(f"wheel built against {actual}, expected {expected}")
+          PY
 
       - name: List built artifacts
         run: |
@@ -202,11 +288,29 @@ jobs:
           mkdir -p ${{ runner.temp }}/openeye
           curl -fsSL \
             -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
-            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/OpenEye-toolkits-2025.2.1-macOS-14.8-clang++16-universal.tar.gz" \
+            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/OpenEye-toolkits-${{ env.OPENEYE_VERSION }}-macOS-14-clang++16-universal.tar.gz" \
             -o /tmp/sdk.tar.gz
           tar -xzf /tmp/sdk.tar.gz -C ${{ runner.temp }}/openeye --strip-components=2
           rm /tmp/sdk.tar.gz
           ls -la ${{ runner.temp }}/openeye/
+          # The SDK ships its own README naming the release:
+          #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
+          # Assert against that, not against the tarball name we asked for --
+          # the tarball name is our input, so matching it proves nothing.
+          # The trailing " for " is load-bearing -- without it the match is a
+          # substring test and a 2026.1.0rc1 README would satisfy a 2026.1.0 check.
+          README="$(find ${{ runner.temp }}/openeye -maxdepth 2 -name README.txt -print -quit)"
+          if [ -z "${README}" ]; then
+            echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
+            ls -laR ${{ runner.temp }}/openeye | head -50
+            exit 1
+          fi
+          echo "SDK README: ${README}"
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION} for " "${README}" || {
+            echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
+            head -3 "${README}"
+            exit 1
+          }
 
       - name: Download OpenEye license from GCS
         run: |
@@ -223,7 +327,19 @@ jobs:
             --no-cache-dir
           echo "--- Verifying openeye-toolkits installation ---"
           pip show openeye-toolkits
-          python -c "from openeye import oechem; print('OpenEye version:', oechem.OEToolkitsGetRelease())"
+
+      - name: Assert the OpenEye version
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, sys
+          from openeye import oechem
+          release = oechem.OEToolkitsGetRelease()
+          expected = os.environ["OPENEYE_VERSION"]
+          print(f"OEToolkitsGetRelease() = {release!r}, expected {expected!r}")
+          if release != expected:
+              sys.exit(f"OpenEye version mismatch: {release} is not {expected}")
+          PY
 
       - name: Build wheel
         env:
@@ -236,11 +352,49 @@ jobs:
             --cmake-define FFTW3_ROOT=${{ runner.temp }}/fftw3 \
             --verbose
 
+      - name: Validate abi3 link table
+        run: |
+          # The wheel advertises cp310-abi3; the extension must resolve Python
+          # symbols against the stable ABI rather than a versioned libpython,
+          # otherwise it silently stops loading on the next Python minor.
+          WHEEL=$(ls dist/maptitude-*.whl)
+          case "$WHEEL" in
+            *cp310-abi3*) echo "OK: wheel tagged cp310-abi3" ;;
+            *) echo "::error::wheel is not tagged cp310-abi3: $WHEEL"; exit 1 ;;
+          esac
+          TMP=$(mktemp -d)
+          unzip -q "$WHEEL" -d "$TMP"
+          SO_FILE=$(find "$TMP" -name '_maptitude*.so' | head -1)
+          if [ -z "$SO_FILE" ]; then
+            echo "::error::no _maptitude extension found in wheel"; exit 1
+          fi
+          otool -L "$SO_FILE" > libs.txt
+          cat libs.txt
+          if grep -Eq 'libpython3\.[0-9]+|Python\.framework' libs.txt; then
+            echo "::error::abi3 wheel links a versioned Python library"
+            grep -E 'libpython3\.[0-9]+|Python\.framework' libs.txt
+            exit 1
+          fi
+          echo "OK: extension links no versioned Python library"
+
       - name: Test wheel
         run: |
           pip install pytest numpy
           pip install dist/maptitude-*.whl
           pytest tests/python/ -v -s
+
+      - name: Assert the wheel records the expected SDK version
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, sys
+          from maptitude import _build_info
+          expected = os.environ["OPENEYE_VERSION"]
+          actual = _build_info.OPENEYE_BUILD_VERSION
+          print("OPENEYE_BUILD_VERSION =", actual)
+          if actual != expected:
+              sys.exit(f"wheel built against {actual}, expected {expected}")
+          PY
 
       - name: List built artifacts
         run: |
@@ -308,26 +462,6 @@ jobs:
           cmake --install . --config Release
           echo "FFTW3_ROOT=${RUNNER_TEMP}/fftw3" >> $GITHUB_ENV
 
-      - name: Validate configuration
-        run: |
-          errors=0
-          if [ -z "${{ vars.OPENEYE_VERSION }}" ]; then
-            echo "::error::GitHub variable OPENEYE_VERSION is not set"
-            errors=1
-          fi
-          if [ -z "${{ vars.SDK_BUCKET }}" ]; then
-            echo "::error::GitHub variable SDK_BUCKET is not set"
-            errors=1
-          fi
-          if [ -z "${{ vars.SDK_WINDOWS }}" ]; then
-            echo "::error::GitHub variable SDK_WINDOWS is not set"
-            errors=1
-          fi
-          if [ "$errors" -ne 0 ]; then
-            echo "::error::Configure required variables in Settings > Variables > Actions"
-            exit 1
-          fi
-
       - name: Authenticate to Google Cloud
         id: gcp-auth
         uses: google-github-actions/auth@v3
@@ -341,30 +475,61 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/openeye-extract"
           curl -fsSL \
             -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
-            "https://storage.googleapis.com/${{ vars.SDK_BUCKET }}/${{ vars.SDK_WINDOWS }}" \
+            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/OpenEye-toolkits-${{ env.OPENEYE_VERSION }}-win-x64-MD.zip" \
             -o "${RUNNER_TEMP}/sdk.zip"
           unzip -q "${RUNNER_TEMP}/sdk.zip" -d "${RUNNER_TEMP}/openeye-extract"
           rm "${RUNNER_TEMP}/sdk.zip"
           sdk_inner=$(find "${RUNNER_TEMP}/openeye-extract" -maxdepth 1 -mindepth 1 -type d | head -n1)
           echo "OPENEYE_ROOT=${sdk_inner}" >> $GITHUB_ENV
           ls "${sdk_inner}"
+          # The SDK ships its own README naming the release:
+          #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
+          # Assert against that, not against the tarball name we asked for --
+          # the tarball name is our input, so matching it proves nothing.
+          # The trailing " for " is load-bearing -- without it the match is a
+          # substring test and a 2026.1.0rc1 README would satisfy a 2026.1.0 check.
+          README="$(find "${sdk_inner}" -maxdepth 2 -name README.txt -print -quit)"
+          if [ -z "${README}" ]; then
+            echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
+            ls -laR "${sdk_inner}" | head -50
+            exit 1
+          fi
+          echo "SDK README: ${README}"
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION} for " "${README}" || {
+            echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
+            head -3 "${README}"
+            exit 1
+          }
 
       - name: Download OpenEye license from GCS
         run: |
           curl -fsSL \
             -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
-            "https://storage.googleapis.com/${{ vars.SDK_BUCKET }}/oe_license.txt" \
+            "https://storage.googleapis.com/${{ env.GCS_BUCKET }}/oe_license.txt" \
             -o "${RUNNER_TEMP}/oe_license.txt"
           echo "OE_LICENSE=${RUNNER_TEMP}/oe_license.txt" >> $GITHUB_ENV
 
       - name: Install openeye-toolkits Python package
         run: |
-          pip install "openeye-toolkits==${{ vars.OPENEYE_VERSION }}" \
+          pip install "openeye-toolkits==${{ env.OPENEYE_VERSION }}" \
             --extra-index-url https://pypi.anaconda.org/openeye/simple \
             --no-cache-dir
           echo "--- Verifying openeye-toolkits installation ---"
           pip show openeye-toolkits
-          python -c "from openeye import oechem; print('OpenEye version:', oechem.OEToolkitsGetRelease())"
+
+      - name: Assert the OpenEye version
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, sys
+          from openeye import oechem
+          release = oechem.OEToolkitsGetRelease()
+          expected = os.environ["OPENEYE_VERSION"]
+          print(f"OEToolkitsGetRelease() = {release!r}, expected {expected!r}")
+          if release != expected:
+              sys.exit(f"OpenEye version mismatch: {release} is not {expected}")
+          PY
 
       - name: Build wheel
         run: |
@@ -408,6 +573,20 @@ jobs:
           pip install dist/maptitude-*.whl
           pytest tests/python/ -v -s
 
+      - name: Assert the wheel records the expected SDK version
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, sys
+          from maptitude import _build_info
+          expected = os.environ["OPENEYE_VERSION"]
+          actual = _build_info.OPENEYE_BUILD_VERSION
+          print("OPENEYE_BUILD_VERSION =", actual)
+          if actual != expected:
+              sys.exit(f"wheel built against {actual}, expected {expected}")
+          PY
+
       - name: List built artifacts
         run: |
           ls -la dist/
@@ -422,7 +601,7 @@ jobs:
           # Install the wheel into a different Python minor than the build
           # Python (3.11) to verify the stable-ABI contract actually holds.
           python -m pip install --upgrade pip
-          pip install "openeye-toolkits==${{ vars.OPENEYE_VERSION }}" \
+          pip install "openeye-toolkits==${{ env.OPENEYE_VERSION }}" \
             --extra-index-url https://pypi.anaconda.org/openeye/simple \
             --no-cache-dir
           pip install dist/maptitude-*.whl
@@ -457,9 +636,65 @@ jobs:
           path: wheels/*.whl
           retention-days: 2
 
+  # A cp310-abi3 wheel claims to load on every Python it supports without a
+  # rebuild. Nothing else in this workflow tests that claim across platforms:
+  # the build jobs compile and test under 3.11 only, so an accidental
+  # dependency on a version-specific C API would ship undetected. Import the
+  # built wheels at both ends of the supported range instead of adding a build
+  # matrix, which would defeat the point of abi3.
+  #
+  # The low end is 3.11, not the 3.10 abi3 floor, because openeye-toolkits
+  # 2026.1.0 ships no py310 wheel; requires-python in pyproject.toml is pinned
+  # to >=3.11 for the same reason.
+  abi3-smoke:
+    needs: collect-wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.11'
+            wheel_glob: dist/maptitude-*manylinux*x86_64.whl
+          - os: ubuntu-latest
+            python: '3.14'
+            wheel_glob: dist/maptitude-*manylinux*x86_64.whl
+          - os: ubuntu-24.04-arm
+            python: '3.14'
+            wheel_glob: dist/maptitude-*manylinux*aarch64.whl
+          - os: macos-latest
+            python: '3.14'
+            wheel_glob: dist/maptitude-*macosx*.whl
+          - os: windows-latest
+            python: '3.14'
+            wheel_glob: dist/maptitude-*win_amd64.whl
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v8
+        with:
+          name: all-wheels
+          path: dist/
+
+      - name: Setup Python ${{ matrix.python }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Import wheel under Python ${{ matrix.python }}
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install "openeye-toolkits==${{ env.OPENEYE_VERSION }}" \
+            --extra-index-url https://pypi.anaconda.org/openeye/simple \
+            --no-cache-dir
+          WHEEL=$(ls ${{ matrix.wheel_glob }})
+          echo "Installing $WHEEL"
+          pip install "$WHEEL"
+          python -c "import maptitude, sys; print('maptitude', getattr(maptitude, '__version__', ''), 'imported under', sys.version)"
+
   # Publish to PyPI on release tags
   publish:
-    needs: collect-wheels
+    needs: [collect-wheels, abi3-smoke]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     environment: pypi

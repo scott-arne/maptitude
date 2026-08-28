@@ -23,8 +23,8 @@ This project provides the following for both C++ and Python:
 
 ## Requirements
 
-- Python 3.10 or later
-- OpenEye Toolkits 2025.2 or later (with a valid license)
+- Python 3.11 or later
+- OpenEye Toolkits 2026.1 or later (with a valid license)
 
 ## Installation
 
@@ -54,6 +54,10 @@ result = rscc(mol, obs_grid, 2.0)
 print(f"Overall RSCC: {result.overall:.3f}")
 ```
 
+> **Orthorhombic cells only.** `DensityCalculator` and `fc_density` currently
+> support orthorhombic unit cells (all angles 90 degrees). Monoclinic and
+> triclinic cells raise `CellError`. General lattice support is planned.
+
 ## Usage
 
 ### Scoring Metrics
@@ -69,9 +73,13 @@ result = rscc(mol, obs_grid, resolution, calc_grid=calc_grid)
 
 # With custom options
 opts = RsccOptions()
-opts.atom_radius_method = AtomRadius.ADAPTIVE
+opts.atom_radius_method = AtomRadius.SCALED
+opts.atom_radius_scaling = 1.5
 result = rscc(mol, obs_grid, resolution, calc_grid=calc_grid, options=opts)
 ```
+
+`rscc` supports `FIXED`, `SCALED`, and `BINNED`. `AtomRadius.ADAPTIVE` raises
+`RuntimeError`; it is available on `rsr` only.
 
 #### RSR (Real-Space R-Factor)
 
@@ -169,10 +177,9 @@ diff = combine_maps(grid_a, grid_b, MapOp.SUBTRACT)
 # calc = obs - 2 * diff
 calc_grid = diff_to_calc(obs_grid, diff_grid)
 
-# Handle CCP4 unit-cell maps where coordinates extend beyond the cell
-padded = wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0)
-if padded is not None:
-    grid = padded  # Use the padded grid
+# Handle CCP4 unit-cell maps where coordinates extend beyond the cell.
+# Always returns a grid: the original one when no padding was needed.
+grid = wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0)
 
 # Sample density at a point
 value = interpolate_density(grid, x, y, z)
@@ -225,12 +232,16 @@ f0 = coeffs.Evaluate(0.0)  # Scattering factor at sin(theta)/lambda = 0
 
 **AtomRadius methods:**
 
-| Value                 | Description                                      |
-|-----------------------|--------------------------------------------------|
-| `AtomRadius.FIXED`    | Same radius for all atoms                        |
-| `AtomRadius.SCALED`   | Atom vdW radius multiplied by a scaling factor   |
-| `AtomRadius.BINNED`   | Resolution-dependent radius bins                 |
-| `AtomRadius.ADAPTIVE` | B-factor and resolution dependent (Tickle, 2012) |
+| Value                 | Description                                      | Supported by |
+|-----------------------|--------------------------------------------------|--------------|
+| `AtomRadius.FIXED`    | Same radius for all atoms                        | `rscc`, `rsr` |
+| `AtomRadius.SCALED`   | Atom vdW radius multiplied by a scaling factor   | `rscc`, `rsr` |
+| `AtomRadius.BINNED`   | Resolution-dependent radius bins                 | `rscc`, `rsr` |
+| `AtomRadius.ADAPTIVE` | B-factor and resolution dependent (Tickle, 2012) | `rsr` only   |
+
+`ADAPTIVE` is the only value that is not shared. `rscc` has no adaptive radius
+model, so passing it — as the enumerator or as the string `"adaptive"` — raises
+rather than silently falling back to `BINNED`.
 
 ### QScoreOptions
 
@@ -249,6 +260,92 @@ f0 = coeffs.Evaluate(0.0)  # Scattering factor at sin(theta)/lambda = 0
 | Property | Type    | Default | Description                                              |
 |----------|---------|---------|----------------------------------------------------------|
 | `sigma`  | `float` | `1.0`   | Standard deviations above mean for the density threshold |
+
+## Exceptions
+
+All *domain* exceptions raised by maptitude derive from `MaptitudeError`, so a single
+`except maptitude.MaptitudeError` catches every failure that describes your input. Four builtin
+types are also raised, for failures in how the call was made or in the memory behind it rather than
+in the structure or map it was given -- they are listed in the second table, and
+`except maptitude.MaptitudeError` does not catch them.
+
+| Exception        | Raised when                                                          |
+|------------------|----------------------------------------------------------------------|
+| `MaptitudeError` | Base class. Never raised directly.                                   |
+| `StructureError` | The molecule is unsuitable: no heavy atoms, missing coordinates.     |
+| `GridError`      | Grid geometry is wrong, a required grid is missing, or a numeric argument is outside its usable range. |
+| `SymOpError`     | A symmetry-operator string cannot be parsed.                         |
+| `CellError`      | Unit-cell parameters are invalid or describe an unsupported lattice. |
+
+| Exception      | Raised when                                                                       |
+|----------------|------------------------------------------------------------------------------------|
+| `RuntimeError` | An option value is out of range -- every option setter validates in C++ and its `std::invalid_argument` surfaces here -- or the copy that returns a grid to Python did not preserve the source geometry. |
+| `ValueError`   | A string argument the Python wrappers resolve against a table names nothing: `atom_radius="vdw"`, or `atom_radius="adaptive"` to `rscc`. |
+| `TypeError`    | An argument has the wrong type: a `mask` that is not an OpenEye atom predicate, an `options` object of the wrong class, a `symops` that is not a string or a sequence of `SymOp`. |
+| `MemoryError`  | The copy that returns a grid to Python could not be allocated. |
+
+Those four are what maptitude raises itself. SWIG's argument conversion runs in front of the
+library and raises builtins of its own, so an integer too large for the C++ parameter it feeds
+arrives as an `OverflowError` from the conversion rather than a `RuntimeError` from the setter:
+`num_points = 2**40` is one. One rejection appears in two of the table's rows: `rscc` refuses the
+adaptive radius model as a `ValueError` when it is spelled `atom_radius="adaptive"` and as a
+`RuntimeError` when it is spelled `atom_radius=AtomRadius.ADAPTIVE` or carried on an `RsccOptions`.
+The split is deliberate -- the string is resolved against a three-entry table in Python, where an
+unmatched name is a `ValueError` like any other, while the enum value names a real method that this
+metric does not implement and is refused in C++ along with every other option-value rejection --
+but it means catching both types is the only way to catch the rejection whatever spelling reaches
+you.
+
+```python
+import maptitude
+
+try:
+    result = maptitude.rscc(mol, obs_grid, resolution=2.0, calc_grid=calc_grid)
+except maptitude.GridError as exc:
+    print(f"grid problem: {exc}")
+except maptitude.MaptitudeError as exc:
+    print(f"maptitude failed: {exc}")
+```
+
+### Rejected input
+
+These are the input classes the library refuses rather than scoring. Where the same input was
+accepted before this release, it variously returned a plausible wrong value or a NaN, hung,
+exhausted memory, divided by zero, or read uninitialized memory; that list of mechanisms is
+illustrative, not exhaustive. Some rows widen a rejection that already existed rather than adding
+one: at `v0.2.4` a non-positive `resolution` and a metric on a molecule with no heavy atoms both
+raised already.
+
+| Input                                                                | Result                        |
+|----------------------------------------------------------------------|-------------------------------|
+| A non-finite or non-positive `resolution`, at any entry point         | `GridError`                   |
+| A `resolution` and unit cell needing a Miller-index box over 2e8 points | `GridError`                 |
+| A grid spacing at or above twice a cell edge                          | `GridError`                   |
+| `n_scale_shells` outside `[1, 1000]`                                  | `GridError`                   |
+| A non-orthorhombic unit cell                                          | `CellError`                   |
+| A zero, negative, or non-finite cell edge to `wrap_and_pad_grid`      | `CellError`                   |
+| A molecule with no heavy atoms                                        | `StructureError`              |
+| A Q-score radial sweep that cannot terminate or produce a shell       | `GridError`                   |
+| An `AtomRadius` or `RadialSampling` value the enum does not declare   | `RuntimeError`                |
+| `AtomRadius.ADAPTIVE` to `rscc`                                       | `RuntimeError`                |
+| `atom_radius="adaptive"` to `rscc`, or any unrecognised radius name   | `ValueError`                  |
+| A non-finite `CoverageOptions.sigma`                                  | `RuntimeError`                |
+| A non-finite, zero, or negative `QScoreOptions.sigma`                 | `RuntimeError`                |
+
+`CoverageOptions.sigma` and `QScoreOptions.sigma` are validated differently on purpose. Q-score's
+sigma is a Gaussian width and has to be positive. Coverage's is a multiplier in the threshold
+`mean + sigma * stddev`, where zero means "threshold at the mean" and a negative value means
+"threshold below the mean" -- both meaningful requests. Only NaN and the infinities are refused
+there, because the sigma enters that threshold directly and none of the three leaves one worth
+comparing a density against. NaN makes the threshold NaN, so every `rho >= threshold` is false and
+coverage returns a plausible `0.0`. On a map with nonzero spread, `+inf` makes the threshold `+inf`
+and returns `0.0` as well, while `-inf` makes it `-inf` and returns a perfect `1.0`; on a flat map
+`sigma * stddev` is NaN for either infinity, so both return `0.0`.
+
+Under `RadialSampling.ADAPTIVE` the maximum sampling radius comes from the atom rather than from
+the options, so a sweep that fails on one atom's radius scores that atom `NaN` and leaves the rest
+of the molecule scored. A sweep no atom in the molecule can satisfy is a property of the resolution
+and the grid spacing instead, and raises `GridError`.
 
 ## References
 

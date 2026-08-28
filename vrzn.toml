@@ -33,3 +33,10 @@ file = "tests/python/test_maptitude.py"
 type = "custom"
 label = "test-version-assert"
 template = '''__version__\s*==\s*"{version}"'''
+
+# The %pythoncode block in swig/maptitude.i carries its own __version__ string,
+# separate from the MAPTITUDE_VERSION_* defines above. It drifted from 0.1.4
+# because it was not a configured location.
+[[locations]]
+file = "swig/maptitude.i"
+type = "python-dunder"

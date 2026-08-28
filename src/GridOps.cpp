@@ -6,9 +6,22 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <limits>
+#include <sstream>
+#include <string>
 
 namespace Maptitude {
+
+/// Render a grid's geometry for an error message: dimensions, centre, spacing.
+static std::string DescribeGeometry(const OESystem::OEScalarGrid& grid) {
+    std::ostringstream out;
+    out << std::setprecision(std::numeric_limits<float>::max_digits10);
+    out << grid.GetXDim() << "x" << grid.GetYDim() << "x" << grid.GetZDim()
+        << " centred at (" << grid.GetXMid() << ", " << grid.GetYMid() << ", "
+        << grid.GetZMid() << ") spacing " << grid.GetSpacing();
+    return out.str();
+}
 
 void scale_map(OESystem::OEScalarGrid& grid, const double factor) {
     const unsigned int size = grid.GetSize();
@@ -21,14 +34,13 @@ OESystem::OEScalarGrid* combine_maps(
     const OESystem::OEScalarGrid& lhs,
     const OESystem::OEScalarGrid& rhs,
     const MapOp op) {
-    if (lhs.GetXDim() != rhs.GetXDim() ||
-        lhs.GetYDim() != rhs.GetYDim() ||
-        lhs.GetZDim() != rhs.GetZDim()) {
-        throw GridError("Grid dimensions must match for combination");
-    }
-
-    if (std::abs(lhs.GetSpacing() - rhs.GetSpacing()) > 1e-6) {
-        throw GridError("Grid spacings must match for combination");
+    // OEGridSameGeometry compares dimensions, midpoints, and spacing. The previous
+    // hand-rolled check ignored the origin, so grids of the same shape at different
+    // positions were combined element-wise -- mixing densities from different
+    // points in space.
+    if (!OESystem::OEGridSameGeometry(lhs, rhs)) {
+        throw GridError("Grids must have identical geometry for combination: left is " +
+                        DescribeGeometry(lhs) + ", right is " + DescribeGeometry(rhs));
     }
 
     auto* result = new OESystem::OEScalarGrid(lhs);
@@ -63,10 +75,9 @@ OESystem::OEScalarGrid* combine_maps(
 OESystem::OEScalarGrid* diff_to_calc(
     const OESystem::OEScalarGrid& obs_grid,
     const OESystem::OEScalarGrid& diff_grid) {
-    if (obs_grid.GetXDim() != diff_grid.GetXDim() ||
-        obs_grid.GetYDim() != diff_grid.GetYDim() ||
-        obs_grid.GetZDim() != diff_grid.GetZDim()) {
-        throw GridError("Grid dimensions must match for diff_to_calc");
+    if (!OESystem::OEGridSameGeometry(obs_grid, diff_grid)) {
+        throw GridError("Observed and difference grids must have identical geometry: observed is " +
+                        DescribeGeometry(obs_grid) + ", difference is " + DescribeGeometry(diff_grid));
     }
 
     auto* result = new OESystem::OEScalarGrid(obs_grid);
@@ -86,21 +97,41 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
     OEChem::OEMolBase& mol,
     const double cell_a, const double cell_b, const double cell_c,
     const double padding) {
+    // The periodic wrap below is `std::fmod(offset, cell_edge)`, which is NaN for a zero
+    // divisor and meaningless for a non-finite one, so every voxel of the padded grid
+    // comes back NaN with no error. Validate all three edges up front rather than
+    // guarding only the centroid shift.
+    const double edges[3] = {cell_a, cell_b, cell_c};
+    const char* edge_names[3] = {"cell_a", "cell_b", "cell_c"};
+    for (int i = 0; i < 3; ++i) {
+        if (!std::isfinite(edges[i]) || edges[i] <= 0.0) {
+            std::ostringstream message;
+            message << "wrap_and_pad_grid requires a finite positive " << edge_names[i]
+                    << " (got " << edges[i] << ")";
+            throw CellError(message.str());
+        }
+    }
+
     const double sp = grid.GetSpacing();
 
     // Compute heavy-atom centroid
     double cx = 0.0, cy = 0.0, cz = 0.0;
     int n = 0;
     float coords[3];
-    for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
-        if (atom->GetAtomicNum() == 1) continue;
+    for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(OEChem::OEIsHeavy()); atom; ++atom) {
         mol.GetCoords(&(*atom), coords);
         cx += coords[0];
         cy += coords[1];
         cz += coords[2];
         ++n;
     }
-    if (n == 0) return nullptr;
+    if (n == 0) {
+        // nullptr from this function means "no padding was needed". An empty heavy
+        // atom set is a different condition entirely and must not share that
+        // signal -- the Python wrapper maps nullptr to "return the grid unchanged".
+        throw StructureError("wrap_and_pad_grid requires at least one heavy atom; the molecule has " +
+                             std::to_string(mol.NumAtoms()) + " atom(s), none of them heavy");
+    }
     cx /= n;
     cy /= n;
     cz /= n;
@@ -110,9 +141,9 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
     const double grid_ymid = grid.GetYMin() + (grid.GetYDim() - 1) * sp / 2.0;
     const double grid_zmid = grid.GetZMin() + (grid.GetZDim() - 1) * sp / 2.0;
 
-    const double shift_x = (cell_a > 0) ? std::round((grid_xmid - cx) / cell_a) * cell_a : 0.0;
-    const double shift_y = (cell_b > 0) ? std::round((grid_ymid - cy) / cell_b) * cell_b : 0.0;
-    const double shift_z = (cell_c > 0) ? std::round((grid_zmid - cz) / cell_c) * cell_c : 0.0;
+    const double shift_x = std::round((grid_xmid - cx) / cell_a) * cell_a;
+    const double shift_y = std::round((grid_ymid - cy) / cell_b) * cell_b;
+    const double shift_z = std::round((grid_zmid - cz) / cell_c) * cell_c;
 
     if (std::abs(shift_x) > 0.01 || std::abs(shift_y) > 0.01 || std::abs(shift_z) > 0.01) {
         for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
@@ -134,8 +165,7 @@ OESystem::OEScalarGrid* wrap_and_pad_grid(
     double max_y = std::numeric_limits<double>::lowest();
     double max_z = std::numeric_limits<double>::lowest();
 
-    for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
-        if (atom->GetAtomicNum() == 1) continue;
+    for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(OEChem::OEIsHeavy()); atom; ++atom) {
         mol.GetCoords(&(*atom), coords);
         min_x = std::min(min_x, static_cast<double>(coords[0]));
         min_y = std::min(min_y, static_cast<double>(coords[1]));

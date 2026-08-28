@@ -2,6 +2,7 @@
 #include "maptitude/Error.h"
 #include "maptitude/Grid.h"
 #include "maptitude/ScatteringFactors.h"
+#include "maptitude/UnitCell.h"
 
 #include <oechem.h>
 #include <oegrid.h>
@@ -11,6 +12,9 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <memory>
+#include <mutex>
+#include <sstream>
 #include <vector>
 
 #ifdef MAPTITUDE_USE_OPENMP
@@ -22,6 +26,27 @@ namespace Maptitude {
 static constexpr double TWO_PI = 6.283185307179586;
 static constexpr double DEFAULT_BFACTOR = 20.0;
 static constexpr double PROBE_RADIUS = 1.4;
+static constexpr double DEG_TO_RAD = 3.14159265358979323846 / 180.0;
+
+/// The structure-factor pipeline computes 1/d^2 as
+/// (h/a)^2 + (k/b)^2 + (l/c)^2 in four places, which is only correct for an
+/// orthorhombic lattice. Non-orthorhombic cells would return a plausible wrong
+/// answer; reject them until general lattice support lands.
+static void RequireOrthorhombic(const UnitCell& cell) {
+    constexpr double COSINE_TOLERANCE = 1e-9;
+    const double cosines[3] = {std::cos(cell.alpha * DEG_TO_RAD), std::cos(cell.beta * DEG_TO_RAD),
+                               std::cos(cell.gamma * DEG_TO_RAD)};
+    const char* names[3] = {"alpha", "beta", "gamma"};
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(cosines[i]) >= COSINE_TOLERANCE) {
+            std::ostringstream message;
+            message << "DensityCalculator supports orthorhombic cells only; angle " << names[i]
+                    << " is " << (i == 0 ? cell.alpha : (i == 1 ? cell.beta : cell.gamma))
+                    << " degrees";
+            throw CellError(message.str());
+        }
+    }
+}
 
 // ---- Impl ----
 
@@ -35,7 +60,12 @@ struct DensityCalculator::Impl {
 
 DensityCalculator::DensityCalculator(const UnitCell& cell,
                                      const std::vector<SymOp>& symops)
-    : pimpl_(std::make_unique<Impl>(cell, symops)) {}
+    : pimpl_(std::make_unique<Impl>(cell, symops)) {
+    // The members of UnitCell are public and mutable, so a cell can be
+    // invalidated after construction. Re-check at the consumption point.
+    validate_cell(pimpl_->cell);
+    RequireOrthorhombic(pimpl_->cell);
+}
 
 DensityCalculator::~DensityCalculator() = default;
 
@@ -50,29 +80,61 @@ struct AtomData {
     int type_index;  // index into unique scattering factor types
 };
 
-struct MillerIndex {
-    int h, k, l;
-    double stol2;  // sin^2(theta)/lambda^2 = s^2/4
-};
+using detail::MillerIndex;
 
 // ---- Miller index generation ----
 
-static std::vector<MillerIndex> GenerateMillerIndices(
+std::vector<MillerIndex> detail::GenerateMillerIndices(
     const double a, const double b, const double c, const double resolution) {
     const double s_max = 1.0 / resolution;
     const double s_max2 = s_max * s_max;
-    const int h_max = static_cast<int>(std::ceil(a * s_max));
-    const int k_max = static_cast<int>(std::ceil(b * s_max));
-    const int l_max = static_cast<int>(std::ceil(c * s_max));
+    const double h_extent = std::ceil(a * s_max);
+    const double k_extent = std::ceil(b * s_max);
+    const double l_extent = std::ceil(c * s_max);
+
+    // Bound the loop volume before narrowing the extents to int. Both steps need this
+    // guard: the triple loop below is O((2a/resolution)^3) and does not finish for a
+    // small enough resolution, and an extent past INT_MAX makes the narrowing itself
+    // undefined behavior. The product is formed in double, which saturates to infinity
+    // instead of wrapping, so the comparison holds however extreme the request is.
+    // NaN cannot arise -- the resolution is checked finite and positive on entry to
+    // Calculate and the cell edges are validated at construction.
+    const double box_points =
+        (2.0 * h_extent + 1.0) * (2.0 * k_extent + 1.0) * (2.0 * l_extent + 1.0);
+    if (box_points > MAX_MILLER_BOX_POINTS) {
+        std::ostringstream message;
+        message << "Resolution " << resolution << " A over cell edges a = " << a << " A, b = "
+                << b << " A, c = " << c << " A needs a Miller-index box of " << box_points
+                << " points, over the " << MAX_MILLER_BOX_POINTS
+                << " limit (MAX_MILLER_BOX_POINTS); raise the resolution or use a smaller cell";
+        throw GridError(message.str());
+    }
+
+    const int h_max = static_cast<int>(h_extent);
+    const int k_max = static_cast<int>(k_extent);
+    const int l_max = static_cast<int>(l_extent);
 
     std::vector<MillerIndex> indices;
     for (int h = -h_max; h <= h_max; ++h) {
         for (int k = -k_max; k <= k_max; ++k) {
             for (int l = -l_max; l <= l_max; ++l) {
                 if (h == 0 && k == 0 && l == 0) continue;
-                const double s2 = (h * h) / (a * a) +
-                                   (k * k) / (b * b) +
-                                   (l * l) / (c * c);
+                // Square in double, not int. The box bound above is on the product of
+                // the three extents, so a cell with one long edge and two short ones
+                // reaches a single extent past floor(sqrt(INT_MAX)) = 46340 while the
+                // box stays far under the limit. `h * h` in int then overflowed, and the
+                // wrapped negative s2 passed the test below, admitting reflections from
+                // outside the requested shell. Widening the arithmetic rather than
+                // bounding each axis keeps the anisotropic cells that are legitimate.
+                //
+                // Exact for every input the box bound admits, so no reflection that was
+                // already in the shell moves: the extents are under 1.2e7, whose squares
+                // are well inside the 2^53 range where double represents every integer,
+                // and the int product was converted to this same double before dividing.
+                const double hd = h, kd = k, ld = l;
+                const double s2 = (hd * hd) / (a * a) +
+                                   (kd * kd) / (b * b) +
+                                   (ld * ld) / (c * c);
                 if (s2 <= s_max2) {
                     indices.push_back({h, k, l, s2 / 4.0});
                 }
@@ -209,6 +271,60 @@ static void InterpolateUCToGrid(
     }
 }
 
+// ==== FFTW RAII wrappers ====
+
+namespace {
+// This mutex has internal linkage and is sufficient only while this file is
+// the sole FFTW translation unit. A second FFTW TU must share this mutex
+// through an internal header rather than copying this block.
+
+/// FFTW buffers come from fftw_malloc, not operator new, so they need their own
+/// deleter. RAII here guards the throw paths: the nine null checks added during
+/// this conversion are themselves the throw sites, and they are reachable in
+/// practice — under planner contention fftw_plan_dft_3d returns NULL.
+struct FftwComplexDeleter {
+    void operator()(fftw_complex* p) const noexcept {
+        if (p != nullptr) {
+            fftw_free(p);
+        }
+    }
+};
+
+using FftwComplexPtr = std::unique_ptr<fftw_complex, FftwComplexDeleter>;
+
+/// fftw_plan is a pointer to an opaque fftw_plan_s.
+struct FftwPlanDeleter {
+    void operator()(fftw_plan_s* p) const noexcept;
+};
+
+using FftwPlanPtr = std::unique_ptr<fftw_plan_s, FftwPlanDeleter>;
+
+/// fftw_plan_dft_3d and fftw_destroy_plan mutate global planner state and are
+/// not thread-safe. fftw_execute on an already-created plan is, so this guards
+/// only creation and destruction. A C++ caller invoking Calculate from multiple
+/// threads reaches this directly; Python callers are currently serialized by the
+/// GIL since the module is not built with SWIG threading.
+std::mutex& FftwPlannerMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+void FftwPlanDeleter::operator()(fftw_plan_s* p) const noexcept {
+    if (p != nullptr) {
+        std::lock_guard<std::mutex> lock(FftwPlannerMutex());
+        fftw_destroy_plan(p);
+    }
+}
+
+/// Create a plan under the planner lock.
+FftwPlanPtr MakePlan3d(int n0, int n1, int n2, fftw_complex* in, fftw_complex* out, int sign,
+                       unsigned int flags) {
+    std::lock_guard<std::mutex> lock(FftwPlannerMutex());
+    return FftwPlanPtr(fftw_plan_dft_3d(n0, n1, n2, in, out, sign, flags));
+}
+
+}  // namespace
+
 // ==== Main Calculate method ====
 
 OESystem::OEScalarGrid* DensityCalculator::Calculate(
@@ -220,11 +336,17 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     double b_sol,
     bool include_h,
     unsigned int n_scale_shells) const {
-    if (resolution <= 0.0) {
-        throw GridError("Resolution must be positive");
-    }
-    if (n_scale_shells < 1) {
-        throw GridError("n_scale_shells must be >= 1");
+    require_usable_resolution(resolution);
+    if (n_scale_shells < 1 || n_scale_shells > MAX_SCALE_SHELLS) {
+        std::ostringstream message;
+        message << "n_scale_shells must be between 1 and " << MAX_SCALE_SHELLS
+                << " (MAX_SCALE_SHELLS), got " << n_scale_shells
+                << "; lower the bin count. The bins partition the resolution range and even a "
+                   "0.5 A dataset has far fewer independent shells than the limit. The "
+                   "shell-edge table holds n_scale_shells + 1 doubles, so a value near "
+                   "UINT_MAX asks for tens of gigabytes, and at UINT_MAX itself the unsigned "
+                   "addition wraps to zero";
+        throw GridError(message.str());
     }
 
     const UnitCell& cell = pimpl_->cell;
@@ -287,7 +409,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     // Step 2: Generate Miller indices within resolution sphere
     // ----------------------------------------------------------------
-    auto miller = GenerateMillerIndices(a, b, c, resolution);
+    auto miller = detail::GenerateMillerIndices(a, b, c, resolution);
     const size_t n_refl = miller.size();
 
     // ----------------------------------------------------------------
@@ -375,8 +497,29 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     const int ny = static_cast<int>(std::round(b / sp));
     const int nz = static_cast<int>(std::round(c / sp));
 
+    // A spacing at or above twice a cell edge rounds that dimension to zero, which
+    // both sizes the FFT allocation at zero and makes the Miller-index wrap below a
+    // division by zero -- undefined behavior, and SIGFPE on x86-64.
+    if (nx < 1 || ny < 1 || nz < 1) {
+        const double edge = (nx < 1) ? a : (ny < 1) ? b : c;
+        const char* axis = (nx < 1) ? "a" : (ny < 1) ? "b" : "c";
+        const int dim = (nx < 1) ? nx : (ny < 1) ? ny : nz;
+        std::ostringstream message;
+        message << "Grid spacing " << sp << " A is too coarse for cell edge " << axis << " = "
+                << edge << " A: the FFT grid would be " << dim
+                << " points along that axis. Use a spacing below half the shortest cell edge";
+        throw GridError(message.str());
+    }
+
     const size_t grid_size = static_cast<size_t>(nx) * ny * nz;
-    fftw_complex* Fc_3d = fftw_alloc_complex(grid_size);
+    FftwComplexPtr Fc_3d_owner(fftw_alloc_complex(grid_size));
+    if (!Fc_3d_owner) {
+        std::ostringstream msg;
+        msg << "FFTW allocation failed for the calculated structure factors ("
+            << grid_size << " fftw_complex elements)";
+        throw GridError(msg.str());
+    }
+    fftw_complex* Fc_3d = Fc_3d_owner.get();
     std::fill(reinterpret_cast<double*>(Fc_3d),
               reinterpret_cast<double*>(Fc_3d) + 2 * grid_size, 0.0);
 
@@ -397,18 +540,35 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             symops.empty() ? std::vector<SymOp>{SymOp()} : symops);
 
         // FFT the solvent mask
-        fftw_complex* mask_fft = fftw_alloc_complex(grid_size);
-        fftw_complex* mask_in = fftw_alloc_complex(grid_size);
+        FftwComplexPtr mask_fft_owner(fftw_alloc_complex(grid_size));
+        if (!mask_fft_owner) {
+            std::ostringstream msg;
+            msg << "FFTW allocation failed for the solvent mask FFT ("
+                << grid_size << " fftw_complex elements)";
+            throw GridError(msg.str());
+        }
+        fftw_complex* mask_fft = mask_fft_owner.get();
+        FftwComplexPtr mask_in_owner(fftw_alloc_complex(grid_size));
+        if (!mask_in_owner) {
+            std::ostringstream msg;
+            msg << "FFTW allocation failed for the solvent mask input ("
+                << grid_size << " fftw_complex elements)";
+            throw GridError(msg.str());
+        }
+        fftw_complex* mask_in = mask_in_owner.get();
         for (size_t i = 0; i < grid_size; ++i) {
             mask_in[i][0] = sol_mask[i];
             mask_in[i][1] = 0.0;
         }
 
-        fftw_plan mask_plan = fftw_plan_dft_3d(
+        FftwPlanPtr mask_plan = MakePlan3d(
             nx, ny, nz, mask_in, mask_fft, FFTW_FORWARD, FFTW_ESTIMATE);
-        fftw_execute(mask_plan);
-        fftw_destroy_plan(mask_plan);
-        fftw_free(mask_in);
+        if (!mask_plan) {
+            throw GridError("FFTW planning failed for the solvent mask");
+        }
+        fftw_execute(mask_plan.get());
+        mask_plan.reset();
+        mask_in_owner.reset();
 
         // Compute S^2 for each FFT grid point and apply correction
         for (int i = 0; i < nx; ++i) {
@@ -428,18 +588,28 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             }
         }
 
-        fftw_free(mask_fft);
+        mask_fft_owner.reset();
     }
 
     // ----------------------------------------------------------------
     // Step 8: Inverse FFT -> real-space density
     // ----------------------------------------------------------------
-    fftw_complex* rho_complex = fftw_alloc_complex(grid_size);
-    fftw_plan ifft_plan = fftw_plan_dft_3d(
+    FftwComplexPtr rho_complex_owner(fftw_alloc_complex(grid_size));
+    if (!rho_complex_owner) {
+        std::ostringstream msg;
+        msg << "FFTW allocation failed for the density map ("
+            << grid_size << " fftw_complex elements)";
+        throw GridError(msg.str());
+    }
+    fftw_complex* rho_complex = rho_complex_owner.get();
+    FftwPlanPtr ifft_plan = MakePlan3d(
         nx, ny, nz, Fc_3d, rho_complex, FFTW_BACKWARD, FFTW_ESTIMATE);
-    fftw_execute(ifft_plan);
-    fftw_destroy_plan(ifft_plan);
-    fftw_free(Fc_3d);
+    if (!ifft_plan) {
+        throw GridError("FFTW planning failed for the structure-factor inverse FFT");
+    }
+    fftw_execute(ifft_plan.get());
+    ifft_plan.reset();
+    Fc_3d_owner.reset();
 
     const double V = a * b * c;
     std::vector<double> rho_3d(grid_size);
@@ -454,21 +624,52 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     if (n_scale_shells > 1) {
         // FFT the calculated density
-        fftw_complex* rho_in = fftw_alloc_complex(grid_size);
-        fftw_complex* F_calc = fftw_alloc_complex(grid_size);
+        FftwComplexPtr rho_in_owner(fftw_alloc_complex(grid_size));
+        if (!rho_in_owner) {
+            std::ostringstream msg;
+            msg << "FFTW allocation failed for the calculated density input ("
+                << grid_size << " fftw_complex elements)";
+            throw GridError(msg.str());
+        }
+        fftw_complex* rho_in = rho_in_owner.get();
+        FftwComplexPtr F_calc_owner(fftw_alloc_complex(grid_size));
+        if (!F_calc_owner) {
+            std::ostringstream msg;
+            msg << "FFTW allocation failed for the calculated structure factor FFT ("
+                << grid_size << " fftw_complex elements)";
+            throw GridError(msg.str());
+        }
+        fftw_complex* F_calc = F_calc_owner.get();
         for (size_t i = 0; i < grid_size; ++i) {
             rho_in[i][0] = rho_3d[i];
             rho_in[i][1] = 0.0;
         }
-        fftw_plan fwd_plan = fftw_plan_dft_3d(
+        FftwPlanPtr fwd_plan = MakePlan3d(
             nx, ny, nz, rho_in, F_calc, FFTW_FORWARD, FFTW_ESTIMATE);
-        fftw_execute(fwd_plan);
-        fftw_destroy_plan(fwd_plan);
-        fftw_free(rho_in);
+        if (!fwd_plan) {
+            throw GridError("FFTW planning failed for the calculated-density forward FFT");
+        }
+        fftw_execute(fwd_plan.get());
+        fwd_plan.reset();
+        rho_in_owner.reset();
 
         // Sample observed density onto UC grid and FFT
-        fftw_complex* obs_in = fftw_alloc_complex(grid_size);
-        fftw_complex* Fobs_3d = fftw_alloc_complex(grid_size);
+        FftwComplexPtr obs_in_owner(fftw_alloc_complex(grid_size));
+        if (!obs_in_owner) {
+            std::ostringstream msg;
+            msg << "FFTW allocation failed for the observed density input ("
+                << grid_size << " fftw_complex elements)";
+            throw GridError(msg.str());
+        }
+        fftw_complex* obs_in = obs_in_owner.get();
+        FftwComplexPtr Fobs_3d_owner(fftw_alloc_complex(grid_size));
+        if (!Fobs_3d_owner) {
+            std::ostringstream msg;
+            msg << "FFTW allocation failed for the observed structure factor FFT ("
+                << grid_size << " fftw_complex elements)";
+            throw GridError(msg.str());
+        }
+        fftw_complex* Fobs_3d = Fobs_3d_owner.get();
 
         for (int i = 0; i < nx; ++i) {
             const double x = obs_grid.GetXMin() + (static_cast<double>(i) / nx) * a;
@@ -486,11 +687,14 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             }
         }
 
-        fftw_plan obs_fwd = fftw_plan_dft_3d(
+        FftwPlanPtr obs_fwd = MakePlan3d(
             nx, ny, nz, obs_in, Fobs_3d, FFTW_FORWARD, FFTW_ESTIMATE);
-        fftw_execute(obs_fwd);
-        fftw_destroy_plan(obs_fwd);
-        fftw_free(obs_in);
+        if (!obs_fwd) {
+            throw GridError("FFTW planning failed for the observed-density forward FFT");
+        }
+        fftw_execute(obs_fwd.get());
+        obs_fwd.reset();
+        obs_in_owner.reset();
 
         // Per-shell scaling
         const double s2_max = 1.0 / (resolution * resolution);
@@ -566,23 +770,33 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
             }
         }
 
-        fftw_free(Fobs_3d);
+        Fobs_3d_owner.reset();
 
         // Inverse FFT scaled Fc back to real space
-        fftw_complex* rho_scaled = fftw_alloc_complex(grid_size);
-        fftw_plan scale_ifft = fftw_plan_dft_3d(
+        FftwComplexPtr rho_scaled_owner(fftw_alloc_complex(grid_size));
+        if (!rho_scaled_owner) {
+            std::ostringstream msg;
+            msg << "FFTW allocation failed for the scaled density map ("
+                << grid_size << " fftw_complex elements)";
+            throw GridError(msg.str());
+        }
+        fftw_complex* rho_scaled = rho_scaled_owner.get();
+        FftwPlanPtr scale_ifft = MakePlan3d(
             nx, ny, nz, F_calc, rho_scaled, FFTW_BACKWARD, FFTW_ESTIMATE);
-        fftw_execute(scale_ifft);
-        fftw_destroy_plan(scale_ifft);
-        fftw_free(F_calc);
+        if (!scale_ifft) {
+            throw GridError("FFTW planning failed for the scaled structure-factor inverse FFT");
+        }
+        fftw_execute(scale_ifft.get());
+        scale_ifft.reset();
+        F_calc_owner.reset();
 
         for (size_t i = 0; i < grid_size; ++i) {
             rho_3d[i] = rho_scaled[i][0] / static_cast<double>(grid_size);
         }
-        fftw_free(rho_scaled);
+        rho_scaled_owner.reset();
     }
 
-    fftw_free(rho_complex);
+    rho_complex_owner.reset();
 
     // ----------------------------------------------------------------
     // Step 10: Trilinear interpolation onto output grid

@@ -1,0 +1,137 @@
+name: C++ tests
+
+# build-wheels.yml only fires on v* tags, so nothing runs the C++ suite on a
+# normal change. This job does.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GCS_BUCKET: openeye-sdks
+  OPENEYE_VERSION: "2026.1.0"
+
+jobs:
+  ctest:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64-openmp
+            sdk_suffix: redhat-RHEL8-g++8.5-x64
+            openmp: "ON"
+          - name: linux-x64-serial
+            sdk_suffix: redhat-RHEL8-g++8.5-x64
+            openmp: "OFF"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libfftw3-dev
+
+      - name: Authenticate to Google Cloud
+        id: gcp-auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Download the OpenEye SDK
+        run: |
+          set -euo pipefail
+          # The env context is unavailable in jobs.<id>.strategy, so the tarball
+          # name is composed here rather than hardcoded in the matrix.
+          SDK="OpenEye-toolkits-${OPENEYE_VERSION}-${{ matrix.sdk_suffix }}.tar.gz"
+          echo "Fetching ${SDK}"
+          mkdir -p "${RUNNER_TEMP}/openeye"
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
+            "https://storage.googleapis.com/${GCS_BUCKET}/${SDK}" \
+            -o "${RUNNER_TEMP}/openeye.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/openeye.tar.gz" -C "${RUNNER_TEMP}/openeye" --strip-components=2
+          ls -la "${RUNNER_TEMP}/openeye/"
+
+      - name: Download the OpenEye license
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
+            "https://storage.googleapis.com/${GCS_BUCKET}/oe_license.txt" \
+            -o "${RUNNER_TEMP}/openeye/oe_license.txt"
+
+      - name: Assert the SDK version
+        run: |
+          set -euo pipefail
+          ROOT="${RUNNER_TEMP}/openeye"
+          test -d "${ROOT}/include" || { echo "SDK layout unexpected"; ls -laR "${ROOT}" | head -50; exit 1; }
+          test -d "${ROOT}/lib"     || { echo "SDK layout unexpected"; ls -laR "${ROOT}" | head -50; exit 1; }
+
+          # The SDK ships its own README naming the release:
+          #   "Welcome to the OpenEye Toolkits v2026.1.0 for <platform>."
+          # Assert against that, not against the tarball name we asked for --
+          # the tarball name is our input, so matching it proves nothing.
+          # The trailing " for " is load-bearing -- without it the match is a
+          # substring test and a 2026.1.0rc1 README would satisfy a 2026.1.0 check.
+          README="$(find "${ROOT}" -maxdepth 2 -name README.txt -print -quit)"
+          if [ -z "${README}" ]; then
+            echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
+            ls -laR "${ROOT}" | head -50
+            exit 1
+          fi
+          echo "SDK README: ${README}"
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION} for " "${README}" || {
+            echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
+            head -3 "${README}"
+            exit 1
+          }
+
+      - name: Configure
+        env:
+          OPENEYE_ROOT: ${{ runner.temp }}/openeye
+        run: |
+          if [ "${{ matrix.openmp }}" = "OFF" ]; then
+            OPENMP_FLAG="-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=ON"
+          else
+            OPENMP_FLAG=""
+          fi
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMAPTITUDE_BUILD_TESTS=ON \
+            -DMAPTITUDE_BUILD_PYTHON=OFF \
+            ${OPENMP_FLAG}
+
+      - name: Assert OpenMP configuration
+        run: |
+          set -euo pipefail
+          FLAGS="$(grep '^OpenMP_CXX_FLAGS:' build/CMakeCache.txt | cut -d= -f2- || true)"
+          if [ "${{ matrix.openmp }}" = "ON" ]; then
+            case "${FLAGS}" in
+              *fopenmp*) echo "OpenMP enabled: ${FLAGS}" ;;
+              *) echo "FAIL: expected OpenMP, got '${FLAGS}'"; exit 1 ;;
+            esac
+          else
+            case "${FLAGS}" in
+              ""|NOTFOUND) echo "OpenMP disabled as requested" ;;
+              *) echo "FAIL: expected no OpenMP, got '${FLAGS}'"; exit 1 ;;
+            esac
+          fi
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run ctest
+        env:
+          OE_LICENSE: ${{ runner.temp }}/openeye/oe_license.txt
+        # CTest exits 0 when no tests are registered, so --no-tests=error
+        # ensures that a discovery regression fails the build rather than
+        # reporting green having run nothing.
+        run: ctest --test-dir build --output-on-failure --timeout 60 --no-tests=error

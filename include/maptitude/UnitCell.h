@@ -106,6 +106,34 @@ struct UnitCell {
     bool operator!=(const UnitCell& other) const;
 };
 
+/// Validate that a unit cell is geometrically valid and numerically usable.
+///
+/// Runs a sequence of checks: (1) each length is finite and positive; (2) each
+/// angle is strictly within (0, 180) degrees; (3) the volume radicand exceeds a
+/// small positive floor (~1e-9), rejecting both geometrically impossible cells and
+/// those too degenerate to compute with; (4) the derived volume is finite and
+/// positive; (5) all orthogonalization and deorthogonalization matrix entries are
+/// finite and the diagonal is nonzero; (6) the infinity-norm condition number
+/// (product of the matrix row-sum norms) stays below a threshold (~1e9), ensuring
+/// coordinate conversions are numerically stable for any interior point; (7) the
+/// residual ||deortho*ortho - I|| stays below a small threshold (~1e-7), since
+/// check (6) only means anything when the two matrices really are mutual inverses
+/// — a subnormal volume divides into every deorthogonalization entry and leaves
+/// them non-inverse, at which point the condition number measures nothing. Neither
+/// the angle-range check nor the radicand check subsumes the other: cos(200°) ==
+/// cos(160°), so an out-of-range angle can pass the radicand test, while in-range
+/// angles (150, 150, 150) can describe no real lattice. Checks (6) and (7) are
+/// likewise complementary: they bound the two separate terms of the round-trip
+/// error, and each catches cells the other cannot see.
+///
+/// Called automatically by the parameterized constructor, by the geometry readers
+/// (Volume, OrthogonalizationMatrix, DeorthogonalizationMatrix), and by
+/// DensityCalculator's constructor. The default constructor does not validate.
+///
+/// \param cell The cell to check.
+/// \throws CellError If any check fails; the message names the specific cause.
+void validate_cell(const UnitCell& cell);
+
 }  // namespace Maptitude
 
 #endif  // MAPTITUDE_UNITCELL_H

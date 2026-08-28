@@ -1,6 +1,18 @@
 """Shared fixtures and configuration for maptitude Python tests."""
 
+import os
+import sys
+
 import pytest
+
+# The map-loading helpers (MRC/CCP4 readers, symop extraction) are shared with
+# the benchmark suite. Put the benchmarks directory on sys.path so tests import
+# the single canonical implementation from ``helpers`` rather than duplicating it.
+_BENCH_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "benchmarks")
+)
+if _BENCH_DIR not in sys.path:
+    sys.path.insert(0, _BENCH_DIR)
 
 pytest.importorskip("openeye.oechem", reason="OpenEye Toolkits not installed")
 

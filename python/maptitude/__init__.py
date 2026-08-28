@@ -39,8 +39,8 @@ from importlib import metadata
 from pathlib import Path
 
 # Version info
-__version__ = "0.2.4"
-__version_info__ = (0, 2, 4)
+__version__ = "0.3.0"
+__version_info__ = (0, 3, 0)
 
 
 _OPENEYE_COMPAT_PRELOAD_PATHS: list[str] = []
@@ -624,6 +624,13 @@ from .maptitude import (
     DoubleVector,
     UnsignedIntVector,
     SymOpVector,
+
+    # Exceptions
+    MaptitudeError,
+    StructureError,
+    GridError,
+    SymOpError,
+    CellError,
 )
 
 
@@ -691,4 +698,10 @@ __all__ = [
     "fc_density",
     "parse_symop",
     "parse_symops",
+    # Exceptions
+    "MaptitudeError",
+    "StructureError",
+    "GridError",
+    "SymOpError",
+    "CellError",
 ]

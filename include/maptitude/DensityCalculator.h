@@ -32,6 +32,60 @@ template <class T> class OEUnaryPredicate;
 
 namespace Maptitude {
 
+/// Per-shell scaling bins partition the resolution range; even a 0.5 A dataset has
+/// far fewer independent resolution shells than this. The bound also keeps
+/// `n_scale_shells + 1` from wrapping the unsigned addition that sizes `shell_edges`.
+constexpr unsigned int MAX_SCALE_SHELLS = 1000;
+
+/// Miller-index generation sweeps `[-h_max, h_max] x [-k_max, k_max] x [-l_max, l_max]`
+/// with `h_max = ceil(a / resolution)`, so the loop volume grows as `(2*a/resolution)^3`.
+/// A finite positive resolution is not enough to bound it: 1e-9 A is an ordinary double,
+/// not a subnormal, and it diverges long before `1.0 / resolution` overflows. The quantity
+/// that has to be bounded is the box volume, which depends on the resolution and the three
+/// cell edges jointly, so it is bounded here rather than at the resolution check.
+///
+/// 2e8 points leaves the crystallography this pipeline is for well inside the bound: a
+/// 200 A cubic cell at 1.0 A needs 401^3 = 6.4e7 points, 3.1x under it, and a 100 A cubic
+/// cell at 0.8 A needs 251^3 = 1.6e7, 12.6x under. At the bound itself the resolution
+/// sphere holds pi/6 of the box, about 1.05e8 reflections, and memory rather than time is
+/// what binds: `indices` is 24 bytes per reflection for 2.5 GB, `Fc_real` and `Fc_imag`
+/// add 1.7 GB, and `f_s_table` adds 0.84 GB per distinct scattering type, against a few
+/// seconds for the loop itself. The bound is deliberately placed where an over-large
+/// request still fails as an exception rather than as an out-of-memory kill.
+///
+/// Declared as a double because the check has to run in arithmetic that cannot itself
+/// overflow: the box volume is computed and compared in double, before any narrowing to
+/// `int`.
+constexpr double MAX_MILLER_BOX_POINTS = 2e8;
+
+namespace detail {
+
+/// One Miller index and the `sin^2(theta)/lambda^2` that placed it in the shell.
+struct MillerIndex {
+    int h, k, l;
+    double stol2;  ///< sin^2(theta)/lambda^2 = s^2/4
+};
+
+/// Enumerate the Miller indices of an orthorhombic cell that lie inside the resolution
+/// shell, that is those with `(h/a)^2 + (k/b)^2 + (l/c)^2 <= (1/resolution)^2`.
+///
+/// Exposed here rather than left at file scope in `DensityCalculator.cpp` so that the
+/// shell property can be asserted on the returned indices directly. Going through
+/// `Calculate` cannot assert it: the indices are summed into structure factors and never
+/// surface, so an index admitted from outside the shell shows up only as a small shift in
+/// a density value, which is indistinguishable from the interpolation and solvent terms
+/// applied after it.
+///
+/// @param a Cell edge a in Angstroms; finite and positive.
+/// @param b Cell edge b in Angstroms; finite and positive.
+/// @param c Cell edge c in Angstroms; finite and positive.
+/// @param resolution Resolution limit in Angstroms; finite and positive.
+/// @return In-shell indices, excluding (0, 0, 0). Order is h-major, then k, then l.
+/// @throws GridError if the enclosing box exceeds MAX_MILLER_BOX_POINTS.
+std::vector<MillerIndex> GenerateMillerIndices(double a, double b, double c, double resolution);
+
+}  // namespace detail
+
 /**
  * @brief Computes model electron density using Fourier synthesis.
  *
@@ -86,7 +140,8 @@ public:
      * @param k_sol Bulk solvent scale factor (default: 0.35 e/A^3).
      * @param b_sol Bulk solvent B-factor (default: 46.0 A^2).
      * @param include_h Include hydrogen atoms (default: false).
-     * @param n_scale_shells Number of per-shell scaling bins (default: 1).
+     * @param n_scale_shells Number of per-shell scaling bins, in
+     *        [1, MAX_SCALE_SHELLS] (default: 1).
      * @return New OEScalarGrid with computed density. Caller owns the pointer.
      */
     OESystem::OEScalarGrid* Calculate(

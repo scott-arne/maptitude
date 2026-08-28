@@ -7,6 +7,7 @@
 #include <oegrid.h>
 
 #include <cmath>
+#include <memory>
 
 using namespace Maptitude;
 
@@ -199,4 +200,105 @@ TEST(GridOpsTest, WrapAndPadGridCreatesPaddedGrid) {
     EXPECT_NEAR((*result)[0], static_cast<float>(val), 0.1);
 
     delete result;
+}
+
+static OESystem::OEScalarGrid MakeShiftedGrid(double shift) {
+    double minmax[6] = {shift, shift, shift, 9.0 + shift, 9.0 + shift, 9.0 + shift};
+    OESystem::OEScalarGrid grid(minmax, 1.0);
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+        grid[i] = 1.0f;
+    }
+    return grid;
+}
+
+TEST(GridOpsTest, CombineRejectsGridsWithDifferentOrigins) {
+    // Same dims, same spacing, different origin. Element-wise combination would
+    // mix densities from different points in space.
+    OESystem::OEScalarGrid a = MakeShiftedGrid(0.0);
+    OESystem::OEScalarGrid b = MakeShiftedGrid(5.0);
+    EXPECT_THROW(combine_maps(a, b, MapOp::ADD), GridError);
+}
+
+TEST(GridOpsTest, CombineRejectsGridsWhoseSpacingDiffersBelowTheOldTolerance) {
+    // The other half of the exact-geometry change, and the reachable half: the old
+    // hand-rolled comparison tested dimensions exactly but spacing only to within 1e-6.
+    // 0.5 + 1e-7 lands on the next float32 value, 0.5000001192092896, a delta of
+    // 1.19e-7 -- inside that tolerance and outside exact equality. Without this case,
+    // restoring the tolerance reverts a documented behavior change with the suite still
+    // green, because the origin tests above pass either way.
+    //
+    // The dimensions are given explicitly rather than derived from a bounding box. From
+    // a box the two spacings yield 19 and 18 points per axis, so the old dimension test
+    // would reject them and the spacing comparison would never be reached.
+    OESystem::OEScalarGrid a(19, 19, 19, 4.5, 4.5, 4.5, 0.5);
+    OESystem::OEScalarGrid b(19, 19, 19, 4.5, 4.5, 4.5, static_cast<float>(0.5 + 1e-7));
+    // Spacing is the only difference among the quantities OEGridSameGeometry compares --
+    // dimensions, midpoints, and spacing -- which is what makes the rejection below the
+    // spacing's. It is not the only difference between the two grids: OEScalarGrid stores
+    // a midpoint and derives the origin from it, so the spacing delta moves the origin as
+    // well, by 9.54e-7 A here. An earlier version of this comment claimed spacing was the
+    // only difference outright.
+    ASSERT_EQ(a.GetXDim(), b.GetXDim()) << "the dimensions must match or this pins nothing";
+    ASSERT_EQ(a.GetXMid(), b.GetXMid()) << "the midpoints must match or this pins nothing";
+    ASSERT_NEAR(std::fabs(a.GetXMin() - b.GetXMin()), 9.5367431640625e-7, 1e-13)
+        << "the origins were expected to move with the spacing";
+    ASSERT_NE(a.GetSpacing(), b.GetSpacing()) << "the two spacings collapsed to one float";
+    ASSERT_LT(std::fabs(a.GetSpacing() - b.GetSpacing()), 1e-6)
+        << "the delta must sit inside the old tolerance or this pins nothing";
+    EXPECT_THROW(combine_maps(a, b, MapOp::ADD), GridError);
+}
+
+TEST(GridOpsTest, CombineStillAcceptsIdenticalGeometry) {
+    OESystem::OEScalarGrid a = MakeTestGrid();
+    OESystem::OEScalarGrid b = MakeTestGrid();
+    EXPECT_NO_THROW({
+        std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(a, b, MapOp::ADD));
+        ASSERT_NE(result, nullptr);
+    });
+}
+
+TEST(GridOpsTest, DiffToCalcRejectsMismatchedGeometry) {
+    OESystem::OEScalarGrid obs = MakeShiftedGrid(0.0);
+    OESystem::OEScalarGrid diff = MakeShiftedGrid(5.0);
+    EXPECT_THROW(diff_to_calc(obs, diff), GridError);
+}
+
+TEST(GridOpsTest, WrapAndPadThrowsWhenTheMoleculeHasNoHeavyAtoms) {
+    OEChem::OEGraphMol mol;  // empty
+    OESystem::OEScalarGrid grid = MakeTestGrid();
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
+}
+
+TEST(GridOpsTest, WrapAndPadThrowsForAMoleculeOfOnlyDummyAtoms) {
+    OEChem::OEGraphMol mol;
+    OEChem::OEAtomBase* atom = mol.NewAtom(0);  // Dummy atom (Z=0)
+    const float coords[3] = {4.5f, 4.5f, 4.5f};
+    mol.SetCoords(atom, coords);
+
+    OESystem::OEScalarGrid grid = MakeTestGrid();
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
+}
+
+TEST(GridOpsTest, WrapAndPadThrowsForAnAllHydrogenMolecule) {
+    OEChem::OEGraphMol mol;
+    OEChem::OEAtomBase* atom = mol.NewAtom(1);  // Hydrogen (Z=1)
+    const float coords[3] = {4.5f, 4.5f, 4.5f};
+    mol.SetCoords(atom, coords);
+
+    OESystem::OEScalarGrid grid = MakeTestGrid();
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
+}
+
+TEST(GridOpsTest, WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded) {
+    // A molecule already well inside the grid needs no padding: nullptr means
+    // "unchanged", and nothing else.
+    OEChem::OEGraphMol mol;
+    OEChem::OEAtomBase* atom = mol.NewAtom(6);
+    const double coords[3] = {4.5, 4.5, 4.5};
+    mol.SetCoords(atom, coords);
+
+    OESystem::OEScalarGrid grid = MakeTestGrid();
+    std::unique_ptr<OESystem::OEScalarGrid> result(
+        wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0));
+    EXPECT_EQ(result, nullptr);
 }
