@@ -8,11 +8,15 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
+
+#include <oegrid.h>
 
 #include "maptitude/CoverageOptions.h"
 #include "maptitude/DensityCalculator.h"
 #include "maptitude/Error.h"
+#include "maptitude/Grid.h"
 #include "maptitude/GridOps.h"
 #include "maptitude/Metric.h"
 #include "maptitude/QScoreOptions.h"
@@ -873,4 +877,155 @@ TEST(WrapAndPadValidationTest, StillAcceptsPositiveCellEdges) {
     for (unsigned int i = 0; i < padded->GetSize(); ++i) {
         ASSERT_FALSE(std::isnan((*padded)[i])) << "NaN voxel at " << i;
     }
+}
+
+// ---- Per-axis grid geometry derivation (spec §2.2, §4.4) ----
+
+namespace {
+
+/// A skew grid with the given dimensions and an orthorhombic cell whose edges
+/// give a 1.0 A node interval on every axis.
+OESystem::OESkewGrid MakeSkewGrid(const unsigned int nx,
+                                  const unsigned int ny,
+                                  const unsigned int nz) {
+    OESystem::OESkewGrid grid;
+    EXPECT_TRUE(grid.SetDim(nx, ny, nz));
+    EXPECT_TRUE(grid.SetUnitCell(static_cast<float>(nx), static_cast<float>(ny),
+                                 static_cast<float>(nz), 90.0f, 90.0f, 90.0f,
+                                 nx, ny, nz));
+    EXPECT_TRUE(grid.SetMid(0.0f, 0.0f, 0.0f));
+    return grid;
+}
+
+}  // namespace
+
+TEST(GridParamsDerivation, RejectsAnAxisWithASingleNode) {
+    // Check 1: one node on an axis leaves no interval to measure.
+    const OESystem::OESkewGrid grid = MakeSkewGrid(4u, 4u, 1u);
+    EXPECT_THROW(get_grid_params(grid), GridError);
+    try {
+        get_grid_params(grid);
+        FAIL() << "expected GridError";
+    } catch (const GridError& err) {
+        const std::string what = err.what();
+        EXPECT_NE(what.find("axis z"), std::string::npos) << what;
+        EXPECT_NE(what.find("1"), std::string::npos) << what;
+    }
+}
+
+TEST(GridParamsDerivation, RejectsANonFiniteNodeCoordinate) {
+    // Check 3: a zero a-edge makes the cell matrix singular, and every node
+    // coordinate comes back NaN. ElementToSpatialCoord still reports success,
+    // so the finiteness test is what catches this, not the return value.
+    OESystem::OESkewGrid grid;
+    ASSERT_TRUE(grid.SetDim(4u, 4u, 4u));
+    grid.SetUnitCell(0.0f, 4.0f, 4.0f, 90.0f, 90.0f, 90.0f, 4u, 4u, 4u);
+    grid.SetMid(0.0f, 0.0f, 0.0f);
+
+    // Assert the state the check needs, so a future toolkit that rejects the
+    // degenerate cell fails here with a readable message rather than below.
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    ASSERT_TRUE(grid.ElementToSpatialCoord(0u, x, y, z));
+    ASSERT_FALSE(std::isfinite(x));
+
+    EXPECT_THROW(get_grid_params(grid), GridError);
+    try {
+        get_grid_params(grid);
+        FAIL() << "expected GridError";
+    } catch (const GridError& err) {
+        const std::string what = err.what();
+        EXPECT_NE(what.find("non-finite"), std::string::npos) << what;
+        EXPECT_NE(what.find("element 0"), std::string::npos) << what;
+    }
+}
+
+TEST(GridParamsDerivation, RejectsAZeroDerivedNodeInterval) {
+    // Check 5: a 1e-30 A a-edge is small enough that all four x nodes round to
+    // the same float, so the x span is exactly zero -- but the coordinates stay
+    // finite, so check 3 does not fire. The off-axis leak is ~1e-15, four orders
+    // under the 1e-4 limit, so check 4 does not fire either.
+    OESystem::OESkewGrid grid;
+    ASSERT_TRUE(grid.SetDim(4u, 4u, 4u));
+    grid.SetUnitCell(1e-30f, 4.0f, 4.0f, 90.0f, 90.0f, 90.0f, 4u, 4u, 4u);
+    grid.SetMid(0.0f, 0.0f, 0.0f);
+
+    float x0 = 0.0f, y0 = 0.0f, z0 = 0.0f;
+    float xf = 0.0f, yf = 0.0f, zf = 0.0f;
+    ASSERT_TRUE(grid.ElementToSpatialCoord(0u, x0, y0, z0));
+    ASSERT_TRUE(grid.ElementToSpatialCoord(3u, xf, yf, zf));
+    ASSERT_TRUE(std::isfinite(x0));
+    ASSERT_EQ(x0, xf) << "the x span must be exactly zero for this to reach check 5";
+
+    EXPECT_THROW(get_grid_params(grid), GridError);
+    try {
+        get_grid_params(grid);
+        FAIL() << "expected GridError";
+    } catch (const GridError& err) {
+        const std::string what = err.what();
+        EXPECT_NE(what.find("axis x"), std::string::npos) << what;
+        EXPECT_NE(what.find("finite and positive"), std::string::npos) << what;
+    }
+}
+
+// Derivation check 2 (ElementToSpatialCoord returning false) has no test.
+//   - It is the only one of the five with no reachable public construction.
+//   - Probed against OpenEye 2026.1.0: the call returned true on a default
+//     1x1x1 grid, on a well-formed 4x4x4, and on both degenerate grids above --
+//     including the one whose coordinates are all NaN. (Task 1 report.)
+//   - The check stays in get_grid_params because a grid arriving from a reader
+//     rather than from the setters, or a future toolkit release, could reach it.
+
+TEST(GridParamsDerivation, RejectsANonAxisAlignedCell) {
+    // Check 4: a 60-degree gamma tilts the b axis into x, so a per-axis
+    // spacing cannot describe the sampling.
+    OESystem::OESkewGrid grid;
+    ASSERT_TRUE(grid.SetDim(10u, 10u, 10u));
+    ASSERT_TRUE(grid.SetUnitCell(10.0f, 10.0f, 10.0f, 90.0f, 90.0f, 60.0f,
+                                 10u, 10u, 10u));
+    ASSERT_TRUE(grid.SetMid(0.0f, 0.0f, 0.0f));
+    EXPECT_THROW(get_grid_params(grid), CellError);
+    try {
+        get_grid_params(grid);
+        FAIL() << "expected CellError";
+    } catch (const CellError& err) {
+        const std::string what = err.what();
+        EXPECT_NE(what.find("axis y"), std::string::npos) << what;
+        EXPECT_NE(what.find("into x"), std::string::npos) << what;
+    }
+}
+
+TEST(GridParamsDerivation, ReportsTheFirstFailingCheckNotTheLast) {
+    // A default-constructed grid is 1x1x1, so it fails check 1 on every axis;
+    // it would also fail check 5, because a zero span over zero intervals
+    // derives a NaN spacing. The check-1 message is the one that must surface.
+    const OESystem::OESkewGrid grid;
+    try {
+        get_grid_params(grid);
+        FAIL() << "expected GridError";
+    } catch (const GridError& err) {
+        const std::string what = err.what();
+        EXPECT_NE(what.find("axis x"), std::string::npos) << what;
+        EXPECT_NE(what.find("at least 2 nodes"), std::string::npos) << what;
+    }
+}
+
+TEST(SameGridGeometry, TrueForTwoGridsWithTheSameSampling) {
+    const OESystem::OESkewGrid lhs = MakeSkewGrid(4u, 5u, 6u);
+    const OESystem::OESkewGrid rhs = MakeSkewGrid(4u, 5u, 6u);
+    EXPECT_TRUE(same_grid_geometry(lhs, rhs));
+}
+
+TEST(SameGridGeometry, FalseWhenADimensionDiffers) {
+    const OESystem::OESkewGrid lhs = MakeSkewGrid(4u, 5u, 6u);
+    const OESystem::OESkewGrid rhs = MakeSkewGrid(4u, 5u, 7u);
+    EXPECT_FALSE(same_grid_geometry(lhs, rhs));
+}
+
+TEST(SameGridGeometry, ThrowsRatherThanReportingDifferentForAnUnderivableGrid) {
+    // Both operands go through get_grid_params, so a grid whose geometry cannot
+    // be derived is an error rather than a "these differ" answer. This is the
+    // documented departure from OEGridSameGeometry, which returned false.
+    const OESystem::OESkewGrid lhs = MakeSkewGrid(4u, 5u, 6u);
+    const OESystem::OESkewGrid rhs;  // default-constructed: 1x1x1
+    EXPECT_THROW(same_grid_geometry(lhs, rhs), GridError);
 }

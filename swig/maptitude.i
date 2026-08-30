@@ -765,7 +765,18 @@ struct GridParams {
     unsigned int x_dim;
     unsigned int y_dim;
     unsigned int z_dim;
-    double spacing;
+    double x_spacing;
+    double y_spacing;
+    double z_spacing;
+};
+
+struct UnitCellParams {
+    double a;
+    double b;
+    double c;
+    double alpha;
+    double beta;
+    double gamma;
 };
 
 // ============================================================================

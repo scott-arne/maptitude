@@ -14,30 +14,114 @@
 
 namespace OESystem {
 class OEScalarGrid;
+class OESkewGrid;
 }
 
 namespace Maptitude {
 
 /**
  * @brief Parameters describing a grid's geometry.
+ *
+ * Spacing is per-axis: crystallographic maps commonly sample the three cell
+ * edges at different intervals, and collapsing them to one scalar both
+ * resamples the density and mispositions the nodes.
  */
 struct GridParams {
-    double x_origin;     ///< X origin (Angstroms)
-    double y_origin;     ///< Y origin (Angstroms)
-    double z_origin;     ///< Z origin (Angstroms)
-    unsigned int x_dim;  ///< Number of grid points in X
-    unsigned int y_dim;  ///< Number of grid points in Y
-    unsigned int z_dim;  ///< Number of grid points in Z
-    double spacing;      ///< Grid spacing (Angstroms)
+    double x_origin;      ///< Cartesian x of element 0 (Angstroms)
+    double y_origin;      ///< Cartesian y of element 0 (Angstroms)
+    double z_origin;      ///< Cartesian z of element 0 (Angstroms)
+    unsigned int x_dim;   ///< Number of grid nodes along x
+    unsigned int y_dim;   ///< Number of grid nodes along y
+    unsigned int z_dim;   ///< Number of grid nodes along z
+    double x_spacing;     ///< Node interval along x (Angstroms)
+    double y_spacing;     ///< Node interval along y (Angstroms)
+    double z_spacing;     ///< Node interval along z (Angstroms)
+};
+
+/// Unit cell of a skew grid: a, b, c in Angstroms, alpha, beta, gamma in degrees.
+struct UnitCellParams {
+    double a;      ///< Cell edge a (Angstroms)
+    double b;      ///< Cell edge b (Angstroms)
+    double c;      ///< Cell edge c (Angstroms)
+    double alpha;  ///< Angle between b and c (degrees)
+    double beta;   ///< Angle between a and c (degrees)
+    double gamma;  ///< Angle between a and b (degrees)
 };
 
 /**
- * @brief Extract geometry parameters from an OEScalarGrid.
+ * @brief Derive per-axis geometry from a skew grid.
+ *
+ * OESkewGrid exposes no spacing getter that survives anisotropy, so the
+ * intervals are measured: walk from element 0 to the far node of each axis
+ * with ElementToSpatialCoord and divide by the interval count.
  *
  * @param grid Input grid.
  * @return GridParams describing the grid geometry.
+ * @throws GridError If an axis has fewer than two nodes, a node has no spatial
+ *         coordinate or a non-finite one, or a derived interval is not finite
+ *         and positive.
+ * @throws CellError If an axis leaks more than 1e-4 Angstroms into another
+ *         axis over its full span, i.e. the sampling is not axis-aligned.
  */
-GridParams get_grid_params(const OESystem::OEScalarGrid& grid);
+GridParams get_grid_params(const OESystem::OESkewGrid& grid);
+
+/**
+ * @brief Read a skew grid's unit cell.
+ *
+ * @param grid Input grid.
+ * @return The six cell parameters.
+ * @throws CellError If the grid has no unit cell. Returning zeros would let a
+ *         caller divide by an edge that was never set.
+ */
+UnitCellParams get_unit_cell(const OESystem::OESkewGrid& grid);
+
+/// Cartesian position of the first node (element 0).
+void grid_node_origin(const GridParams& gp, double& x, double& y, double& z);
+
+/**
+ * @brief Bounding-box corners, half a spacing outside the first and last nodes.
+ *
+ * This reproduces what the scalar carrier's GetXMin/GetXMax family returned. It is
+ * for diagnostics and geometry descriptions only: it is deliberately NOT the
+ * domain over which interpolate_density returns interpolated data. Use
+ * grid_contains for that.
+ */
+void grid_bounds(const GridParams& gp,
+                 double& xmin, double& ymin, double& zmin,
+                 double& xmax, double& ymax, double& zmax);
+
+/**
+ * @brief Fractional node index along each axis.
+ *
+ * Values outside [0, n_i - 1] denote a point outside the grid.
+ */
+void grid_fractional_index(const GridParams& gp,
+                           double x, double y, double z,
+                           double& fx, double& fy, double& fz);
+
+/**
+ * @brief True when (x, y, z) lies within the node span on all three axes.
+ *
+ * That is the domain over which interpolate_density returns interpolated data.
+ * It is narrower than the scalar carrier's IsInGrid, which admitted the
+ * half-spacing shell outside the outermost nodes.
+ */
+bool grid_contains(const GridParams& gp, double x, double y, double z);
+
+/**
+ * @brief True when two grids describe the same sampling of the same region.
+ *
+ * Equal dims, per-axis spacing and node origin within @p tol Angstroms, and
+ * equal unit-cell presence and parameters.
+ *
+ * Both operands go through get_grid_params, so a grid whose geometry cannot be
+ * derived throws here where OEGridSameGeometry returned false.
+ *
+ * @throws GridError, CellError As get_grid_params, for either operand.
+ */
+bool same_grid_geometry(const OESystem::OESkewGrid& lhs,
+                        const OESystem::OESkewGrid& rhs,
+                        double tol = 1e-6);
 
 /**
  * @brief Copy grid values to a flat vector (z-fastest order).

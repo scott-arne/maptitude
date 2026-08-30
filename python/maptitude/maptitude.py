@@ -1033,7 +1033,9 @@ class GridParams(object):
     x_dim = property(_maptitude.GridParams_x_dim_get, _maptitude.GridParams_x_dim_set)
     y_dim = property(_maptitude.GridParams_y_dim_get, _maptitude.GridParams_y_dim_set)
     z_dim = property(_maptitude.GridParams_z_dim_get, _maptitude.GridParams_z_dim_set)
-    spacing = property(_maptitude.GridParams_spacing_get, _maptitude.GridParams_spacing_set)
+    x_spacing = property(_maptitude.GridParams_x_spacing_get, _maptitude.GridParams_x_spacing_set)
+    y_spacing = property(_maptitude.GridParams_y_spacing_get, _maptitude.GridParams_y_spacing_set)
+    z_spacing = property(_maptitude.GridParams_z_spacing_get, _maptitude.GridParams_z_spacing_set)
 
     def __init__(self):
         _maptitude.GridParams_swiginit(self, _maptitude.new_GridParams())
@@ -1041,6 +1043,22 @@ class GridParams(object):
 
 # Register GridParams in _maptitude:
 _maptitude.GridParams_swigregister(GridParams)
+class UnitCellParams(object):
+    thisown = property(lambda x: x.this.own(), lambda x, v: x.this.own(v), doc="The membership flag")
+    __repr__ = _swig_repr
+    a = property(_maptitude.UnitCellParams_a_get, _maptitude.UnitCellParams_a_set)
+    b = property(_maptitude.UnitCellParams_b_get, _maptitude.UnitCellParams_b_set)
+    c = property(_maptitude.UnitCellParams_c_get, _maptitude.UnitCellParams_c_set)
+    alpha = property(_maptitude.UnitCellParams_alpha_get, _maptitude.UnitCellParams_alpha_set)
+    beta = property(_maptitude.UnitCellParams_beta_get, _maptitude.UnitCellParams_beta_set)
+    gamma = property(_maptitude.UnitCellParams_gamma_get, _maptitude.UnitCellParams_gamma_set)
+
+    def __init__(self):
+        _maptitude.UnitCellParams_swiginit(self, _maptitude.new_UnitCellParams())
+    __swig_destroy__ = _maptitude.delete_UnitCellParams
+
+# Register UnitCellParams in _maptitude:
+_maptitude.UnitCellParams_swigregister(UnitCellParams)
 
 def get_grid_params(grid):
     return _maptitude.get_grid_params(grid)

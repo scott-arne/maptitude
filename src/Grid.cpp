@@ -1,23 +1,194 @@
 #include "maptitude/Grid.h"
+#include "maptitude/Error.h"
 
 #include <oegrid.h>
 
 #include <cmath>
+#include <sstream>
+#include <string>
 
 namespace Maptitude {
 
-GridParams get_grid_params(const OESystem::OEScalarGrid& grid) {
-    float fx, fy, fz;
-    grid.ElementToSpatialCoord(0, fx, fy, fz);
-    return GridParams{
-        static_cast<double>(fx),
-        static_cast<double>(fy),
-        static_cast<double>(fz),
-        grid.GetXDim(),
-        grid.GetYDim(),
-        grid.GetZDim(),
-        grid.GetSpacing()
-    };
+namespace {
+
+/// Read one node's Cartesian coordinate, enforcing derivation checks 2 and 3.
+/// @p axis names the axis whose walk needs this node, for the error text.
+void ReadNodeCoord(const OESystem::OESkewGrid& grid, const unsigned int element,
+                   const char* axis, double out[3]) {
+    static const char* const COMPONENT[3] = {"x", "y", "z"};
+    float f[3] = {0.0f, 0.0f, 0.0f};
+
+    if (!grid.ElementToSpatialCoord(element, f[0], f[1], f[2])) {
+        std::ostringstream message;
+        message << "Grid element " << element << " (walking axis " << axis
+                << ") has no spatial coordinate; the geometry cannot be derived";
+        throw GridError(message.str());
+    }
+
+    for (int j = 0; j < 3; ++j) {
+        if (!std::isfinite(f[j])) {
+            std::ostringstream message;
+            message << "Grid element " << element << " (walking axis " << axis
+                    << ") has a non-finite " << COMPONENT[j] << " coordinate ("
+                    << f[j] << "); the geometry cannot be derived";
+            throw GridError(message.str());
+        }
+        out[j] = f[j];
+    }
+}
+
+/// The containment predicate, taking an already-computed fractional index.
+///
+/// The spec requires `interpolate_density` to share `grid_contains`'s predicate
+/// rather than restate it, so the prechecks and the interpolator cannot drift
+/// apart. A direct call would not serve: `interpolate_density_at` (Task 2, same
+/// translation unit) needs the fractional index itself for the blend, and
+/// calling `grid_contains(gp, x, y, z)` would recompute `grid_fractional_index`
+/// a second time in the hottest loop in the library. Taking the index instead
+/// gives both callers one predicate and one index computation each.
+///
+/// Written positively: a NaN fractional index must report "outside", and a
+/// negated range comparison would pass it.
+bool ContainsFractionalIndex(const GridParams& gp,
+                             const double fx, const double fy, const double fz) {
+    return std::isfinite(fx) && std::isfinite(fy) && std::isfinite(fz) &&
+           fx >= 0.0 && fx <= gp.x_dim - 1.0 &&
+           fy >= 0.0 && fy <= gp.y_dim - 1.0 &&
+           fz >= 0.0 && fz <= gp.z_dim - 1.0;
+}
+
+}  // namespace
+
+GridParams get_grid_params(const OESystem::OESkewGrid& grid) {
+    static const char* const AXIS[3] = {"x", "y", "z"};
+    // Off-axis drift above this over an axis's full span means the sampling is
+    // not axis-aligned, so no per-axis spacing describes it.
+    constexpr double MAX_OFF_AXIS_LEAK = 1e-4;
+
+    const unsigned int n[3] = {grid.GetXDim(), grid.GetYDim(), grid.GetZDim()};
+
+    // Check 1 runs over all three axes before any walk, so a grid that fails
+    // both check 1 and check 5 reports check 1.
+    for (int i = 0; i < 3; ++i) {
+        if (n[i] < 2) {
+            std::ostringstream message;
+            message << "Grid axis " << AXIS[i] << " has dimension " << n[i]
+                    << "; deriving a node interval needs at least 2 nodes on every axis";
+            throw GridError(message.str());
+        }
+    }
+
+    // Elements linearize x-fastest: el = iz*nx*ny + iy*nx + ix.
+    const unsigned int step[3] = {1u, n[0], n[0] * n[1]};
+
+    double origin[3];
+    ReadNodeCoord(grid, 0u, AXIS[0], origin);
+
+    double spacing[3];
+    for (int i = 0; i < 3; ++i) {
+        double node[3];
+        ReadNodeCoord(grid, (n[i] - 1u) * step[i], AXIS[i], node);
+
+        for (int j = 0; j < 3; ++j) {
+            if (j == i) continue;
+            const double leak = std::abs(node[j] - origin[j]);
+            if (leak > MAX_OFF_AXIS_LEAK) {
+                std::ostringstream message;
+                message << "Grid axis " << AXIS[i] << " leaks " << leak
+                        << " A into " << AXIS[j] << " over its full span (limit "
+                        << MAX_OFF_AXIS_LEAK << " A); maptitude requires axis-aligned sampling";
+                throw CellError(message.str());
+            }
+        }
+
+        // Averaging over every interval on the axis, rather than measuring one
+        // adjacent step, divides ElementToSpatialCoord's float noise by n_i - 1.
+        // On 1d26 that is the difference between 0.902082443 (single step) and
+        // 0.902083317 (full walk) against a true 0.902083333.
+        spacing[i] = (node[i] - origin[i]) / (n[i] - 1u);
+
+        if (!std::isfinite(spacing[i]) || spacing[i] <= 0.0) {
+            std::ostringstream message;
+            message << "Grid axis " << AXIS[i] << " has a derived node interval of "
+                    << spacing[i] << " A; the interval must be finite and positive";
+            throw GridError(message.str());
+        }
+    }
+
+    return GridParams{origin[0], origin[1], origin[2],
+                      n[0],      n[1],      n[2],
+                      spacing[0], spacing[1], spacing[2]};
+}
+
+UnitCellParams get_unit_cell(const OESystem::OESkewGrid& grid) {
+    float a = 0.0f, b = 0.0f, c = 0.0f, alpha = 0.0f, beta = 0.0f, gamma = 0.0f;
+    if (!grid.HasUnitCell() || !grid.GetUnitCell(a, b, c, alpha, beta, gamma)) {
+        throw CellError("Grid has no unit cell; its cell parameters cannot be read");
+    }
+    return UnitCellParams{a, b, c, alpha, beta, gamma};
+}
+
+void grid_node_origin(const GridParams& gp, double& x, double& y, double& z) {
+    x = gp.x_origin;
+    y = gp.y_origin;
+    z = gp.z_origin;
+}
+
+void grid_bounds(const GridParams& gp,
+                 double& xmin, double& ymin, double& zmin,
+                 double& xmax, double& ymax, double& zmax) {
+    // The scalar carrier's box ran half a spacing outside the first and last
+    // nodes on each face: GetXMin() == GetXMid() - n_x*s_x/2 while element 0
+    // sits at GetXMid() - (n_x-1)*s_x/2.
+    xmin = gp.x_origin - gp.x_spacing / 2.0;
+    ymin = gp.y_origin - gp.y_spacing / 2.0;
+    zmin = gp.z_origin - gp.z_spacing / 2.0;
+    xmax = gp.x_origin + (gp.x_dim - 0.5) * gp.x_spacing;
+    ymax = gp.y_origin + (gp.y_dim - 0.5) * gp.y_spacing;
+    zmax = gp.z_origin + (gp.z_dim - 0.5) * gp.z_spacing;
+}
+
+void grid_fractional_index(const GridParams& gp,
+                           const double x, const double y, const double z,
+                           double& fx, double& fy, double& fz) {
+    fx = (x - gp.x_origin) / gp.x_spacing;
+    fy = (y - gp.y_origin) / gp.y_spacing;
+    fz = (z - gp.z_origin) / gp.z_spacing;
+}
+
+bool grid_contains(const GridParams& gp,
+                   const double x, const double y, const double z) {
+    double fx = 0.0, fy = 0.0, fz = 0.0;
+    grid_fractional_index(gp, x, y, z, fx, fy, fz);
+    return ContainsFractionalIndex(gp, fx, fy, fz);
+}
+
+bool same_grid_geometry(const OESystem::OESkewGrid& lhs,
+                        const OESystem::OESkewGrid& rhs,
+                        const double tol) {
+    const GridParams a = get_grid_params(lhs);
+    const GridParams b = get_grid_params(rhs);
+
+    if (a.x_dim != b.x_dim || a.y_dim != b.y_dim || a.z_dim != b.z_dim) return false;
+    if (std::abs(a.x_spacing - b.x_spacing) > tol) return false;
+    if (std::abs(a.y_spacing - b.y_spacing) > tol) return false;
+    if (std::abs(a.z_spacing - b.z_spacing) > tol) return false;
+    if (std::abs(a.x_origin - b.x_origin) > tol) return false;
+    if (std::abs(a.y_origin - b.y_origin) > tol) return false;
+    if (std::abs(a.z_origin - b.z_origin) > tol) return false;
+
+    if (lhs.HasUnitCell() != rhs.HasUnitCell()) return false;
+    if (lhs.HasUnitCell()) {
+        const UnitCellParams ca = get_unit_cell(lhs);
+        const UnitCellParams cb = get_unit_cell(rhs);
+        if (std::abs(ca.a - cb.a) > tol) return false;
+        if (std::abs(ca.b - cb.b) > tol) return false;
+        if (std::abs(ca.c - cb.c) > tol) return false;
+        if (std::abs(ca.alpha - cb.alpha) > tol) return false;
+        if (std::abs(ca.beta - cb.beta) > tol) return false;
+        if (std::abs(ca.gamma - cb.gamma) > tol) return false;
+    }
+    return true;
 }
 
 std::vector<double> grid_to_vector(const OESystem::OEScalarGrid& grid) {

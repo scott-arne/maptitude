@@ -222,7 +222,7 @@ static void InterpolateUCToGrid(
     const GridParams gp = get_grid_params(out_template);
 
     for (unsigned int iz = 0; iz < gp.z_dim; ++iz) {
-        const double z = gp.z_origin + iz * gp.spacing;
+        const double z = gp.z_origin + iz * gp.z_spacing;
         double fz = std::fmod(z / c, 1.0);
         if (fz < 0.0) fz += 1.0;
         const double gk = fz * nz;
@@ -231,7 +231,7 @@ static void InterpolateUCToGrid(
         const double dk = gk - static_cast<int>(gk);
 
         for (unsigned int iy = 0; iy < gp.y_dim; ++iy) {
-            const double y = gp.y_origin + iy * gp.spacing;
+            const double y = gp.y_origin + iy * gp.y_spacing;
             double fy = std::fmod(y / b, 1.0);
             if (fy < 0.0) fy += 1.0;
             const double gj = fy * ny;
@@ -240,7 +240,7 @@ static void InterpolateUCToGrid(
             const double dj = gj - static_cast<int>(gj);
 
             for (unsigned int ix = 0; ix < gp.x_dim; ++ix) {
-                const double x = gp.x_origin + ix * gp.spacing;
+                const double x = gp.x_origin + ix * gp.x_spacing;
                 double fx = std::fmod(x / a, 1.0);
                 if (fx < 0.0) fx += 1.0;
                 const double gi = fx * nx;
