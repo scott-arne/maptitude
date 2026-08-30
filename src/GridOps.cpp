@@ -130,9 +130,8 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     // The centroid shift below divides by each cell edge, which is infinite for a
     // zero divisor and meaningless for a non-finite one, so the molecule is
     // translated to nowhere and every voxel of the padded grid comes back NaN with
-    // no error. Validate all three edges up front: the commensurability check on
-    // the sampling path runs too late to protect the shift, and it would report a
-    // zero edge as a mismatch rather than as the nonsense it is.
+    // no error. This runs before the commensurability check because that check
+    // would report a zero edge as a mismatch rather than as the nonsense it is.
     const double edges[3] = {cell_a, cell_b, cell_c};
     const char* edge_names[3] = {"cell_a", "cell_b", "cell_c"};
     for (int i = 0; i < 3; ++i) {
@@ -145,6 +144,13 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     }
 
     const GridParams gp = get_grid_params(grid);
+
+    // The padded grid is filled by periodic sampling, so an incommensurate cell
+    // makes this call fail whatever else happens. Reject it before the shift
+    // rather than after: the shift is by whole multiples of the given edges and
+    // is applied in place, so a throw from further down would leave the caller's
+    // molecule moved by a lattice that was never the grid's.
+    require_commensurate_cell(gp, cell_a, cell_b, cell_c);
 
     // Compute heavy-atom centroid
     double cx = 0.0, cy = 0.0, cz = 0.0;
@@ -241,9 +247,6 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
         max_x + padding, max_y + padding, max_z + padding
     };
     static const char* const AXIS[3] = {"x", "y", "z"};
-    // Relative tolerance for recognising a whole number of node intervals, matching
-    // same_grid_geometry's default.
-    constexpr double INTERVAL_COUNT_TOL = 1e-6;
     const double src_spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
     unsigned int pad_dim[3];
     double pad_mid[3];
@@ -256,7 +259,7 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
         const double intervals = extent / src_spacing[i];
         const double whole = std::round(intervals);
         const double count =
-            std::abs(intervals - whole) <= INTERVAL_COUNT_TOL * std::max(1.0, whole)
+            std::abs(intervals - whole) <= PAD_INTERVAL_COUNT_TOL * std::max(1.0, whole)
                 ? whole
                 : std::ceil(intervals);
         pad_dim[i] = static_cast<unsigned int>(count) + 1u;

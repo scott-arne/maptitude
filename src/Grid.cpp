@@ -12,23 +12,56 @@ namespace Maptitude {
 
 namespace {
 
-/// Boundary tolerance for the node span, in fractional-index units.
+/// Bound on one double -> float -> double round trip, relative to the magnitude
+/// of the value rounded: half an ulp of float.
 ///
-/// A grid's node origin is not a stored quantity: it comes back from
-/// ElementToSpatialCoord, whose fractional-to-Cartesian matrix carries a
-/// cos(90 deg) ~ 6.1e-17 term, so a first node built at exactly 0.0 reports
-/// 1.53e-15. Without a tolerance a caller querying the very coordinate they
-/// built the grid with is told the point is outside it. At a 1 A node interval
-/// this admits 1e-9 A: six orders above that noise, and eight orders below half
-/// a node, so it cannot reach into territory the grid does not sample.
-constexpr double NODE_SPAN_EPS = 1e-9;
+/// Nothing about a grid's geometry is stored in double. Every node coordinate
+/// reaches maptitude through ElementToSpatialCoord as a float, so this, scaled by
+/// the magnitudes an axis's geometry actually takes, is the noise floor on both
+/// the node span and the sampled extent. The scaling is the point: a grid at the
+/// Cartesian origin shows only the fractional-to-Cartesian matrix's
+/// cos(90 deg) ~ 6.1e-17 term, around 1.5e-15 A, while the same five-node grid
+/// moved to 12.3 A reports its first node 1.9e-7 A away -- eight orders larger.
+/// A fixed tolerance sized for the first case rejects a caller querying the
+/// second grid's own corner.
+constexpr double FLOAT_HALF_ULP = 5.9604644775390625e-08;  // 0x1p-24
 
-/// Relative tolerance for the periodic path's commensurability check.
+/// Float roundings that separate a caller's nominal node coordinate from the
+/// derived end of the node span.
 ///
-/// Matched to same_grid_geometry's default: both ask whether two derived
-/// geometries describe the same sampling, and a cell that agrees with the grid
-/// closely enough for one should not be refused by the other.
-constexpr double CELL_COMMENSURATE_TOL = 1e-6;
+/// Six, each bounded by FLOAT_HALF_ULP times AxisMagnitude: the grid centre and
+/// the unit-cell edge as OpenEye stores them, the division of that edge by the
+/// dim that gives its internal node interval, the float the endpoint coordinate
+/// is returned as, and the two endpoint coordinates a second time, re-entering
+/// through the interval get_grid_params derives by walking the full span -- an
+/// interval whose relative error is multiplied back by |f|, which at the far
+/// face is the n - 1 it was divided by.
+///
+/// A sweep of every axis this file's tests can build -- dims 2 to 256, 97
+/// spacings from 0.15 to 4.1 A, origins from -span to +1000 A, some 270,000
+/// grids -- puts the worst node-span error at 2.63 of these units, so the count
+/// is a bound with better than a factor of two in hand.
+constexpr double NODE_SPAN_ROUNDINGS = 6.0;
+
+/// Float roundings that separate a caller's cell edge from the extent the grid
+/// samples, n * spacing.
+///
+/// Seven are countable, each bounded by FLOAT_HALF_ULP times AxisMagnitude:
+/// three at the edge's own magnitude (the edge as OpenEye stores it, the
+/// division by the dim, and the caller's edge, itself a float whenever it came
+/// from a CCP4 header or GetUnitCell) and four from the two endpoint
+/// coordinates, whose roundings are amplified by the n / (n - 1) rescale from
+/// the (n - 1)-interval walk to an n-interval extent -- at most 2 each, at the
+/// two-node grid this still accepts. Eight is used rather than seven because
+/// the count models OpenEye's fractional-to-Cartesian step as a single division
+/// where it is in fact a stored skew matrix applied in float.
+///
+/// The same 270,000-grid sweep puts the worst extent error at 3.95 of these
+/// units. Note this cannot borrow same_grid_geometry's tolerance, which is
+/// generous for a different reason: that comparison has a derived quantity on
+/// both sides, so the float noise is common-mode and mostly cancels. Here one
+/// side is the caller's own number and nothing cancels.
+constexpr double CELL_EXTENT_ROUNDINGS = 8.0;
 
 /// Read one node's Cartesian coordinate, enforcing derivation checks 2 and 3.
 /// @p axis names the axis whose walk needs this node, for the error text.
@@ -56,6 +89,36 @@ void ReadNodeCoord(const OESystem::OESkewGrid& grid, const unsigned int element,
     }
 }
 
+/// Largest magnitude any float in an axis's geometry takes, which sets its noise
+/// floor.
+///
+/// Both endpoints matter, because the grid centre a node coordinate is stored
+/// relative to lies between them. So does the cell edge, n * spacing: it is
+/// stored as a float too, and for a grid straddling the Cartesian origin it is
+/// the largest of the three -- up to 2n / (n - 1) times either endpoint. Scaling
+/// by the endpoints alone would then understate the noise fourfold on a two-node
+/// axis. The result is never zero: it is at least the cell edge, and
+/// get_grid_params has already rejected a non-positive interval.
+double AxisMagnitude(const double origin, const unsigned int dim, const double spacing) {
+    return std::max(std::max(std::abs(origin), std::abs(origin + (dim - 1u) * spacing)),
+                    dim * spacing);
+}
+
+/// True when a fractional index lies within its axis's node span, allowing for
+/// the float noise on the span's own endpoints.
+///
+/// The comparison runs in Angstroms rather than in fractional units: the slack is
+/// naturally a Cartesian quantity, and multiplying the index by the interval
+/// tests the same thing as dividing the slack by it while keeping a division off
+/// the library's hottest path. The slack is a property of the grid alone, so a
+/// query far from the grid does not widen the span it is tested against.
+bool WithinAxisSpan(const double f, const double origin, const unsigned int dim,
+                    const double spacing) {
+    const double tol =
+        NODE_SPAN_ROUNDINGS * FLOAT_HALF_ULP * AxisMagnitude(origin, dim, spacing);
+    return f * spacing >= -tol && (f - (dim - 1u)) * spacing <= tol;
+}
+
 /// The containment predicate, taking an already-computed fractional index.
 ///
 /// The spec requires `interpolate_density` to share `grid_contains`'s predicate
@@ -66,14 +129,24 @@ void ReadNodeCoord(const OESystem::OESkewGrid& grid, const unsigned int element,
 /// a second time in the hottest loop in the library. Taking the index instead
 /// gives both callers one predicate and one index computation each.
 ///
-/// Written positively: a NaN fractional index must report "outside", and a
-/// negated range comparison would pass it.
+/// The range test is written positively, which is what rejects a non-finite
+/// index: every comparison against NaN is false, so NaN reports "outside"
+/// without help, and so do both infinities. Written the other way round, as
+/// `!(f < 0 || f > n - 1)`, NaN would pass.
+///
+/// The isfinite conjuncts are therefore redundant today -- deleting them leaves
+/// every test in this suite passing, which is how that was established rather
+/// than assumed. They are kept as a guard on the two ways this could stop being
+/// true: a negated rewrite of the range test, and a slack derived from the query
+/// instead of from the grid, which would make `f <= (n - 1) + inf` hold. Neither
+/// is hypothetical enough to be worth a wrong answer for an infinite coordinate,
+/// and the cost is three predictable branches outside the blend.
 bool ContainsFractionalIndex(const GridParams& gp,
                              const double fx, const double fy, const double fz) {
     return std::isfinite(fx) && std::isfinite(fy) && std::isfinite(fz) &&
-           fx >= -NODE_SPAN_EPS && fx <= (gp.x_dim - 1.0) + NODE_SPAN_EPS &&
-           fy >= -NODE_SPAN_EPS && fy <= (gp.y_dim - 1.0) + NODE_SPAN_EPS &&
-           fz >= -NODE_SPAN_EPS && fz <= (gp.z_dim - 1.0) + NODE_SPAN_EPS;
+           WithinAxisSpan(fx, gp.x_origin, gp.x_dim, gp.x_spacing) &&
+           WithinAxisSpan(fy, gp.y_origin, gp.y_dim, gp.y_spacing) &&
+           WithinAxisSpan(fz, gp.z_origin, gp.z_dim, gp.z_spacing);
 }
 
 /// Trilinear blend of the eight corners named by per-axis element offsets.
@@ -226,10 +299,10 @@ double interpolate_density_at(const GridParams& gp, const float* values,
     // Clamping the base index keeps a point exactly on the far face inside the
     // last cell with t == 1.0, rather than indexing one node past the end. Both
     // clamps carry load now that the containment check admits a boundary
-    // tolerance: floor() puts the corner one cell below the array at
-    // f == -NODE_SPAN_EPS and one cell above the last full cell at
-    // f == (n - 1) + NODE_SPAN_EPS. Clamping the weight to match stops the blend
-    // extrapolating that tolerance back out past the edge node.
+    // tolerance: floor() puts the corner one cell below the array just below
+    // f == 0 and one cell above the last full cell just above f == n - 1.
+    // Clamping the weight to match stops the blend extrapolating that tolerance
+    // back out past the edge node.
     const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
     const unsigned int stride[3] = {1u, gp.x_dim, gp.x_dim * gp.y_dim};
     unsigned int lo[3], hi[3];
@@ -322,35 +395,35 @@ std::vector<double> interpolate_density_batch(
     return result;
 }
 
-namespace {
-
-/// Reject a cell edge that is not the extent this grid samples.
-///
-/// The periodic path makes node n_i - 1 adjacent to node 0, which reproduces the
-/// crystal only when one period of the map is exactly the n_i nodes the grid
-/// holds. An edge that disagrees describes a different lattice, and wrapping
-/// onto it would return densities from the wrong place with nothing to mark them
-/// as wrong.
-void RequireCommensurateCell(const GridParams& gp, const double cell_a,
-                             const double cell_b, const double cell_c) {
+void require_commensurate_cell(const GridParams& gp, const double cell_a,
+                               const double cell_b, const double cell_c) {
     static const char* const EDGE[3] = {"a", "b", "c"};
     static const char* const AXIS[3] = {"x", "y", "z"};
     const double given[3] = {cell_a, cell_b, cell_c};
     const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
     const double spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
+    const double origin[3] = {gp.x_origin, gp.y_origin, gp.z_origin};
 
     for (int i = 0; i < 3; ++i) {
         const double extent = n[i] * spacing[i];
-        if (!NearlyEqual(given[i], extent, CELL_COMMENSURATE_TOL)) {
+        const double tol = CELL_EXTENT_ROUNDINGS * FLOAT_HALF_ULP *
+                           AxisMagnitude(origin[i], n[i], spacing[i]);
+        // Negated so a non-finite edge lands here rather than passing a
+        // comparison it cannot satisfy either way.
+        if (!(std::abs(given[i] - extent) <= tol)) {
             std::ostringstream message;
             message << "Periodic interpolation needs cell edge " << EDGE[i] << " to equal the "
                        "extent the grid samples along " << AXIS[i] << ": got " << given[i]
                     << " A against " << extent << " A (" << n[i] << " nodes at "
-                    << spacing[i] << " A); the grid does not tile that cell";
+                    << spacing[i] << " A), a difference of " << std::abs(given[i] - extent)
+                    << " A against a " << tol << " A allowance for float node coordinates; "
+                       "the grid does not tile that cell";
             throw CellError(message.str());
         }
     }
 }
+
+namespace {
 
 /// The periodic blend, on a cell already checked commensurate.
 ///
@@ -363,8 +436,10 @@ double WrapAndBlendPeriodic(const GridParams& gp, const float* values,
     grid_fractional_index(gp, x, y, z, f[0], f[1], f[2]);
 
     // The only remaining way out: fmod of a non-finite index is NaN, which would
-    // index the array with garbage. Every finite point has a value here, so this
-    // is the sole use of default_value on the periodic path.
+    // index the array with garbage. What is tested is the fractional index, not
+    // the coordinate -- a finite coordinate large enough that dividing it by the
+    // spacing overflows lands here too. Every point that survives this has a
+    // value, so it is the sole use of default_value on the periodic path.
     if (!std::isfinite(f[0]) || !std::isfinite(f[1]) || !std::isfinite(f[2])) {
         return default_value;
     }
@@ -375,10 +450,14 @@ double WrapAndBlendPeriodic(const GridParams& gp, const float* values,
     double t[3];
     for (int i = 0; i < 3; ++i) {
         // Wrapping the fractional index modulo the node count, rather than the
-        // Cartesian coordinate modulo the cell edge, keeps the modulus exact: the
-        // period is the integer n_i, so no rounding can drop a wrapped point off
-        // the sampled lattice. Adding the period back for a negative remainder can
-        // round the sum up to exactly n_i, which the modulus below absorbs.
+        // Cartesian coordinate modulo the cell edge, makes the reduction itself
+        // exact: fmod is exact by IEEE 754, and the period is the integer n_i.
+        // The wrapped index therefore carries only the error already in f[i], and
+        // a point a hundred cells out is placed no less accurately than one just
+        // past the edge. Reducing the coordinate instead would subtract a rounded
+        // multiple of a rounded cell edge, and that error would grow with the
+        // number of cells crossed. Adding the period back for a negative remainder
+        // can round the sum up to exactly n_i, which the modulus below absorbs.
         const double period = static_cast<double>(n[i]);
         double w = std::fmod(f[i], period);
         if (w < 0.0) w += period;
@@ -400,7 +479,7 @@ double interpolate_density_periodic_at(
     const double x, const double y, const double z,
     const double cell_a, const double cell_b, const double cell_c,
     const double default_value) {
-    RequireCommensurateCell(gp, cell_a, cell_b, cell_c);
+    require_commensurate_cell(gp, cell_a, cell_b, cell_c);
     return WrapAndBlendPeriodic(gp, values, x, y, z, default_value);
 }
 
@@ -423,7 +502,7 @@ std::vector<double> interpolate_density_periodic_batch(
     const GridParams gp = get_grid_params(grid);
     // The cell is a property of the batch, not of a point in it, so the check
     // runs once here rather than num_points times inside the loop.
-    RequireCommensurateCell(gp, cell_a, cell_b, cell_c);
+    require_commensurate_cell(gp, cell_a, cell_b, cell_c);
 
     const float* values = grid.GetValues();
     std::vector<double> result(num_points);

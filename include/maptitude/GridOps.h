@@ -26,6 +26,18 @@ enum class MapOp {
     MAX        ///< Element-wise maximum
 };
 
+/// Relative tolerance wrap_and_pad_grid uses to recognise a whole number of node
+/// intervals in the extent it must cover.
+///
+/// The node interval is measured off float node coordinates, so an extent that is
+/// an exact multiple of it divides to 10.000000000000002 and rounding up alone
+/// would buy a spurious node. A ratio this close to a whole count is taken as
+/// that count, which means the padded node span may fall short of the requested
+/// extent by up to this fraction of it. That bound is part of the function's
+/// contract, not an accident: it is a hundred-thousandth of an Angstrom on a
+/// ten-Angstrom extent, and no caller's padding is specified to that precision.
+constexpr double PAD_INTERVAL_COUNT_TOL = 1e-6;
+
 /**
  * @brief Scale a grid by multiplying all values by a scalar.
  *
@@ -90,7 +102,8 @@ OESystem::OESkewGrid* diff_to_calc(
  * 3. Otherwise, creates a new grid covering the atom range plus padding,
  *    filled by sampling the original grid with periodic wrapping.
  *
- * The molecule is modified in-place (coordinates shifted).
+ * The molecule is modified in-place (coordinates shifted). Both cell checks run
+ * before the shift, so a CellError leaves the molecule where it was.
  *
  * @param grid CCP4 unit-cell grid.
  * @param mol Molecule to wrap (modified in-place).

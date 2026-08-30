@@ -106,7 +106,9 @@ bool grid_contains(const GridParams& gp, double x, double y, double z);
  * The node span is closed on both ends, with a small boundary tolerance. A
  * point exactly on the far face interpolates rather than falling out of the
  * grid, and so does one a rounding error beyond it: the span's endpoints are
- * derived from float node coordinates and are not exact.
+ * derived from float node coordinates and are not exact. The tolerance is
+ * proportional to how far the grid sits from the Cartesian origin, because the
+ * error it absorbs is a float rounding of coordinates at that magnitude.
  *
  * @p gp must come from get_grid_params, and that is what makes the base-index
  * clamp safe: check 1 there rejects any axis with fewer than two nodes, so the
@@ -126,17 +128,49 @@ double interpolate_density_at(const GridParams& gp, const float* values,
                               double default_value = 0.0);
 
 /**
+ * @brief Throw unless the cell edges are the extents the grid samples.
+ *
+ * The periodic path makes node `n_i - 1` adjacent to node 0, which reproduces
+ * the crystal only when one period of the map is exactly the n_i nodes the grid
+ * holds. An edge that disagrees describes a different lattice, and wrapping onto
+ * it would return densities from the wrong place with nothing to mark them as
+ * wrong.
+ *
+ * The comparison is absolute, against an allowance proportional to how far the
+ * grid sits from the Cartesian origin: n_i * spacing_i is derived from float node
+ * coordinates, whose error grows with their magnitude. A cell that disagrees for
+ * a real reason disagrees by a fraction of a node interval at least, which is
+ * orders above the allowance for any grid a crystallographic map produces.
+ *
+ * Exposed so a caller that is about to sample the grid periodically can reject
+ * a bad cell before doing any other work, rather than after.
+ *
+ * @param gp Geometry from get_grid_params.
+ * @param cell_a Unit cell dimension along x (Angstroms).
+ * @param cell_b Unit cell dimension along y (Angstroms).
+ * @param cell_c Unit cell dimension along z (Angstroms).
+ * @throws CellError If an edge is not that axis's extent, or is not finite.
+ */
+void require_commensurate_cell(const GridParams& gp,
+                               double cell_a, double cell_b, double cell_c);
+
+/**
  * @brief Periodic trilinear interpolation at a point, from derived geometry.
  *
  * The counterpart to interpolate_density_at for a map that tiles space. The
  * grid holds exactly one period, so node `n_i - 1`'s upper neighbour is node 0
  * and a point in an axis's final interval blends the two instead of falling off
- * the end. Every finite coordinate therefore has a value; @p default_value is
- * returned only for a non-finite one.
+ * the end. There is no outside to fall into, so @p default_value is returned
+ * only when the point's fractional index is not finite -- which covers a
+ * non-finite coordinate and also a finite one large enough that dividing it by
+ * the spacing overflows.
  *
  * The wrap runs on the fractional index modulo the integer node count rather
- * than on the Cartesian coordinate modulo the cell edge, so a wrapped point
- * lands exactly on the sampled lattice however far outside the grid it started.
+ * than on the Cartesian coordinate modulo the cell edge. The reduction is then
+ * exact -- fmod is exact and the period is an integer -- so the wrapped index
+ * carries only the error already in the fractional index, no matter how many
+ * cells out the point started. Reducing the coordinate instead would accumulate
+ * the cell edge's own rounding once per cell crossed.
  *
  * @param gp Geometry from get_grid_params.
  * @param values The grid's value array, from OESkewGrid::GetValues().
@@ -146,14 +180,16 @@ double interpolate_density_at(const GridParams& gp, const float* values,
  * @param cell_a Unit cell dimension along x (Angstroms).
  * @param cell_b Unit cell dimension along y (Angstroms).
  * @param cell_c Unit cell dimension along z (Angstroms).
- * @param default_value Value returned for a non-finite coordinate.
+ * @param default_value Value returned when the point's fractional index is not
+ *        finite.
  * @return Interpolated density value.
  * @throws CellError If a cell edge is not the extent the grid samples on that
- *         axis, n_i * spacing_i, within a 1e-6 relative tolerance. Treating the
- *         last node as adjacent to the first is only the same lattice when the
- *         two agree; wrapping an incommensurate cell would resample the map
- *         onto a lattice it never had, so the caller is told rather than handed
- *         a plausible wrong number.
+ *         axis, n_i * spacing_i, to within the allowance require_commensurate_cell
+ *         makes for float node coordinates. Treating the last node as adjacent
+ *         to the first is only the same lattice when the two agree; wrapping an
+ *         incommensurate cell would resample the map onto a lattice it never
+ *         had, so the caller is told rather than handed a plausible wrong
+ *         number.
  */
 double interpolate_density_periodic_at(const GridParams& gp, const float* values,
                                        double x, double y, double z,
@@ -241,9 +277,9 @@ std::vector<double> interpolate_density_batch(
  * @brief Periodic-aware trilinear interpolation at a Cartesian point.
  *
  * The grid holds one period of a map that tiles space, so node `n_i - 1`'s upper
- * neighbour is node 0 and every finite point has a value. See
- * interpolate_density_periodic_at for the wrap and its commensurability
- * requirement.
+ * neighbour is node 0 and no point is outside the map. See
+ * interpolate_density_periodic_at for the wrap, the one case @p default_value
+ * still covers, and the commensurability requirement.
  *
  * @param grid Input grid.
  * @param x Cartesian x coordinate.
@@ -252,7 +288,8 @@ std::vector<double> interpolate_density_batch(
  * @param cell_a Unit cell dimension along x (Angstroms).
  * @param cell_b Unit cell dimension along y (Angstroms).
  * @param cell_c Unit cell dimension along z (Angstroms).
- * @param default_value Value returned for a non-finite coordinate.
+ * @param default_value Value returned when a point's fractional index is not
+ *        finite.
  * @return Interpolated density value.
  * @throws GridError As get_grid_params.
  * @throws CellError As get_grid_params, or if a cell edge is not the extent the
@@ -275,7 +312,8 @@ double interpolate_density_periodic(
  * @param cell_a Unit cell dimension along x (Angstroms).
  * @param cell_b Unit cell dimension along y (Angstroms).
  * @param cell_c Unit cell dimension along z (Angstroms).
- * @param default_value Value returned for a non-finite coordinate.
+ * @param default_value Value returned when a point's fractional index is not
+ *        finite.
  * @return Vector of interpolated values.
  * @throws GridError As get_grid_params.
  * @throws CellError As get_grid_params, or if a cell edge is not the extent the

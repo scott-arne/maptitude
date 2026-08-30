@@ -18,27 +18,41 @@ This project is pre-1.0: breaking changes may land in a minor release.
   back as `default_value`: on a 10-node, 1.0 A, cell-10 grid, `x` anywhere in
   `[9, 10)` returned the default. `wrap_and_pad_grid` baked that gap into the
   padded map as zero density — 440 of 1331 voxels on a uniformly filled test
-  grid. Every finite coordinate now has a value; `default_value` is returned
-  only for a non-finite one.
+  grid. There is no longer an outside to fall into: `default_value` is returned
+  only when a point's fractional index is not finite, which covers a non-finite
+  coordinate and also a finite one large enough that dividing it by the spacing
+  overflows.
 - **The periodic entry points and `wrap_and_pad_grid` raise `CellError` for a
   cell that is not the extent the grid samples**, meaning `n * spacing` per
-  axis, compared within a 1e-6 relative tolerance. Making the last node adjacent
-  to the first only reproduces the crystal when one period of the map is exactly
-  the nodes the grid holds; wrapping an incommensurate cell returned density from
-  the wrong place with nothing to mark it as wrong. Callers passing a cell edge
-  that is not the grid's own sampled extent must now correct it.
+  axis. Making the last node adjacent to the first only reproduces the crystal
+  when one period of the map is exactly the nodes the grid holds; wrapping an
+  incommensurate cell returned density from the wrong place with nothing to mark
+  it as wrong. Callers passing a cell edge that is not the grid's own sampled
+  extent must now correct it. `wrap_and_pad_grid` makes the check before it
+  shifts the molecule, so a rejected cell leaves the caller's coordinates where
+  they were; an incommensurate cell that happened to need no padding previously
+  translated the molecule by a vector that was not a lattice vector of the map
+  and reported nothing.
 - **A point on a grid's own corner interpolates instead of falling out of the
-  grid.** The node span is derived from `ElementToSpatialCoord`, whose
-  fractional-to-Cartesian matrix carries a `cos(90 deg) ~ 6e-17` term, so a grid
-  built with its first node at exactly `0.0` reports that node a femtometre
-  higher and a caller querying `0.0` was told the point lay outside. The domain
-  test now carries a boundary tolerance of 1e-9 in fractional-index units, which
-  is six orders above that noise and eight orders below half a node interval.
+  grid.** The node span is derived from `ElementToSpatialCoord`, and its error
+  scales with the coordinates the grid sits at, because OpenEye holds the
+  geometry in float: a five-node grid nominally starting at 12.3 A reports that
+  node 1.9e-7 A away, where the same grid at the Cartesian origin is off by
+  1.5e-15 A. A caller querying the coordinate they built the grid from was told
+  the point lay outside. The domain test and the commensurability test now share
+  one tolerance scheme, a counted number of half-ulps of float times the largest
+  magnitude the axis's geometry takes. Discrimination is unaffected: the
+  boundary tolerance stays four to five orders below half a node interval, and
+  the commensurability tolerance three or more orders below one node interval.
 - **The grid `wrap_and_pad_grid` builds covers the extent it was sized for.**
   The node count truncated the interval count rather than rounding it up, so an
   atom extent that was not a whole number of node intervals produced a grid
   short by up to one interval per axis, leaving the outermost atoms outside the
-  padded grid's own domain.
+  padded grid's own domain. The interval count is snapped to a whole number it
+  is within `PAD_INTERVAL_COUNT_TOL` of before rounding up, so an extent that is
+  an exact multiple does not buy a spurious node; the padded span may therefore
+  fall short by up to that fraction of the requested extent, which is deliberate
+  and is part of the function's documented contract.
 
 ### Removed
 

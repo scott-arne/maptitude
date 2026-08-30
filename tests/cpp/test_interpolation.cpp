@@ -316,11 +316,13 @@ TEST(InterpolateDensityAt, InterpolatesOnTheClosedFarFace) {
 TEST(InterpolateDensityAt, ReturnsTheDefaultOutsideTheBoundaryTolerance) {
     const GridParams gp = UnitGridParams();
     const std::vector<float> v = ElementNumberValues();
-    // 1e-6 fractional units clears the node-span tolerance by three orders while
-    // staying a millionth of a node interval inside the old half-spacing shell,
-    // so this pins the face position and not the tolerance's magnitude.
-    const double over = 3.0 + 1e-6;
-    const double under = -1e-6;
+    // The node-span tolerance scales with the coordinate magnitude the grid
+    // samples, which is 3 A here, so it is around 5e-7 A. 1e-4 clears that by two
+    // orders while staying five thousandths of a node interval inside the old
+    // half-spacing shell, so this pins the face position and not the tolerance's
+    // magnitude.
+    const double over = 3.0 + 1e-4;
+    const double under = -1e-4;
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), over, 0.0, 0.0, OUTSIDE), OUTSIDE);
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, over, 0.0, OUTSIDE), OUTSIDE);
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, over, OUTSIDE), OUTSIDE);
@@ -354,6 +356,30 @@ TEST(InterpolateDensityAt, AdmitsAPointWithinTheBoundaryTolerance) {
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), -1e-10, 0.0, 0.0, OUTSIDE), 0.0);
 }
 
+TEST(InterpolateDensityAt, ScalesTheBoundaryToleranceWithTheGridsCoordinateMagnitude) {
+    const std::vector<float> v = ElementNumberValues();
+    // A grid's node coordinates come back through float, so the error in the
+    // derived span is proportional to the coordinates the grid sits at, not a
+    // constant. Two grids of identical shape, one at the Cartesian origin and one
+    // a thousand Angstroms out, must therefore not share a boundary tolerance:
+    // the same 1e-5 A overshoot is well outside the near grid's noise and well
+    // inside the far grid's. A fixed tolerance has to get one of these wrong --
+    // too small and the far grid rejects its own corner, too large and the near
+    // grid admits a point it does not sample.
+    const GridParams near_origin{0.0, 0.0, 0.0, N, N, N, 1.0, 1.0, 1.0};
+    const GridParams far_out{1000.0, 1000.0, 1000.0, N, N, N, 1.0, 1.0, 1.0};
+
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_at(near_origin, v.data(), 3.0 + 1e-5, 0.0, 0.0, OUTSIDE), OUTSIDE);
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_at(near_origin, v.data(), -1e-5, 0.0, 0.0, OUTSIDE), OUTSIDE);
+
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_at(far_out, v.data(), 1003.0 + 1e-5, 1000.0, 1000.0, OUTSIDE), 3.0);
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_at(far_out, v.data(), 1000.0 - 1e-5, 1000.0, 1000.0, OUTSIDE), 0.0);
+}
+
 TEST(InterpolateDensityAt, ReturnsTheDefaultInTheOuterHalfSpacingShell) {
     const GridParams gp = UnitGridParams();
     const std::vector<float> v = ElementNumberValues();
@@ -368,9 +394,13 @@ TEST(InterpolateDensityAt, ReturnsTheDefaultForANonFiniteCoordinate) {
     const std::vector<float> v = ElementNumberValues();
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const double inf = std::numeric_limits<double>::infinity();
-    // A NaN fractional index fails no range comparison, so ContainsFractionalIndex
-    // needs its isfinite conjuncts as well as its range ones. The infinities would
-    // be caught by the range test alone; the three NaN cases would not.
+    // What is pinned is the verdict, not the mechanism. ContainsFractionalIndex
+    // reaches it twice over: its range test is written positively, so a NaN index
+    // fails every comparison in it, and it also tests isfinite outright. Either
+    // alone suffices today, so neither this test nor the tolerance's magnitude
+    // scaling may assume the other -- a rewrite that negates the range test, or a
+    // slack derived from the query rather than the grid, would leave only one
+    // standing and these cases still have to hold.
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), nan, 1.0, 1.0, OUTSIDE), OUTSIDE);
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 1.0, nan, 1.0, OUTSIDE), OUTSIDE);
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 1.0, 1.0, nan, OUTSIDE), OUTSIDE);

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -172,24 +173,98 @@ TEST(GridOpsTest, InterpolateDensityPeriodicRejectsAnIncommensurateCell) {
 }
 
 TEST(GridOpsTest, InterpolateDensityAcceptsTheNominalNodeOrigin) {
-    // The node origin is derived from ElementToSpatialCoord, and on a 90-degree
-    // cell the fractional-to-Cartesian matrix carries a cos(90 deg) ~ 6e-17 term,
-    // so a grid whose first node is nominally at 0.0 reports it a femtometre above.
-    // Without a boundary tolerance the caller's own construction coordinate falls
-    // outside the node span while a coordinate round-tripped through the carrier
-    // does not.
-    OESystem::OESkewGrid grid = MakeCubicGrid(5u, 1.0, 0.0);
-    float* values = grid.GetValues();
-    for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 42.0f;
+    // The node span is derived from ElementToSpatialCoord, and the error in it is
+    // proportional to the coordinates the grid sits at: OpenEye holds the grid
+    // centre as a float, so a grid nominally starting at 12.3 A reports its first
+    // node 1.9e-7 A away, eight orders further out than the 1.5e-15 A a grid at
+    // the Cartesian origin shows from the cos(90 deg) matrix term alone. Without a
+    // magnitude-aware tolerance the caller's own construction coordinate falls
+    // outside the node span at every origin float does not happen to represent
+    // exactly -- which is most of them. Only 0.0 was covered before.
+    constexpr unsigned int N = 5u;
+    const double NODE0[] = {0.0, 0.1, 3.7, 12.3, -37.45};
 
-    const GridParams gp = get_grid_params(grid);
-    ASSERT_GT(gp.x_origin, 0.0)
-        << "the derived origin no longer sits above its nominal 0.0, so this pins nothing";
+    for (const double node0 : NODE0) {
+        SCOPED_TRACE(node0);
+        OESystem::OESkewGrid grid = MakeCubicGrid(N, 1.0, node0);
+        float* values = grid.GetValues();
+        for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 42.0f;
 
-    EXPECT_DOUBLE_EQ(interpolate_density(grid, 0.0, 0.0, 0.0, -99.0), 42.0);
-    EXPECT_DOUBLE_EQ(interpolate_density(grid, 4.0, 4.0, 4.0, -99.0), 42.0);
-    EXPECT_DOUBLE_EQ(interpolate_density_periodic(grid, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0, -99.0),
-                     42.0);
+        const GridParams gp = get_grid_params(grid);
+        ASSERT_NE(gp.x_origin, node0)
+            << "the derived origin now matches its nominal value exactly, so this case "
+               "pins nothing";
+
+        const double lo = node0;
+        const double hi = node0 + (N - 1);
+        EXPECT_DOUBLE_EQ(interpolate_density(grid, lo, lo, lo, -99.0), 42.0);
+        EXPECT_DOUBLE_EQ(interpolate_density(grid, hi, hi, hi, -99.0), 42.0);
+        EXPECT_DOUBLE_EQ(
+            interpolate_density_periodic(grid, lo, lo, lo, N, N, N, -99.0), 42.0);
+    }
+}
+
+TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsAGridsOwnExtentFarFromTheOrigin) {
+    // The commensurability check compares a caller-exact edge against a derived
+    // n * spacing, so unlike same_grid_geometry -- which compares two derived
+    // quantities, where the float noise is common-mode -- nothing cancels here.
+    // The noise grows with the coordinates the grid sits at, so a fixed relative
+    // tolerance starts refusing grids that tile their cell perfectly once the
+    // origin is a few hundred spans from zero.
+    constexpr unsigned int N = 20u;
+    constexpr double SPACING = 0.9020833333333;  // 1d26's node interval
+    // The last entry centres the grid on the Cartesian origin, which is the
+    // hardest case: the endpoints are as close to zero as this span allows while
+    // the cell edge -- itself a stored float -- is twice as large, so a tolerance
+    // scaled by the endpoints alone understates the noise fourfold.
+    const double NODE0[] = {0.0, 100.0, 1000.0, 3000.0, -0.5 * (N - 1u) * SPACING};
+    const double extent = N * SPACING;
+
+    for (const double node0 : NODE0) {
+        SCOPED_TRACE(node0);
+        OESystem::OESkewGrid grid = MakeCubicGrid(N, SPACING, node0);
+        float* values = grid.GetValues();
+        for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 1.0f;
+
+        EXPECT_NO_THROW(interpolate_density_periodic(grid, node0, node0, node0,
+                                                     extent, extent, extent, -99.0));
+    }
+
+    // Discriminating power survives at the far end: one node interval too many is
+    // still a different lattice, and is still refused.
+    OESystem::OESkewGrid distant = MakeCubicGrid(N, SPACING, 3000.0);
+    float* values = distant.GetValues();
+    for (unsigned int i = 0; i < distant.GetSize(); ++i) values[i] = 1.0f;
+    const double one_node_too_wide = (N + 1u) * SPACING;
+    EXPECT_THROW(interpolate_density_periodic(distant, 3000.0, 3000.0, 3000.0,
+                                              one_node_too_wide, extent, extent, -99.0),
+                 CellError);
+}
+
+TEST(GridOpsTest, InterpolateDensityPeriodicReturnsTheDefaultForANonFiniteCoordinate) {
+    // fmod of a non-finite fractional index is NaN, and floor(NaN) cast to
+    // unsigned is undefined, so the periodic path's isfinite guard is what stands
+    // between an infinite query and an arbitrary array index.
+    auto grid = MakeTestGrid();
+    const double nan_value = std::numeric_limits<double>::quiet_NaN();
+    const double inf = std::numeric_limits<double>::infinity();
+    constexpr double DEFAULT = -99.0;
+
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_periodic(grid, nan_value, 3.0, 4.0, 10.0, 10.0, 10.0, DEFAULT),
+        DEFAULT);
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_periodic(grid, 2.0, nan_value, 4.0, 10.0, 10.0, 10.0, DEFAULT),
+        DEFAULT);
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_periodic(grid, 2.0, 3.0, nan_value, 10.0, 10.0, 10.0, DEFAULT),
+        DEFAULT);
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_periodic(grid, inf, 3.0, 4.0, 10.0, 10.0, 10.0, DEFAULT), DEFAULT);
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_periodic(grid, -inf, 3.0, 4.0, 10.0, 10.0, 10.0, DEFAULT), DEFAULT);
+    EXPECT_DOUBLE_EQ(
+        interpolate_density_periodic(grid, 2.0, 3.0, inf, 10.0, 10.0, 10.0, DEFAULT), DEFAULT);
 }
 
 // --- grid_to_vector / vector_to_grid ---
@@ -418,6 +493,27 @@ TEST(GridOpsTest, WrapAndPadGridRejectsACellThatIsNotTheSampledExtent) {
     EXPECT_THROW(wrap_and_pad_grid(grid, mol, 12.0, 10.0, 10.0, 4.75), CellError);
 }
 
+TEST(GridOpsTest, WrapAndPadGridRejectsAnIncommensurateCellBeforeMovingTheMolecule) {
+    // The cell's first use is the centroid shift, so that is what it has to be
+    // valid for. Checked only on the sampling path, a molecule that fits after the
+    // shift took the nullptr shortcut before any check ran: the caller got their
+    // coordinates translated by a vector that is not a lattice vector of the map,
+    // no padded grid, and no error. Here the wrong cell would move the atom to
+    // x = 25 - round((4.5 - 25)/12) * 12 = 1.0 -- inside the span with room for a
+    // 0.5 A padding -- where the correct cell puts it at 5.0.
+    OESystem::OESkewGrid grid = MakeTestGrid();  // 10 nodes at spacing 1.0, extent 10
+    auto mol = MakeTestMol(25.0, 4.5, 4.5);
+
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 12.0, 10.0, 10.0, 0.5), CellError);
+
+    float coords[3];
+    OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms();
+    mol.GetCoords(&(*atom), coords);
+    EXPECT_FLOAT_EQ(coords[0], 25.0f) << "the molecule was moved by a rejected cell";
+    EXPECT_FLOAT_EQ(coords[1], 4.5f);
+    EXPECT_FLOAT_EQ(coords[2], 4.5f);
+}
+
 static OESystem::OESkewGrid MakeShiftedGrid(double shift) {
     OESystem::OESkewGrid grid = MakeCubicGrid(10u, 1.0, shift);
     float* values = grid.GetValues();
@@ -493,10 +589,13 @@ TEST(GridOpsTest, DiffToCalcRejectsMismatchedGeometry) {
     EXPECT_THROW(diff_to_calc(obs, diff), GridError);
 }
 
+// The cell is now validated against the grid before the molecule is inspected, so
+// these three pass MakeTestGrid's own sampled extent of 10 A. An arbitrary cell
+// would reach CellError first and stop testing the heavy-atom contract.
 TEST(GridOpsTest, WrapAndPadThrowsWhenTheMoleculeHasNoHeavyAtoms) {
     OEChem::OEGraphMol mol;  // empty
     OESystem::OESkewGrid grid = MakeTestGrid();
-    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 10.0, 10.0, 10.0), StructureError);
 }
 
 TEST(GridOpsTest, WrapAndPadThrowsForAMoleculeOfOnlyDummyAtoms) {
@@ -506,7 +605,7 @@ TEST(GridOpsTest, WrapAndPadThrowsForAMoleculeOfOnlyDummyAtoms) {
     mol.SetCoords(atom, coords);
 
     OESystem::OESkewGrid grid = MakeTestGrid();
-    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 10.0, 10.0, 10.0), StructureError);
 }
 
 TEST(GridOpsTest, WrapAndPadThrowsForAnAllHydrogenMolecule) {
@@ -516,7 +615,7 @@ TEST(GridOpsTest, WrapAndPadThrowsForAnAllHydrogenMolecule) {
     mol.SetCoords(atom, coords);
 
     OESystem::OESkewGrid grid = MakeTestGrid();
-    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 10.0, 10.0, 10.0), StructureError);
 }
 
 TEST(GridOpsTest, WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded) {
@@ -529,7 +628,7 @@ TEST(GridOpsTest, WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded) {
 
     OESystem::OESkewGrid grid = MakeTestGrid();
     std::unique_ptr<OESystem::OESkewGrid> result(
-        wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0));
+        wrap_and_pad_grid(grid, mol, 10.0, 10.0, 10.0));
     EXPECT_EQ(result, nullptr);
 }
 
@@ -602,14 +701,23 @@ TEST(WrapAndPadGrid, SizesThePaddedGridFromTheAtomExtent) {
         // The property the node count exists to satisfy: the padded node span
         // contains every atom with its padding. A truncated count breaks this on
         // the fractional case while still producing a plausible grid.
+        //
+        // The slack is the sizing code's own PAD_INTERVAL_COUNT_TOL against the
+        // extent, not a tighter figure of this test's choosing. Snapping a
+        // near-whole interval count deliberately accepts a shortfall of up to
+        // that much -- a hundred-thousandth of an Angstrom on a ten-Angstrom
+        // extent, far below any padding a caller would ask for -- and a test that
+        // demanded more would be asserting a guarantee the code does not make.
         const double origin[3] = {gp.x_origin, gp.y_origin, gp.z_origin};
         const double spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
         const unsigned int dim[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
         for (int i = 0; i < 3; ++i) {
-            EXPECT_LE(origin[i], std::min(c.atom_lo[i], c.atom_hi[i]) - c.padding + 1e-9)
+            const double lo = std::min(c.atom_lo[i], c.atom_hi[i]) - c.padding;
+            const double hi = std::max(c.atom_lo[i], c.atom_hi[i]) + c.padding;
+            const double slack = PAD_INTERVAL_COUNT_TOL * (hi - lo);
+            EXPECT_LE(origin[i], lo + slack)
                 << "axis " << i << " node span starts inside the required extent";
-            EXPECT_GE(origin[i] + (dim[i] - 1) * spacing[i],
-                      std::max(c.atom_lo[i], c.atom_hi[i]) + c.padding - 1e-9)
+            EXPECT_GE(origin[i] + (dim[i] - 1) * spacing[i], hi - slack)
                 << "axis " << i << " node span ends inside the required extent";
         }
     }

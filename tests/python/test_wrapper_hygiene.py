@@ -250,6 +250,16 @@ def test_wrap_and_pad_grid_never_returns_none(scoring_inputs) -> None:
     run. Pinning the contract here is what makes that documentation checkable.
     """
     mol, obs, _ = scoring_inputs
-    # The atom is at the origin and the grid is centred there, so no padding is
-    # needed and the C++ function returns nullptr.
-    assert maptitude.wrap_and_pad_grid(mol=mol, grid=obs, cell_a=20.0, cell_b=20.0, cell_c=20.0) is obs
+    # The cell must be the extent the grid samples, so derive it from the grid: the
+    # fixture's node count depends on how OpenEye's extents-box constructor rounds
+    # and hard-coding a number guesses at it. The atom is at the origin and the grid
+    # is centred there, so no padding is needed and the C++ function returns nullptr.
+    spacing = obs.GetSpacing()
+    padded = maptitude.wrap_and_pad_grid(
+        mol=mol,
+        grid=obs,
+        cell_a=obs.GetXDim() * spacing,
+        cell_b=obs.GetYDim() * spacing,
+        cell_c=obs.GetZDim() * spacing,
+    )
+    assert padded is obs
