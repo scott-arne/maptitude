@@ -15,6 +15,7 @@ add_executable(maptitude_tests
     test_scattering_factors.cpp
     test_density_score_result.cpp
     test_grid_ops.cpp
+    test_interpolation.cpp
     test_spatial_index.cpp
     test_scoring_helpers.cpp
     test_fixtures.cpp
@@ -27,7 +28,9 @@ add_executable(maptitude_tests
 )
 
 target_compile_definitions(maptitude_tests
-    PRIVATE MAPTITUDE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data")
+    PRIVATE
+        MAPTITUDE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data"
+        MAPTITUDE_TEST_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../assets/mapq")
 
 target_link_libraries(maptitude_tests
     PRIVATE

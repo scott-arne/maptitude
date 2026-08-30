@@ -109,6 +109,34 @@ void grid_fractional_index(const GridParams& gp,
 bool grid_contains(const GridParams& gp, double x, double y, double z);
 
 /**
+ * @brief Trilinear interpolation at a Cartesian point, from derived geometry.
+ *
+ * The caller derives @p gp once and hoists @p values out of its loop. Both are
+ * required: deriving geometry per point costs four ElementToSpatialCoord calls
+ * and five validation checks, and calling OESkewGrid::GetValues per point
+ * re-enters the OpenEye shared library on every element.
+ *
+ * The node span is closed on both ends. A point exactly on the far face
+ * interpolates rather than falling out of the grid.
+ *
+ * @p gp must come from get_grid_params, and that is what makes the base-index
+ * clamp safe: check 1 there rejects any axis with fewer than two nodes, so the
+ * unsigned `n_i - 2` the clamp computes cannot wrap.
+ *
+ * @param gp Geometry from get_grid_params.
+ * @param values The grid's value array, from OESkewGrid::GetValues().
+ * @param x Cartesian x coordinate.
+ * @param y Cartesian y coordinate.
+ * @param z Cartesian z coordinate.
+ * @param default_value Value returned for a point outside the node span, or
+ *        for a non-finite coordinate.
+ * @return Interpolated density value.
+ */
+double interpolate_density_at(const GridParams& gp, const float* values,
+                              double x, double y, double z,
+                              double default_value = 0.0);
+
+/**
  * @brief True when two grids describe the same sampling of the same region.
  *
  * Equal dims, and per-axis spacing, node origin, and cell parameters within a

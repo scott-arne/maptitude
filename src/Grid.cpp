@@ -176,6 +176,57 @@ bool grid_contains(const GridParams& gp,
     return ContainsFractionalIndex(gp, fx, fy, fz);
 }
 
+double interpolate_density_at(const GridParams& gp, const float* values,
+                              const double x, const double y, const double z,
+                              const double default_value) {
+    double f[3] = {0.0, 0.0, 0.0};
+    grid_fractional_index(gp, x, y, z, f[0], f[1], f[2]);
+
+    // Steps 2 and 3 of the algorithm, through the one predicate grid_contains
+    // also calls, so the containment prechecks and the interpolator cannot drift
+    // apart. Passing the index rather than the coordinate keeps this to one
+    // grid_fractional_index per point in the batch loops.
+    if (!ContainsFractionalIndex(gp, f[0], f[1], f[2])) {
+        return default_value;
+    }
+
+    // Clamping the base index keeps a point exactly on the far face inside the
+    // last cell with t == 1.0, rather than indexing one node past the end.
+    const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
+    unsigned int i0[3];
+    double t[3];
+    for (int i = 0; i < 3; ++i) {
+        const double base = std::floor(f[i]);
+        const double clamped = std::min(std::max(base, 0.0),
+                                        static_cast<double>(n[i] - 2u));
+        i0[i] = static_cast<unsigned int>(clamped);
+        t[i] = f[i] - clamped;
+    }
+
+    const unsigned int stride_y = gp.x_dim;
+    const unsigned int stride_z = gp.x_dim * gp.y_dim;
+    const unsigned int base = i0[2] * stride_z + i0[1] * stride_y + i0[0];
+
+    const double c000 = values[base];
+    const double c100 = values[base + 1u];
+    const double c010 = values[base + stride_y];
+    const double c110 = values[base + stride_y + 1u];
+    const double c001 = values[base + stride_z];
+    const double c101 = values[base + stride_z + 1u];
+    const double c011 = values[base + stride_z + stride_y];
+    const double c111 = values[base + stride_z + stride_y + 1u];
+
+    const double c00 = c000 * (1.0 - t[0]) + c100 * t[0];
+    const double c10 = c010 * (1.0 - t[0]) + c110 * t[0];
+    const double c01 = c001 * (1.0 - t[0]) + c101 * t[0];
+    const double c11 = c011 * (1.0 - t[0]) + c111 * t[0];
+
+    const double c0 = c00 * (1.0 - t[1]) + c10 * t[1];
+    const double c1 = c01 * (1.0 - t[1]) + c11 * t[1];
+
+    return c0 * (1.0 - t[2]) + c1 * t[2];
+}
+
 bool same_grid_geometry(const OESystem::OESkewGrid& lhs,
                         const OESystem::OESkewGrid& rhs,
                         const double tol) {
