@@ -9,6 +9,7 @@
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <string>
 
@@ -16,23 +17,27 @@ namespace Maptitude {
 
 namespace {
 
-/// Throw naming the setter and its arguments when an OESkewGrid setter fails,
-/// deleting the partially built grid first. A false return leaves the grid
-/// holding its previous geometry, which would otherwise be filled with density
-/// sampled for a different box.
+/// Throw naming the setter and its arguments when an OESkewGrid setter fails.
+/// A false return leaves the grid holding its previous geometry, which would
+/// otherwise be filled with density sampled for a different box. The caller owns
+/// the half-built grid through a unique_ptr, so unwinding releases it.
 template <typename... Args>
-void RequireSetter(OESystem::OESkewGrid* grid, const bool ok,
-                   const char* setter, Args... args) {
+void RequireSetter(const bool ok, const char* setter, Args... args) {
     if (ok) return;
     std::ostringstream message;
     message << "OESkewGrid::" << setter << " rejected (";
-    const double values[] = {static_cast<double>(args)...};
-    for (size_t i = 0; i < sizeof...(args); ++i) {
-        if (i) message << ", ";
-        message << values[i];
+    // A zero-length array is ill-formed, so the empty pack must not reach the
+    // declaration at all. No caller passes one today; the guard keeps the next
+    // one from being a compile error in a template that only instantiates on the
+    // failure path.
+    if constexpr (sizeof...(args) > 0) {
+        const double values[] = {static_cast<double>(args)...};
+        for (size_t i = 0; i < sizeof...(args); ++i) {
+            if (i) message << ", ";
+            message << values[i];
+        }
     }
     message << ") while building the padded grid";
-    delete grid;
     throw GridError(message.str());
 }
 
@@ -122,10 +127,12 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     OEChem::OEMolBase& mol,
     const double cell_a, const double cell_b, const double cell_c,
     const double padding) {
-    // The periodic wrap below is `std::fmod(offset, cell_edge)`, which is NaN for a zero
-    // divisor and meaningless for a non-finite one, so every voxel of the padded grid
-    // comes back NaN with no error. Validate all three edges up front rather than
-    // guarding only the centroid shift.
+    // The centroid shift below divides by each cell edge, which is infinite for a
+    // zero divisor and meaningless for a non-finite one, so the molecule is
+    // translated to nowhere and every voxel of the padded grid comes back NaN with
+    // no error. Validate all three edges up front: the commensurability check on
+    // the sampling path runs too late to protect the shift, and it would report a
+    // zero edge as a mismatch rather than as the nonsense it is.
     const double edges[3] = {cell_a, cell_b, cell_c};
     const char* edge_names[3] = {"cell_a", "cell_b", "cell_c"};
     for (int i = 0; i < 3; ++i) {
@@ -223,26 +230,58 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     if (!needs_pad) return nullptr;
 
     // The scalar carrier's extents-box constructor built the padded grid;
-    // OESkewGrid has no equivalent, so reproduce it explicitly. Probed against
-    // 2026.1.0: for minmax {0,0,0, 9.5,9.5,9.5} at spacing 1.0 this gives dims
-    // 10^3, mid 4.75 and node 0 at 0.25 -- the node origin is NOT minmax[0].
+    // OESkewGrid has no equivalent, so reproduce it explicitly. The interval count
+    // rounds up, because the node span is what the padding has to cover: for
+    // minmax {0,0,0, 9.5,9.5,9.5} at spacing 1.0 that is dims 11^3, mid 4.75 and
+    // node 0 at -0.25, spanning [-0.25, 9.75]. Truncating gives 10 nodes spanning
+    // [0.25, 9.25] and leaves a quarter of an Angstrom of the requested extent
+    // outside the grid on each face. Note the node origin is NOT minmax[0].
     const double minmax[6] = {
         min_x - padding, min_y - padding, min_z - padding,
         max_x + padding, max_y + padding, max_z + padding
     };
+    static const char* const AXIS[3] = {"x", "y", "z"};
+    // Relative tolerance for recognising a whole number of node intervals, matching
+    // same_grid_geometry's default.
+    constexpr double INTERVAL_COUNT_TOL = 1e-6;
     const double src_spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
     unsigned int pad_dim[3];
     double pad_mid[3];
     for (int i = 0; i < 3; ++i) {
         const double extent = minmax[i + 3] - minmax[i];
-        pad_dim[i] = static_cast<unsigned int>(extent / src_spacing[i]) + 1u;
+        // src_spacing is measured off float node coordinates, so an extent that is
+        // an exact multiple of the interval divides to 10.000000000000002 and a bare
+        // ceil() buys a whole spurious node. Snap the ratio to a whole count it is
+        // within a rounding error of, and round up only a genuine remainder.
+        const double intervals = extent / src_spacing[i];
+        const double whole = std::round(intervals);
+        const double count =
+            std::abs(intervals - whole) <= INTERVAL_COUNT_TOL * std::max(1.0, whole)
+                ? whole
+                : std::ceil(intervals);
+        pad_dim[i] = static_cast<unsigned int>(count) + 1u;
         pad_mid[i] = (minmax[i] + minmax[i + 3]) / 2.0;
+
+        // A single-node axis has no interval, so get_grid_params below would reject
+        // the grid this function just built and blame the source. Say whose numbers
+        // produced it instead.
+        if (pad_dim[i] < 2u) {
+            std::ostringstream message;
+            message << "wrap_and_pad_grid sized axis " << AXIS[i] << " at " << pad_dim[i]
+                    << " node: the heavy atoms span " << (minmax[i + 3] - minmax[i] - 2.0 * padding)
+                    << " A there and a padding of " << padding
+                    << " A does not widen that past the " << src_spacing[i]
+                    << " A node interval the grid is sampled at";
+            throw GridError(message.str());
+        }
     }
 
-    auto* padded = new OESystem::OESkewGrid();
-    RequireSetter(padded, padded->SetDim(pad_dim[0], pad_dim[1], pad_dim[2]),
+    // Every setter below can throw, and so can get_grid_params and the periodic
+    // sampling that follow, all of them after the allocation.
+    std::unique_ptr<OESystem::OESkewGrid> padded(new OESystem::OESkewGrid());
+    RequireSetter(padded->SetDim(pad_dim[0], pad_dim[1], pad_dim[2]),
                   "SetDim", pad_dim[0], pad_dim[1], pad_dim[2]);
-    RequireSetter(padded, padded->SetUnitCell(
+    RequireSetter(padded->SetUnitCell(
                       static_cast<float>(pad_dim[0] * src_spacing[0]),
                       static_cast<float>(pad_dim[1] * src_spacing[1]),
                       static_cast<float>(pad_dim[2] * src_spacing[2]),
@@ -250,9 +289,9 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
                       pad_dim[0], pad_dim[1], pad_dim[2]),
                   "SetUnitCell", pad_dim[0] * src_spacing[0],
                   pad_dim[1] * src_spacing[1], pad_dim[2] * src_spacing[2]);
-    RequireSetter(padded, padded->SetMid(static_cast<float>(pad_mid[0]),
-                                         static_cast<float>(pad_mid[1]),
-                                         static_cast<float>(pad_mid[2])),
+    RequireSetter(padded->SetMid(static_cast<float>(pad_mid[0]),
+                                 static_cast<float>(pad_mid[1]),
+                                 static_cast<float>(pad_mid[2])),
                   "SetMid", pad_mid[0], pad_mid[1], pad_mid[2]);
 
     const GridParams pad_gp = get_grid_params(*padded);
@@ -268,18 +307,15 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
         const double sy = pad_gp.y_origin + iy * pad_gp.y_spacing;
         const double sz = pad_gp.z_origin + iz * pad_gp.z_spacing;
 
-        double wx = gp.x_origin + std::fmod(sx - gp.x_origin, cell_a);
-        if (wx < gp.x_origin) wx += cell_a;
-        double wy = gp.y_origin + std::fmod(sy - gp.y_origin, cell_b);
-        if (wy < gp.y_origin) wy += cell_b;
-        double wz = gp.z_origin + std::fmod(sz - gp.z_origin, cell_c);
-        if (wz < gp.z_origin) wz += cell_c;
-
-        out[i] = static_cast<float>(
-            interpolate_density_at(gp, src_values, wx, wy, wz, 0.0));
+        // The wrap lives in interpolate_density_periodic_at, which is also what the
+        // public periodic entry points call. Restating it here is what let the two
+        // copies disagree with the interpolator's domain and bake the disagreement
+        // into the padded grid as zero density.
+        out[i] = static_cast<float>(interpolate_density_periodic_at(
+            gp, src_values, sx, sy, sz, cell_a, cell_b, cell_c, 0.0));
     }
 
-    return padded;
+    return padded.release();
 }
 
 }  // namespace Maptitude

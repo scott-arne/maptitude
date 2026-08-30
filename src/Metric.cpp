@@ -315,6 +315,13 @@ DensityScoreResult rscc(
         throw GridError("calc_grid is required (auto-generation not yet supported)");
     }
 
+    // One carrier conversion for the whole call. get_atom_grid_points takes an
+    // OESkewGrid and OESkewGrid(const OEScalarGrid&) is not explicit, so calling it
+    // with `grid` deep-copies every voxel on every atom -- ~0.8 ms per copy on a
+    // 192^3 map. Task 4 moves this signature onto the skew carrier and the local
+    // goes away with it.
+    const OESystem::OESkewGrid skew_grid(grid);
+
     DensityScoreResult result;
     std::vector<double> all_obs, all_calc;
 
@@ -335,7 +342,7 @@ DensityScoreResult rscc(
 
             const double radius = rscc_atom_radius(options, *atom, resolution);
 
-            auto pts = get_atom_grid_points(grid, x, y, z, radius);
+            auto pts = get_atom_grid_points(skew_grid, x, y, z, radius);
             if (pts.empty()) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
@@ -401,6 +408,10 @@ DensityScoreResult rsr(
         throw GridError("calc_grid is required (auto-generation not yet supported)");
     }
 
+    // One carrier conversion for the whole call; see the note in rscc. Task 4
+    // moves get_atom_grid_points's caller onto the skew carrier and this goes away.
+    const OESystem::OESkewGrid skew_grid(grid);
+
     DensityScoreResult result;
     std::vector<double> all_obs, all_calc;
 
@@ -421,7 +432,7 @@ DensityScoreResult rsr(
 
             const double radius = rsr_atom_radius(options, *atom, resolution);
 
-            auto pts = get_atom_grid_points(grid, x, y, z, radius);
+            auto pts = get_atom_grid_points(skew_grid, x, y, z, radius);
             if (pts.empty()) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
@@ -622,6 +633,12 @@ DensityScoreResult qscore(
         }
     }
 
+    // One carrier conversion for the whole call; see the note in rscc. qscore is
+    // the worst of the five: it interpolates once per sample point, tens of points
+    // per shell and several shells per atom. Task 4 moves interpolate_density's
+    // caller onto the skew carrier and this goes away.
+    const OESystem::OESkewGrid skew_grid(grid);
+
     DensityScoreResult result;
     std::vector<double> all_q;
 
@@ -779,7 +796,7 @@ DensityScoreResult qscore(
             std::vector<double> map_refs;
             for (size_t i = 0; i < sample_x.size(); ++i) {
                 const double val = interpolate_density(
-                    grid, sample_x[i], sample_y[i], sample_z[i],
+                    skew_grid, sample_x[i], sample_y[i], sample_z[i],
                     std::numeric_limits<double>::quiet_NaN());
                 if (!std::isnan(val)) {
                     map_vals.push_back(val);
@@ -838,6 +855,10 @@ DensityScoreResult ediam(
 
     const double rho_expected = 1.5 / (resolution * resolution);
 
+    // One carrier conversion for the whole call; see the note in rscc. Task 4
+    // moves interpolate_density's caller onto the skew carrier and this goes away.
+    const OESystem::OESkewGrid skew_grid(grid);
+
     DensityScoreResult result;
     std::vector<double> all_scores;
 
@@ -858,7 +879,7 @@ DensityScoreResult ediam(
 
             // Sample at atom center
             std::vector<double> sigmoid_vals;
-            const double rho = interpolate_density(grid, x, y, z,
+            const double rho = interpolate_density(skew_grid, x, y, z,
                                                   std::numeric_limits<double>::quiet_NaN());
             if (!std::isnan(rho) && rho_expected > 0.0) {
                 sigmoid_vals.push_back(ediam_sigmoid(rho / rho_expected));
@@ -876,7 +897,7 @@ DensityScoreResult ediam(
                 const double my = (y + ny) / 2.0;
                 const double mz = (z + nz) / 2.0;
 
-                const double mid_rho = interpolate_density(grid, mx, my, mz,
+                const double mid_rho = interpolate_density(skew_grid, mx, my, mz,
                     std::numeric_limits<double>::quiet_NaN());
                 if (!std::isnan(mid_rho) && rho_expected > 0.0) {
                     sigmoid_vals.push_back(
@@ -934,6 +955,10 @@ DensityScoreResult coverage(
     const MapStats stats = compute_map_stats(grid);
     const double threshold = stats.mean + sigma * stats.stddev;
 
+    // One carrier conversion for the whole call; see the note in rscc. Task 4
+    // moves interpolate_density's caller onto the skew carrier and this goes away.
+    const OESystem::OESkewGrid skew_grid(grid);
+
     DensityScoreResult result;
     std::vector<double> all_scores;
 
@@ -952,7 +977,7 @@ DensityScoreResult coverage(
                 continue;
             }
 
-            const double rho = interpolate_density(grid, x, y, z);
+            const double rho = interpolate_density(skew_grid, x, y, z);
             if (std::isnan(rho)) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();

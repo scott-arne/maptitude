@@ -78,18 +78,6 @@ UnitCellParams get_unit_cell(const OESystem::OESkewGrid& grid);
 void grid_node_origin(const GridParams& gp, double& x, double& y, double& z);
 
 /**
- * @brief Bounding-box corners, half a spacing outside the first and last nodes.
- *
- * This reproduces what the scalar carrier's GetXMin/GetXMax family returned. It is
- * for diagnostics and geometry descriptions only: it is deliberately NOT the
- * domain over which interpolate_density returns interpolated data. Use
- * grid_contains for that.
- */
-void grid_bounds(const GridParams& gp,
-                 double& xmin, double& ymin, double& zmin,
-                 double& xmax, double& ymax, double& zmax);
-
-/**
  * @brief Fractional node index along each axis.
  *
  * Values outside [0, n_i - 1] denote a point outside the grid.
@@ -115,8 +103,10 @@ bool grid_contains(const GridParams& gp, double x, double y, double z);
  * and five validation checks, and calling OESkewGrid::GetValues per point
  * re-enters the OpenEye shared library on every element.
  *
- * The node span is closed on both ends. A point exactly on the far face
- * interpolates rather than falling out of the grid.
+ * The node span is closed on both ends, with a small boundary tolerance. A
+ * point exactly on the far face interpolates rather than falling out of the
+ * grid, and so does one a rounding error beyond it: the span's endpoints are
+ * derived from float node coordinates and are not exact.
  *
  * @p gp must come from get_grid_params, and that is what makes the base-index
  * clamp safe: check 1 there rejects any axis with fewer than two nodes, so the
@@ -134,6 +124,41 @@ bool grid_contains(const GridParams& gp, double x, double y, double z);
 double interpolate_density_at(const GridParams& gp, const float* values,
                               double x, double y, double z,
                               double default_value = 0.0);
+
+/**
+ * @brief Periodic trilinear interpolation at a point, from derived geometry.
+ *
+ * The counterpart to interpolate_density_at for a map that tiles space. The
+ * grid holds exactly one period, so node `n_i - 1`'s upper neighbour is node 0
+ * and a point in an axis's final interval blends the two instead of falling off
+ * the end. Every finite coordinate therefore has a value; @p default_value is
+ * returned only for a non-finite one.
+ *
+ * The wrap runs on the fractional index modulo the integer node count rather
+ * than on the Cartesian coordinate modulo the cell edge, so a wrapped point
+ * lands exactly on the sampled lattice however far outside the grid it started.
+ *
+ * @param gp Geometry from get_grid_params.
+ * @param values The grid's value array, from OESkewGrid::GetValues().
+ * @param x Cartesian x coordinate.
+ * @param y Cartesian y coordinate.
+ * @param z Cartesian z coordinate.
+ * @param cell_a Unit cell dimension along x (Angstroms).
+ * @param cell_b Unit cell dimension along y (Angstroms).
+ * @param cell_c Unit cell dimension along z (Angstroms).
+ * @param default_value Value returned for a non-finite coordinate.
+ * @return Interpolated density value.
+ * @throws CellError If a cell edge is not the extent the grid samples on that
+ *         axis, n_i * spacing_i, within a 1e-6 relative tolerance. Treating the
+ *         last node as adjacent to the first is only the same lattice when the
+ *         two agree; wrapping an incommensurate cell would resample the map
+ *         onto a lattice it never had, so the caller is told rather than handed
+ *         a plausible wrong number.
+ */
+double interpolate_density_periodic_at(const GridParams& gp, const float* values,
+                                       double x, double y, double z,
+                                       double cell_a, double cell_b, double cell_c,
+                                       double default_value = 0.0);
 
 /**
  * @brief True when two grids describe the same sampling of the same region.
@@ -176,12 +201,18 @@ void vector_to_grid(const std::vector<double>& values, OESystem::OESkewGrid& gri
 /**
  * @brief Trilinear interpolation at a Cartesian point.
  *
+ * The domain is the node span, `[origin_i, origin_i + (n_i - 1) * spacing_i]` on
+ * each axis, plus a boundary tolerance. That is narrower by half a node interval
+ * per face than the bounding box the scalar carrier's IsInGrid admitted.
+ *
  * @param grid Input grid.
  * @param x Cartesian x coordinate.
  * @param y Cartesian y coordinate.
  * @param z Cartesian z coordinate.
- * @param default_value Value to return if point is outside grid.
+ * @param default_value Value returned for a point outside the node span, or for
+ *        a non-finite coordinate.
  * @return Interpolated density value.
+ * @throws GridError, CellError As get_grid_params.
  */
 double interpolate_density(const OESystem::OESkewGrid& grid,
                            double x, double y, double z,
@@ -190,11 +221,15 @@ double interpolate_density(const OESystem::OESkewGrid& grid,
 /**
  * @brief Batch trilinear interpolation at multiple points.
  *
+ * The domain is the node span, as interpolate_density.
+ *
  * @param grid Input grid.
  * @param points Flat array of {x0,y0,z0, x1,y1,z1, ...} coordinates.
  * @param num_points Number of points (points.size() / 3).
- * @param default_value Value for out-of-bounds points.
+ * @param default_value Value returned for a point outside the node span, or for
+ *        a non-finite coordinate.
  * @return Vector of interpolated values.
+ * @throws GridError, CellError As get_grid_params.
  */
 std::vector<double> interpolate_density_batch(
     const OESystem::OESkewGrid& grid,
@@ -205,8 +240,10 @@ std::vector<double> interpolate_density_batch(
 /**
  * @brief Periodic-aware trilinear interpolation at a Cartesian point.
  *
- * Wraps coordinates modulo the unit cell dimensions before interpolating,
- * so that points outside the grid are mapped back into the unit cell.
+ * The grid holds one period of a map that tiles space, so node `n_i - 1`'s upper
+ * neighbour is node 0 and every finite point has a value. See
+ * interpolate_density_periodic_at for the wrap and its commensurability
+ * requirement.
  *
  * @param grid Input grid.
  * @param x Cartesian x coordinate.
@@ -215,8 +252,11 @@ std::vector<double> interpolate_density_batch(
  * @param cell_a Unit cell dimension along x (Angstroms).
  * @param cell_b Unit cell dimension along y (Angstroms).
  * @param cell_c Unit cell dimension along z (Angstroms).
- * @param default_value Value to return if point is still outside grid after wrapping.
+ * @param default_value Value returned for a non-finite coordinate.
  * @return Interpolated density value.
+ * @throws GridError As get_grid_params.
+ * @throws CellError As get_grid_params, or if a cell edge is not the extent the
+ *         grid samples on that axis.
  */
 double interpolate_density_periodic(
     const OESystem::OESkewGrid& grid,
@@ -227,14 +267,19 @@ double interpolate_density_periodic(
 /**
  * @brief Batch periodic-aware trilinear interpolation at multiple points.
  *
+ * As interpolate_density_periodic. The cell is checked once for the whole batch.
+ *
  * @param grid Input grid.
  * @param points Flat array of {x0,y0,z0, x1,y1,z1, ...} coordinates.
  * @param num_points Number of points (points.size() / 3).
  * @param cell_a Unit cell dimension along x (Angstroms).
  * @param cell_b Unit cell dimension along y (Angstroms).
  * @param cell_c Unit cell dimension along z (Angstroms).
- * @param default_value Value for out-of-bounds points after wrapping.
+ * @param default_value Value returned for a non-finite coordinate.
  * @return Vector of interpolated values.
+ * @throws GridError As get_grid_params.
+ * @throws CellError As get_grid_params, or if a cell edge is not the extent the
+ *         grid samples on that axis.
  */
 std::vector<double> interpolate_density_periodic_batch(
     const OESystem::OESkewGrid& grid,

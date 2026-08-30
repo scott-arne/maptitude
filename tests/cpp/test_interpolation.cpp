@@ -313,17 +313,45 @@ TEST(InterpolateDensityAt, InterpolatesOnTheClosedFarFace) {
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 3.0, 0.5, 0.5, OUTSIDE), 13.0);
 }
 
-TEST(InterpolateDensityAt, ReturnsTheDefaultOneUlpOutsideEachFace) {
+TEST(InterpolateDensityAt, ReturnsTheDefaultOutsideTheBoundaryTolerance) {
     const GridParams gp = UnitGridParams();
     const std::vector<float> v = ElementNumberValues();
+    // 1e-6 fractional units clears the node-span tolerance by three orders while
+    // staying a millionth of a node interval inside the old half-spacing shell,
+    // so this pins the face position and not the tolerance's magnitude.
+    const double over = 3.0 + 1e-6;
+    const double under = -1e-6;
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), over, 0.0, 0.0, OUTSIDE), OUTSIDE);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, over, 0.0, OUTSIDE), OUTSIDE);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, over, OUTSIDE), OUTSIDE);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), under, 0.0, 0.0, OUTSIDE), OUTSIDE);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, under, 0.0, OUTSIDE), OUTSIDE);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, under, OUTSIDE), OUTSIDE);
+}
+
+TEST(InterpolateDensityAt, AdmitsAPointWithinTheBoundaryTolerance) {
+    const GridParams gp = UnitGridParams();
+    const std::vector<float> v = ElementNumberValues();
+    // The node span's endpoints are derived quantities: a real grid's origin comes
+    // from ElementToSpatialCoord and carries float noise, so a caller who asks for
+    // the coordinate they built the grid with lands a femtometre outside a
+    // zero-tolerance span. The predicate absorbs that rather than returning the
+    // default at the grid's own corner.
     const double just_over = std::nextafter(3.0, 4.0);
     const double just_under = std::nextafter(0.0, -1.0);
-    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), just_over, 0.0, 0.0, OUTSIDE), OUTSIDE);
-    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, just_over, 0.0, OUTSIDE), OUTSIDE);
-    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, just_over, OUTSIDE), OUTSIDE);
-    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), just_under, 0.0, 0.0, OUTSIDE), OUTSIDE);
-    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, just_under, 0.0, OUTSIDE), OUTSIDE);
-    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, just_under, OUTSIDE), OUTSIDE);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), just_over, 0.0, 0.0, OUTSIDE), 3.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, just_over, 0.0, OUTSIDE), 12.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, just_over, OUTSIDE), 48.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), just_under, 0.0, 0.0, OUTSIDE), 0.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, just_under, 0.0, OUTSIDE), 0.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, just_under, OUTSIDE), 0.0);
+
+    // Inside the tolerance but far enough out to be resolvable, which is what pins
+    // the weight clamp: floor() puts the corner index one cell low at 3 + 1e-10 and
+    // one cell high at -1e-10, and an unclamped weight would extrapolate past the
+    // edge node by 1e-10 instead of returning it.
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 3.0 + 1e-10, 0.0, 0.0, OUTSIDE), 3.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), -1e-10, 0.0, 0.0, OUTSIDE), 0.0);
 }
 
 TEST(InterpolateDensityAt, ReturnsTheDefaultInTheOuterHalfSpacingShell) {

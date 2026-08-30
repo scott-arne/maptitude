@@ -12,6 +12,24 @@ namespace Maptitude {
 
 namespace {
 
+/// Boundary tolerance for the node span, in fractional-index units.
+///
+/// A grid's node origin is not a stored quantity: it comes back from
+/// ElementToSpatialCoord, whose fractional-to-Cartesian matrix carries a
+/// cos(90 deg) ~ 6.1e-17 term, so a first node built at exactly 0.0 reports
+/// 1.53e-15. Without a tolerance a caller querying the very coordinate they
+/// built the grid with is told the point is outside it. At a 1 A node interval
+/// this admits 1e-9 A: six orders above that noise, and eight orders below half
+/// a node, so it cannot reach into territory the grid does not sample.
+constexpr double NODE_SPAN_EPS = 1e-9;
+
+/// Relative tolerance for the periodic path's commensurability check.
+///
+/// Matched to same_grid_geometry's default: both ask whether two derived
+/// geometries describe the same sampling, and a cell that agrees with the grid
+/// closely enough for one should not be refused by the other.
+constexpr double CELL_COMMENSURATE_TOL = 1e-6;
+
 /// Read one node's Cartesian coordinate, enforcing derivation checks 2 and 3.
 /// @p axis names the axis whose walk needs this node, for the error text.
 void ReadNodeCoord(const OESystem::OESkewGrid& grid, const unsigned int element,
@@ -53,9 +71,38 @@ void ReadNodeCoord(const OESystem::OESkewGrid& grid, const unsigned int element,
 bool ContainsFractionalIndex(const GridParams& gp,
                              const double fx, const double fy, const double fz) {
     return std::isfinite(fx) && std::isfinite(fy) && std::isfinite(fz) &&
-           fx >= 0.0 && fx <= gp.x_dim - 1.0 &&
-           fy >= 0.0 && fy <= gp.y_dim - 1.0 &&
-           fz >= 0.0 && fz <= gp.z_dim - 1.0;
+           fx >= -NODE_SPAN_EPS && fx <= (gp.x_dim - 1.0) + NODE_SPAN_EPS &&
+           fy >= -NODE_SPAN_EPS && fy <= (gp.y_dim - 1.0) + NODE_SPAN_EPS &&
+           fz >= -NODE_SPAN_EPS && fz <= (gp.z_dim - 1.0) + NODE_SPAN_EPS;
+}
+
+/// Trilinear blend of the eight corners named by per-axis element offsets.
+///
+/// The offsets arrive pre-multiplied by their axis stride so that one blend
+/// serves both interpolators: the periodic path's upper corner may wrap to
+/// element 0 of its axis, where the plain path's is always the lower corner plus
+/// one stride. @p t holds the weight of the upper corner on each axis.
+double BlendTrilinear(const float* values,
+                      const unsigned int lo[3], const unsigned int hi[3],
+                      const double t[3]) {
+    const double c000 = values[lo[2] + lo[1] + lo[0]];
+    const double c100 = values[lo[2] + lo[1] + hi[0]];
+    const double c010 = values[lo[2] + hi[1] + lo[0]];
+    const double c110 = values[lo[2] + hi[1] + hi[0]];
+    const double c001 = values[hi[2] + lo[1] + lo[0]];
+    const double c101 = values[hi[2] + lo[1] + hi[0]];
+    const double c011 = values[hi[2] + hi[1] + lo[0]];
+    const double c111 = values[hi[2] + hi[1] + hi[0]];
+
+    const double c00 = c000 * (1.0 - t[0]) + c100 * t[0];
+    const double c10 = c010 * (1.0 - t[0]) + c110 * t[0];
+    const double c01 = c001 * (1.0 - t[0]) + c101 * t[0];
+    const double c11 = c011 * (1.0 - t[0]) + c111 * t[0];
+
+    const double c0 = c00 * (1.0 - t[1]) + c10 * t[1];
+    const double c1 = c01 * (1.0 - t[1]) + c11 * t[1];
+
+    return c0 * (1.0 - t[2]) + c1 * t[2];
 }
 
 /// True when two quantities agree to within @p tol scaled by their magnitude.
@@ -147,20 +194,6 @@ void grid_node_origin(const GridParams& gp, double& x, double& y, double& z) {
     z = gp.z_origin;
 }
 
-void grid_bounds(const GridParams& gp,
-                 double& xmin, double& ymin, double& zmin,
-                 double& xmax, double& ymax, double& zmax) {
-    // The scalar carrier's box ran half a spacing outside the first and last
-    // nodes on each face: GetXMin() == GetXMid() - n_x*s_x/2 while element 0
-    // sits at GetXMid() - (n_x-1)*s_x/2.
-    xmin = gp.x_origin - gp.x_spacing / 2.0;
-    ymin = gp.y_origin - gp.y_spacing / 2.0;
-    zmin = gp.z_origin - gp.z_spacing / 2.0;
-    xmax = gp.x_origin + (gp.x_dim - 0.5) * gp.x_spacing;
-    ymax = gp.y_origin + (gp.y_dim - 0.5) * gp.y_spacing;
-    zmax = gp.z_origin + (gp.z_dim - 0.5) * gp.z_spacing;
-}
-
 void grid_fractional_index(const GridParams& gp,
                            const double x, const double y, const double z,
                            double& fx, double& fy, double& fz) {
@@ -191,41 +224,26 @@ double interpolate_density_at(const GridParams& gp, const float* values,
     }
 
     // Clamping the base index keeps a point exactly on the far face inside the
-    // last cell with t == 1.0, rather than indexing one node past the end. The
-    // lower clamp is belt-and-braces: the containment check already rejects f < 0.
+    // last cell with t == 1.0, rather than indexing one node past the end. Both
+    // clamps carry load now that the containment check admits a boundary
+    // tolerance: floor() puts the corner one cell below the array at
+    // f == -NODE_SPAN_EPS and one cell above the last full cell at
+    // f == (n - 1) + NODE_SPAN_EPS. Clamping the weight to match stops the blend
+    // extrapolating that tolerance back out past the edge node.
     const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
-    unsigned int i0[3];
+    const unsigned int stride[3] = {1u, gp.x_dim, gp.x_dim * gp.y_dim};
+    unsigned int lo[3], hi[3];
     double t[3];
     for (int i = 0; i < 3; ++i) {
         const double base = std::floor(f[i]);
         const double clamped = std::min(std::max(base, 0.0),
                                         static_cast<double>(n[i] - 2u));
-        i0[i] = static_cast<unsigned int>(clamped);
-        t[i] = f[i] - clamped;
+        lo[i] = static_cast<unsigned int>(clamped) * stride[i];
+        hi[i] = lo[i] + stride[i];
+        t[i] = std::min(std::max(f[i] - clamped, 0.0), 1.0);
     }
 
-    const unsigned int stride_y = gp.x_dim;
-    const unsigned int stride_z = gp.x_dim * gp.y_dim;
-    const unsigned int base = i0[2] * stride_z + i0[1] * stride_y + i0[0];
-
-    const double c000 = values[base];
-    const double c100 = values[base + 1u];
-    const double c010 = values[base + stride_y];
-    const double c110 = values[base + stride_y + 1u];
-    const double c001 = values[base + stride_z];
-    const double c101 = values[base + stride_z + 1u];
-    const double c011 = values[base + stride_z + stride_y];
-    const double c111 = values[base + stride_z + stride_y + 1u];
-
-    const double c00 = c000 * (1.0 - t[0]) + c100 * t[0];
-    const double c10 = c010 * (1.0 - t[0]) + c110 * t[0];
-    const double c01 = c001 * (1.0 - t[0]) + c101 * t[0];
-    const double c11 = c011 * (1.0 - t[0]) + c111 * t[0];
-
-    const double c0 = c00 * (1.0 - t[1]) + c10 * t[1];
-    const double c1 = c01 * (1.0 - t[1]) + c11 * t[1];
-
-    return c0 * (1.0 - t[2]) + c1 * t[2];
+    return BlendTrilinear(values, lo, hi, t);
 }
 
 bool same_grid_geometry(const OESystem::OESkewGrid& lhs,
@@ -306,24 +324,85 @@ std::vector<double> interpolate_density_batch(
 
 namespace {
 
-/// Wrap into the cell relative to the node origin, then interpolate.
-/// The wrap origin was GetXMin(), half a spacing below the first node; it is
-/// the node origin now, so wrapped points land on the sampled lattice.
-double InterpolateDensityPeriodicAt(
+/// Reject a cell edge that is not the extent this grid samples.
+///
+/// The periodic path makes node n_i - 1 adjacent to node 0, which reproduces the
+/// crystal only when one period of the map is exactly the n_i nodes the grid
+/// holds. An edge that disagrees describes a different lattice, and wrapping
+/// onto it would return densities from the wrong place with nothing to mark them
+/// as wrong.
+void RequireCommensurateCell(const GridParams& gp, const double cell_a,
+                             const double cell_b, const double cell_c) {
+    static const char* const EDGE[3] = {"a", "b", "c"};
+    static const char* const AXIS[3] = {"x", "y", "z"};
+    const double given[3] = {cell_a, cell_b, cell_c};
+    const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
+    const double spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
+
+    for (int i = 0; i < 3; ++i) {
+        const double extent = n[i] * spacing[i];
+        if (!NearlyEqual(given[i], extent, CELL_COMMENSURATE_TOL)) {
+            std::ostringstream message;
+            message << "Periodic interpolation needs cell edge " << EDGE[i] << " to equal the "
+                       "extent the grid samples along " << AXIS[i] << ": got " << given[i]
+                    << " A against " << extent << " A (" << n[i] << " nodes at "
+                    << spacing[i] << " A); the grid does not tile that cell";
+            throw CellError(message.str());
+        }
+    }
+}
+
+/// The periodic blend, on a cell already checked commensurate.
+///
+/// Split out so the batch entry point can check the cell once and then run this
+/// per point.
+double WrapAndBlendPeriodic(const GridParams& gp, const float* values,
+                            const double x, const double y, const double z,
+                            const double default_value) {
+    double f[3] = {0.0, 0.0, 0.0};
+    grid_fractional_index(gp, x, y, z, f[0], f[1], f[2]);
+
+    // The only remaining way out: fmod of a non-finite index is NaN, which would
+    // index the array with garbage. Every finite point has a value here, so this
+    // is the sole use of default_value on the periodic path.
+    if (!std::isfinite(f[0]) || !std::isfinite(f[1]) || !std::isfinite(f[2])) {
+        return default_value;
+    }
+
+    const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
+    const unsigned int stride[3] = {1u, gp.x_dim, gp.x_dim * gp.y_dim};
+    unsigned int lo[3], hi[3];
+    double t[3];
+    for (int i = 0; i < 3; ++i) {
+        // Wrapping the fractional index modulo the node count, rather than the
+        // Cartesian coordinate modulo the cell edge, keeps the modulus exact: the
+        // period is the integer n_i, so no rounding can drop a wrapped point off
+        // the sampled lattice. Adding the period back for a negative remainder can
+        // round the sum up to exactly n_i, which the modulus below absorbs.
+        const double period = static_cast<double>(n[i]);
+        double w = std::fmod(f[i], period);
+        if (w < 0.0) w += period;
+
+        const double base = std::floor(w);
+        const unsigned int i0 = static_cast<unsigned int>(base) % n[i];
+        lo[i] = i0 * stride[i];
+        hi[i] = ((i0 + 1u) % n[i]) * stride[i];
+        t[i] = std::min(std::max(w - base, 0.0), 1.0);
+    }
+
+    return BlendTrilinear(values, lo, hi, t);
+}
+
+}  // namespace
+
+double interpolate_density_periodic_at(
     const GridParams& gp, const float* values,
     const double x, const double y, const double z,
     const double cell_a, const double cell_b, const double cell_c,
     const double default_value) {
-    double wx = gp.x_origin + std::fmod(x - gp.x_origin, cell_a);
-    if (wx < gp.x_origin) wx += cell_a;
-    double wy = gp.y_origin + std::fmod(y - gp.y_origin, cell_b);
-    if (wy < gp.y_origin) wy += cell_b;
-    double wz = gp.z_origin + std::fmod(z - gp.z_origin, cell_c);
-    if (wz < gp.z_origin) wz += cell_c;
-    return interpolate_density_at(gp, values, wx, wy, wz, default_value);
+    RequireCommensurateCell(gp, cell_a, cell_b, cell_c);
+    return WrapAndBlendPeriodic(gp, values, x, y, z, default_value);
 }
-
-}  // namespace
 
 double interpolate_density_periodic(
     const OESystem::OESkewGrid& grid,
@@ -331,8 +410,8 @@ double interpolate_density_periodic(
     const double cell_a, const double cell_b, const double cell_c,
     const double default_value) {
     const GridParams gp = get_grid_params(grid);
-    return InterpolateDensityPeriodicAt(gp, grid.GetValues(), x, y, z,
-                                        cell_a, cell_b, cell_c, default_value);
+    return interpolate_density_periodic_at(gp, grid.GetValues(), x, y, z,
+                                           cell_a, cell_b, cell_c, default_value);
 }
 
 std::vector<double> interpolate_density_periodic_batch(
@@ -342,12 +421,16 @@ std::vector<double> interpolate_density_periodic_batch(
     const double cell_a, const double cell_b, const double cell_c,
     const double default_value) {
     const GridParams gp = get_grid_params(grid);
+    // The cell is a property of the batch, not of a point in it, so the check
+    // runs once here rather than num_points times inside the loop.
+    RequireCommensurateCell(gp, cell_a, cell_b, cell_c);
+
     const float* values = grid.GetValues();
     std::vector<double> result(num_points);
     for (size_t i = 0; i < num_points; ++i) {
-        result[i] = InterpolateDensityPeriodicAt(
+        result[i] = WrapAndBlendPeriodic(
             gp, values, points[i * 3], points[i * 3 + 1], points[i * 3 + 2],
-            cell_a, cell_b, cell_c, default_value);
+            default_value);
     }
     return result;
 }

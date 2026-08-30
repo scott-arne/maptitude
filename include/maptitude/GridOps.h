@@ -101,7 +101,13 @@ OESystem::OESkewGrid* diff_to_calc(
  * @return A newly allocated padded grid, or nullptr if the molecule already
  *         fits and no padding is needed. The caller owns the returned grid.
  * @throws StructureError If the molecule contains no heavy atoms.
- * @throws CellError If any cell dimension is not a finite positive value.
+ * @throws CellError If any cell dimension is not a finite positive value, or if
+ *         a cell dimension is not the extent the grid samples on that axis --
+ *         the padded grid is filled by periodic sampling and inherits
+ *         interpolate_density_periodic_at's commensurability requirement.
+ * @throws GridError As get_grid_params, if an OESkewGrid setter rejects the
+ *         padded geometry, or if the atom extent plus padding is too thin on
+ *         some axis to give the padded grid two nodes there.
  */
 OESystem::OESkewGrid* wrap_and_pad_grid(
     const OESystem::OESkewGrid& grid,

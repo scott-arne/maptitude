@@ -863,17 +863,18 @@ TEST(WrapAndPadValidationTest, RejectsZeroOrNonFiniteCellEdges) {
 
 TEST(WrapAndPadValidationTest, StillAcceptsPositiveCellEdges) {
     // The atom sits within `padding` of the grid edge, so this actually reaches the
-    // fmod wrap rather than returning nullptr for "no padding needed" -- the
-    // rejection test above throws before that point and cannot cover it. Cell edges
-    // larger than the grid keep the centroid shift at zero, so the atom stays near
-    // the edge and padding is genuinely required.
+    // periodic sampling rather than returning nullptr for "no padding needed" -- the
+    // rejection test above throws before that point and cannot cover it. The grid is
+    // 11 nodes at a 1.0 A interval, so 11.0 is the cell edge it samples; the centroid
+    // sits 4.0 A from the grid centre, inside half a cell, so no shift runs and the
+    // atom stays near the edge where padding is genuinely required.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 4.0, 4.0, 4.0);
     OESystem::OESkewGrid grid(MakeEmptyGrid(5.0, 1.0));
     float* values = grid.GetValues();
     for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 1.0f;
 
     std::unique_ptr<OESystem::OESkewGrid> padded;
-    ASSERT_NO_THROW(padded.reset(wrap_and_pad_grid(grid, mol, 20.0, 20.0, 20.0)));
+    ASSERT_NO_THROW(padded.reset(wrap_and_pad_grid(grid, mol, 11.0, 11.0, 11.0)));
     ASSERT_NE(padded, nullptr) << "expected the padding path, not the nullptr shortcut";
     const float* padded_values = padded->GetValues();
     for (unsigned int i = 0; i < padded->GetSize(); ++i) {

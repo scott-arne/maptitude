@@ -5,6 +5,49 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
+## [Unreleased]
+
+### Changed
+
+- **Periodic interpolation is now genuinely periodic across the cell boundary.**
+  `interpolate_density_periodic`, `interpolate_density_periodic_batch` and the
+  padded grid built by `wrap_and_pad_grid` treat node `n - 1` as adjacent to node
+  0 on each axis, so a point in an axis's final node interval blends the two.
+  Previously the wrap produced coordinates one node interval wider than the
+  domain the interpolator accepts, and every point in that final interval came
+  back as `default_value`: on a 10-node, 1.0 A, cell-10 grid, `x` anywhere in
+  `[9, 10)` returned the default. `wrap_and_pad_grid` baked that gap into the
+  padded map as zero density — 440 of 1331 voxels on a uniformly filled test
+  grid. Every finite coordinate now has a value; `default_value` is returned
+  only for a non-finite one.
+- **The periodic entry points and `wrap_and_pad_grid` raise `CellError` for a
+  cell that is not the extent the grid samples**, meaning `n * spacing` per
+  axis, compared within a 1e-6 relative tolerance. Making the last node adjacent
+  to the first only reproduces the crystal when one period of the map is exactly
+  the nodes the grid holds; wrapping an incommensurate cell returned density from
+  the wrong place with nothing to mark it as wrong. Callers passing a cell edge
+  that is not the grid's own sampled extent must now correct it.
+- **A point on a grid's own corner interpolates instead of falling out of the
+  grid.** The node span is derived from `ElementToSpatialCoord`, whose
+  fractional-to-Cartesian matrix carries a `cos(90 deg) ~ 6e-17` term, so a grid
+  built with its first node at exactly `0.0` reports that node a femtometre
+  higher and a caller querying `0.0` was told the point lay outside. The domain
+  test now carries a boundary tolerance of 1e-9 in fractional-index units, which
+  is six orders above that noise and eight orders below half a node interval.
+- **The grid `wrap_and_pad_grid` builds covers the extent it was sized for.**
+  The node count truncated the interval count rather than rounding it up, so an
+  atom extent that was not a whole number of node intervals produced a grid
+  short by up to one interval per axis, leaving the outermost atoms outside the
+  padded grid's own domain.
+
+### Removed
+
+- `grid_bounds`, a bounding-box helper added earlier in this unreleased cycle and
+  withdrawn before release. It reported the scalar carrier's box — half a node
+  interval outside the first and last nodes on each face — which is not the
+  domain any maptitude function interpolates over. Use `grid_contains`, or
+  `get_grid_params` and the node span.
+
 ## [0.3.0]
 
 Foundation and safety. This release adds input validation, a typed exception

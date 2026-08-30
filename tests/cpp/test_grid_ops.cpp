@@ -6,6 +6,7 @@
 #include <oechem.h>
 #include <oegrid.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -124,6 +125,102 @@ TEST(GridOpsTest, InterpolateDensityPeriodicBatchConsistency) {
     }
 }
 
+TEST(GridOpsTest, InterpolateDensityPeriodicReturnsAnAbsoluteValueAtAWrappedNode) {
+    // The three tests above each compare one wrapped query against another, so any
+    // wrap anchor satisfies them: shifting the anchor shifts both sides equally.
+    // MakeTestGrid stores x + 10y + 100z at every node, which gives a wrapped query
+    // one correct answer and pins where the anchor actually is.
+    auto grid = MakeTestGrid();
+    EXPECT_NEAR(interpolate_density_periodic(grid, 12.0, 3.0, 4.0, 10.0, 10.0, 10.0),
+                432.0, 1e-4);
+    EXPECT_NEAR(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 10.0, 10.0, 10.0),
+                432.0, 1e-4);
+}
+
+TEST(GridOpsTest, InterpolateDensityPeriodicBlendsAcrossTheCellBoundary) {
+    // The node span is [origin, origin + (n-1)s] but the cell is n*s wide, so the
+    // final spacing of every cell has no upper node of its own. It is ordinary
+    // interior space: its upper neighbour is node 0 of the next image, and a
+    // periodic query there must blend, not return the caller's default.
+    auto grid = MakeTestGrid();
+    constexpr double DEFAULT = -99.0;
+    // At y = 3, z = 4 node 9 holds 439 and node 0 holds 430.
+    EXPECT_NEAR(interpolate_density_periodic(grid, 9.5, 3.0, 4.0, 10.0, 10.0, 10.0, DEFAULT),
+                434.5, 1e-4);
+    EXPECT_NEAR(interpolate_density_periodic(grid, 9.2, 3.0, 4.0, 10.0, 10.0, 10.0, DEFAULT),
+                437.2, 1e-4);
+    // The origin's own periodic image, and a point half a spacing below it.
+    EXPECT_NEAR(interpolate_density_periodic(grid, 10.0, 3.0, 4.0, 10.0, 10.0, 10.0, DEFAULT),
+                430.0, 1e-4);
+    EXPECT_NEAR(interpolate_density_periodic(grid, -0.5, 3.0, 4.0, 10.0, 10.0, 10.0, DEFAULT),
+                434.5, 1e-4);
+}
+
+TEST(GridOpsTest, InterpolateDensityPeriodicRejectsAnIncommensurateCell) {
+    // Wrapping modulo the cell only lands on the sampled lattice when the cell is
+    // the sampled extent. A cell that is not n*s makes node n-1's periodic
+    // neighbour something other than node 0, and no wrap can recover the density
+    // that was never sampled.
+    auto grid = MakeTestGrid();  // 10 nodes at spacing 1.0, so the cell must be 10.
+    EXPECT_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 12.0, 10.0, 10.0), CellError);
+    EXPECT_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 10.0, 12.0, 10.0), CellError);
+    EXPECT_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 10.0, 10.0, 12.0), CellError);
+
+    const std::vector<double> points = {2.0, 3.0, 4.0};
+    EXPECT_THROW(interpolate_density_periodic_batch(grid, points, 1, 12.0, 10.0, 10.0), CellError);
+    EXPECT_NO_THROW(interpolate_density_periodic_batch(grid, points, 1, 10.0, 10.0, 10.0));
+}
+
+TEST(GridOpsTest, InterpolateDensityAcceptsTheNominalNodeOrigin) {
+    // The node origin is derived from ElementToSpatialCoord, and on a 90-degree
+    // cell the fractional-to-Cartesian matrix carries a cos(90 deg) ~ 6e-17 term,
+    // so a grid whose first node is nominally at 0.0 reports it a femtometre above.
+    // Without a boundary tolerance the caller's own construction coordinate falls
+    // outside the node span while a coordinate round-tripped through the carrier
+    // does not.
+    OESystem::OESkewGrid grid = MakeCubicGrid(5u, 1.0, 0.0);
+    float* values = grid.GetValues();
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 42.0f;
+
+    const GridParams gp = get_grid_params(grid);
+    ASSERT_GT(gp.x_origin, 0.0)
+        << "the derived origin no longer sits above its nominal 0.0, so this pins nothing";
+
+    EXPECT_DOUBLE_EQ(interpolate_density(grid, 0.0, 0.0, 0.0, -99.0), 42.0);
+    EXPECT_DOUBLE_EQ(interpolate_density(grid, 4.0, 4.0, 4.0, -99.0), 42.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_periodic(grid, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0, -99.0),
+                     42.0);
+}
+
+// --- grid_to_vector / vector_to_grid ---
+
+TEST(GridOpsTest, GridToVectorAndBackRoundTripsEveryElement) {
+    OESystem::OESkewGrid grid = MakeTestGrid();
+    const std::vector<double> values = grid_to_vector(grid);
+    ASSERT_EQ(values.size(), grid.GetSize());
+
+    std::vector<double> doubled(values.size());
+    for (size_t i = 0; i < values.size(); ++i) doubled[i] = values[i] * 2.0;
+
+    vector_to_grid(doubled, grid);
+    const float* out = grid.GetValues();
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+        EXPECT_FLOAT_EQ(out[i], static_cast<float>(values[i] * 2.0)) << "element " << i;
+    }
+}
+
+TEST(GridOpsTest, VectorToGridRejectsAVectorOfTheWrongLength) {
+    // Copying the shorter of the two left the tail of the grid holding whatever
+    // density it held before, which reads as a successful write.
+    OESystem::OESkewGrid grid = MakeTestGrid();
+    const unsigned int size = grid.GetSize();
+
+    EXPECT_THROW(vector_to_grid(std::vector<double>(size - 1u, 1.0), grid), GridError);
+    EXPECT_THROW(vector_to_grid(std::vector<double>(size + 1u, 1.0), grid), GridError);
+    EXPECT_THROW(vector_to_grid(std::vector<double>(), grid), GridError);
+    EXPECT_NO_THROW(vector_to_grid(std::vector<double>(size, 1.0), grid));
+}
+
 // --- WrapAndPadGrid tests ---
 
 static OEChem::OEGraphMol MakeTestMol(double cx, double cy, double cz) {
@@ -180,11 +277,10 @@ TEST(GridOpsTest, WrapAndPadGridShiftsCoordinates) {
     EXPECT_NEAR(coords[1], 5.0, 0.5);
     EXPECT_NEAR(coords[2], 5.0, 0.5);
 
-    // Since atom is within grid after shifting, result should be nullptr
-    // (no padding needed)
-    if (result) {
-        delete result;
-    }
+    // The shifted atom is inside the grid with room for the padding, so no padded
+    // grid is built and there is nothing to own.
+    EXPECT_EQ(result, nullptr);
+    delete result;
 }
 
 TEST(GridOpsTest, WrapAndPadGridCreatesPaddedGrid) {
@@ -211,14 +307,115 @@ TEST(GridOpsTest, WrapAndPadGridCreatesPaddedGrid) {
     EXPECT_GT(result->GetYDim(), grid.GetYDim());
     EXPECT_GT(result->GetZDim(), grid.GetZDim());
 
-    // Values in the padded grid should be ~42.0 (filled from periodic sampling)
-    float sx, sy, sz;
-    result->ElementToSpatialCoord(0, sx, sy, sz);
-    double val = interpolate_density_periodic(
-        grid, sx, sy, sz, 5.0, 5.0, 5.0);
-    EXPECT_NEAR(result->GetValues()[0], static_cast<float>(val), 0.1);
+    // The source is uniform, so every padded node -- interior, wrapped, or on the
+    // cell face -- must carry the source value. Recomputing the expectation with
+    // interpolate_density_periodic would put the function under test on both sides
+    // of the comparison, and checking element 0 alone left a third of the fill
+    // unexamined.
+    const float* padded_values = result->GetValues();
+    unsigned int wrong = 0u;
+    float first_wrong = 0.0f;
+    unsigned int first_wrong_index = 0u;
+    for (unsigned int i = 0; i < result->GetSize(); ++i) {
+        if (std::fabs(padded_values[i] - 42.0f) > 1e-3f) {
+            if (wrong == 0u) {
+                first_wrong = padded_values[i];
+                first_wrong_index = i;
+            }
+            ++wrong;
+        }
+    }
+    EXPECT_EQ(wrong, 0u) << wrong << " of " << result->GetSize()
+                         << " padded nodes disagree with the uniform source; element "
+                         << first_wrong_index << " holds " << first_wrong;
 
     delete result;
+}
+
+/// Build a skew grid with a distinct node interval on each axis, first node at the
+/// Cartesian origin, filled with @p fill.
+static OESystem::OESkewGrid MakeAnisotropicGrid(const unsigned int nx, const unsigned int ny,
+                                                const unsigned int nz, const double sx,
+                                                const double sy, const double sz,
+                                                const float fill) {
+    OESystem::OESkewGrid grid;
+    EXPECT_TRUE(grid.SetDim(nx, ny, nz));
+    EXPECT_TRUE(grid.SetUnitCell(static_cast<float>(nx * sx), static_cast<float>(ny * sy),
+                                 static_cast<float>(nz * sz), 90.0f, 90.0f, 90.0f, nx, ny, nz));
+    EXPECT_TRUE(grid.SetMid(static_cast<float>((nx - 1) * sx / 2.0),
+                            static_cast<float>((ny - 1) * sy / 2.0),
+                            static_cast<float>((nz - 1) * sz / 2.0)));
+    float* values = grid.GetValues();
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = fill;
+    return grid;
+}
+
+TEST(GridOpsTest, WrapAndPadGridSizesEachAxisFromItsOwnNodeInterval) {
+    // Per-axis sampling is the reason this carrier exists, and every other padding
+    // test uses an isotropic grid, where collapsing all three intervals onto x's is
+    // invisible. Distinct intervals give the three axes three different node counts
+    // from one common extent.
+    OESystem::OESkewGrid grid = MakeAnisotropicGrid(8u, 6u, 5u, 0.5, 1.0, 2.0, 7.0f);
+    const GridParams gp = get_grid_params(grid);
+    ASSERT_NEAR(gp.x_spacing, 0.5, 1e-5);
+    ASSERT_NEAR(gp.y_spacing, 1.0, 1e-5);
+    ASSERT_NEAR(gp.z_spacing, 2.0, 1e-5);
+
+    // The atom sits at the grid centre, so no centroid shift runs; padding 2.0 puts
+    // it outside the node span on x and forces the padding path.
+    auto mol = MakeTestMol(1.75, 2.5, 4.0);
+    std::unique_ptr<OESystem::OESkewGrid> result(
+        wrap_and_pad_grid(grid, mol, 4.0, 6.0, 10.0, 2.0));
+    ASSERT_NE(result, nullptr) << "expected the padding path, not the nullptr shortcut";
+
+    // A 4.0 A extent on every axis, divided by that axis's own node interval:
+    // ceil(4/0.5) + 1 = 9, ceil(4/1) + 1 = 5, ceil(4/2) + 1 = 3.
+    EXPECT_EQ(result->GetXDim(), 9u);
+    EXPECT_EQ(result->GetYDim(), 5u);
+    EXPECT_EQ(result->GetZDim(), 3u);
+    EXPECT_NEAR(result->GetXMid(), 1.75, 1e-5);
+    EXPECT_NEAR(result->GetYMid(), 2.5, 1e-5);
+    EXPECT_NEAR(result->GetZMid(), 4.0, 1e-5);
+
+    const GridParams pad_gp = get_grid_params(*result);
+    EXPECT_NEAR(pad_gp.x_spacing, 0.5, 1e-5);
+    EXPECT_NEAR(pad_gp.y_spacing, 1.0, 1e-5);
+    EXPECT_NEAR(pad_gp.z_spacing, 2.0, 1e-5);
+    EXPECT_NEAR(pad_gp.x_origin, -0.25, 1e-5);
+    EXPECT_NEAR(pad_gp.y_origin, 0.5, 1e-5);
+    EXPECT_NEAR(pad_gp.z_origin, 2.0, 1e-5);
+
+    const float* padded_values = result->GetValues();
+    for (unsigned int i = 0; i < result->GetSize(); ++i) {
+        EXPECT_NEAR(padded_values[i], 7.0f, 1e-3f) << "element " << i;
+    }
+}
+
+TEST(GridOpsTest, WrapAndPadGridRejectsAPaddingTooSmallForTheNodeInterval) {
+    // A padded axis needs two nodes before any interval can be derived from it. The
+    // shortfall is the caller's padding against this grid's node interval, and the
+    // message has to say so: deriving geometry from the one-node result blames the
+    // source grid instead.
+    OESystem::OESkewGrid grid = MakeTestGrid();  // spacing 1.0, node span [0, 9]
+    auto mol = MakeTestMol(9.4, 4.5, 4.5);       // outside the span, so padding runs
+
+    try {
+        std::unique_ptr<OESystem::OESkewGrid> result(
+            wrap_and_pad_grid(grid, mol, 10.0, 10.0, 10.0, 0.0));
+        FAIL() << "expected a zero padding around a single atom to be rejected";
+    } catch (const GridError& e) {
+        const std::string message = e.what();
+        EXPECT_NE(message.find("padding"), std::string::npos) << message;
+        EXPECT_NE(message.find("node interval"), std::string::npos) << message;
+    }
+}
+
+TEST(GridOpsTest, WrapAndPadGridRejectsACellThatIsNotTheSampledExtent) {
+    // The padded grid is filled by periodic sampling, so it inherits the periodic
+    // path's precondition: the cell has to be the extent the grid samples.
+    OESystem::OESkewGrid grid = MakeTestGrid();  // 10 nodes at spacing 1.0
+    auto mol = MakeTestMol(4.5, 4.5, 4.5);
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, 12.0, 10.0, 10.0, 4.75), CellError);
 }
 
 static OESystem::OESkewGrid MakeShiftedGrid(double shift) {
@@ -336,44 +533,84 @@ TEST(GridOpsTest, WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded) {
     EXPECT_EQ(result, nullptr);
 }
 
-// The extents-box constructor is the one piece of scalar-carrier geometry the
-// skew carrier cannot express, so this test pins the reproduction directly
-// rather than trusting it.
-TEST(WrapAndPadGrid, ReproducesTheExtentsBoxConstructor) {
+/// Add a heavy atom at (x, y, z) to @p mol.
+static void AddCarbon(OEChem::OEGraphMol& mol, const double x, const double y, const double z) {
+    OEChem::OEAtomBase* atom = mol.NewAtom(6);
+    const float coords[3] = {
+        static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)
+    };
+    mol.SetCoords(atom, coords);
+}
+
+// The padded grid's geometry is built by hand -- the skew carrier has no
+// extents-box constructor -- so it is asserted through wrap_and_pad_grid rather
+// than by re-deriving it. Asserting against a separately constructed reference
+// grid would pin the reference's behaviour and leave this arithmetic free.
+TEST(WrapAndPadGrid, SizesThePaddedGridFromTheAtomExtent) {
     struct Case {
-        double minmax[6];
-        double spacing;
+        const char* label;
+        double atom_lo[3];   ///< heavy atom at the low corner of the atom extent
+        double atom_hi[3];   ///< heavy atom at the high corner
+        double padding;
         unsigned int dim[3];
         double mid[3];
         double node0[3];
     };
+    // Every case runs against MakeTestGrid: 10 nodes at spacing 1.0, node span
+    // [0, 9], centre 4.5, cell 10. Each atom pair keeps its centroid inside half a
+    // cell of that centre, so no coordinate shift runs and the extent is the pair's
+    // bounding box grown by the padding.
     const Case CASES[] = {
-        {{0.0, 0.0, 0.0, 9.0, 9.0, 9.0}, 1.0,
-         {10u, 10u, 10u}, {4.5, 4.5, 4.5}, {0.0, 0.0, 0.0}},
-        {{0.0, 0.0, 0.0, 9.5, 9.5, 9.5}, 1.0,
-         {10u, 10u, 10u}, {4.75, 4.75, 4.75}, {0.25, 0.25, 0.25}},
-        {{-1.3, 2.7, 0.4, 8.2, 11.1, 5.9}, 0.7,
-         {14u, 12u, 8u}, {3.45, 6.90, 3.15}, {-1.10, 3.05, 0.70}},
+        // A whole number of node intervals: 10.0 A -> 11 nodes spanning 10.0 A.
+        {"integral extent",
+         {4.5, 4.5, 4.5}, {4.5, 4.5, 4.5}, 5.0,
+         {11u, 11u, 11u}, {4.5, 4.5, 4.5}, {-0.5, -0.5, -0.5}},
+        // Nine and a half node intervals. A truncating count gives 10 nodes
+        // spanning 9.0 A, a quarter of an Angstrom short at each face.
+        {"fractional extent",
+         {4.5, 4.5, 4.5}, {4.5, 4.5, 4.5}, 4.75,
+         {11u, 11u, 11u}, {4.5, 4.5, 4.5}, {-0.5, -0.5, -0.5}},
+        // A different extent on each axis, so no axis can borrow another's count.
+        {"per-axis extents",
+         {1.0, 2.0, 3.0}, {8.0, 6.0, 4.0}, 3.0,
+         {14u, 11u, 8u}, {4.5, 4.0, 3.5}, {-2.0, -1.0, 0.0}},
     };
 
     for (const Case& c : CASES) {
-        // The reference this reproduction is measured against is the scalar
-        // carrier's extents-box constructor itself.
-        double minmax[6];
-        for (int i = 0; i < 6; ++i) minmax[i] = c.minmax[i];
-        const OESystem::OEScalarGrid reference(minmax, c.spacing);  // OE-SCALARGRID-OK: the reproduction's reference
+        SCOPED_TRACE(c.label);
+        OESystem::OESkewGrid grid = MakeTestGrid();
+        OEChem::OEGraphMol mol;
+        AddCarbon(mol, c.atom_lo[0], c.atom_lo[1], c.atom_lo[2]);
+        AddCarbon(mol, c.atom_hi[0], c.atom_hi[1], c.atom_hi[2]);
 
-        EXPECT_EQ(reference.GetXDim(), c.dim[0]);
-        EXPECT_EQ(reference.GetYDim(), c.dim[1]);
-        EXPECT_EQ(reference.GetZDim(), c.dim[2]);
-        EXPECT_NEAR(reference.GetXMid(), c.mid[0], 1e-5);
-        EXPECT_NEAR(reference.GetYMid(), c.mid[1], 1e-5);
-        EXPECT_NEAR(reference.GetZMid(), c.mid[2], 1e-5);
+        std::unique_ptr<OESystem::OESkewGrid> padded(
+            wrap_and_pad_grid(grid, mol, 10.0, 10.0, 10.0, c.padding));
+        ASSERT_NE(padded, nullptr) << "expected the padding path, not the nullptr shortcut";
 
-        const OESystem::OESkewGrid converted(reference);
-        const GridParams gp = get_grid_params(converted);
+        EXPECT_EQ(padded->GetXDim(), c.dim[0]);
+        EXPECT_EQ(padded->GetYDim(), c.dim[1]);
+        EXPECT_EQ(padded->GetZDim(), c.dim[2]);
+        EXPECT_NEAR(padded->GetXMid(), c.mid[0], 1e-5);
+        EXPECT_NEAR(padded->GetYMid(), c.mid[1], 1e-5);
+        EXPECT_NEAR(padded->GetZMid(), c.mid[2], 1e-5);
+
+        const GridParams gp = get_grid_params(*padded);
         EXPECT_NEAR(gp.x_origin, c.node0[0], 1e-5);
         EXPECT_NEAR(gp.y_origin, c.node0[1], 1e-5);
         EXPECT_NEAR(gp.z_origin, c.node0[2], 1e-5);
+
+        // The property the node count exists to satisfy: the padded node span
+        // contains every atom with its padding. A truncated count breaks this on
+        // the fractional case while still producing a plausible grid.
+        const double origin[3] = {gp.x_origin, gp.y_origin, gp.z_origin};
+        const double spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
+        const unsigned int dim[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
+        for (int i = 0; i < 3; ++i) {
+            EXPECT_LE(origin[i], std::min(c.atom_lo[i], c.atom_hi[i]) - c.padding + 1e-9)
+                << "axis " << i << " node span starts inside the required extent";
+            EXPECT_GE(origin[i] + (dim[i] - 1) * spacing[i],
+                      std::max(c.atom_lo[i], c.atom_hi[i]) + c.padding - 1e-9)
+                << "axis " << i << " node span ends inside the required extent";
+        }
     }
 }
