@@ -61,6 +61,20 @@ constexpr double MAX_PAD_INTERVALS =
 constexpr double MAX_PAD_CELL_EDGE =
     static_cast<double>(std::numeric_limits<float>::max());
 
+/// Largest magnitude wrap_and_pad_grid may convert to a float atom coordinate.
+///
+/// SetCoords stores the shifted position as a float, so the rule that bounds the
+/// padded cell edge applies to the shift too, and the two land on the same number
+/// because both destinations are float. They are separate constants because they
+/// bound different quantities: this one is the magnitude of a signed coordinate
+/// in the caller's molecule, MAX_PAD_CELL_EDGE a non-negative extent of the grid
+/// this function builds. MAX_PAD_CELL_EDGE also carries a second duty this one
+/// does not -- it caps what SetMid converts, over a region measured for midpoints
+/// rather than for atom positions -- so folding them together would extend that
+/// argument to a quantity it was never made about.
+constexpr double MAX_SHIFTED_COORD =
+    static_cast<double>(std::numeric_limits<float>::max());
+
 }  // namespace
 
 /// Render a grid's geometry for an error message: dimensions, centre, spacing.
@@ -219,7 +233,41 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     const double shift_y = std::round((grid_ymid - cy) / cell_b) * cell_b;
     const double shift_z = std::round((grid_zmid - cz) / cell_c) * cell_c;
 
+    static const char* const AXIS[3] = {"x", "y", "z"};
+
     if (std::abs(shift_x) > 0.01 || std::abs(shift_y) > 0.01 || std::abs(shift_z) > 0.01) {
+        // The sum is a double and SetCoords takes a float, and a floating-point
+        // conversion is undefined for a value outside the destination's range;
+        // on this arm64 host it saturates to an infinity, and without this pass
+        // the write loop below puts that in the caller's molecule. Nothing
+        // downstream repairs it: in the case this guard was built from, the
+        // sizing loop did reject the infinite extent that produced, but only
+        // after the coordinates had been replaced, and that extent is measured
+        // over heavy atoms alone, so an overflow confined to the rest of the
+        // molecule has nothing later in this function looking at it. Compute
+        // every component first so a shift that cannot be stored is refused with
+        // the molecule still as the caller left it. This walks the same atoms the
+        // write loop walks, not the heavy-atom set the centroid came from,
+        // because it is the write loop's atoms whose coordinates are narrowed.
+        const double shifts[3] = {shift_x, shift_y, shift_z};
+        for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
+            mol.GetCoords(&(*atom), coords);
+            for (int i = 0; i < 3; ++i) {
+                const double shifted = static_cast<double>(coords[i]) + shifts[i];
+                // Negated so a NaN falls on the reject side rather than through it.
+                if (!(std::abs(shifted) <= MAX_SHIFTED_COORD)) {
+                    std::ostringstream message;
+                    message << "wrap_and_pad_grid would shift atom " << atom->GetIdx()
+                            << " on axis " << AXIS[i] << " to " << shifted
+                            << " A, which is not a finite coordinate a float can hold (the"
+                            << " limit is " << MAX_SHIFTED_COORD << " A in magnitude): the atom"
+                            << " sits at " << coords[i] << " A there and centring the heavy-atom"
+                            << " centroid on the grid moves it by " << shifts[i] << " A";
+                    throw GridError(message.str());
+                }
+            }
+        }
+
         for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
             mol.GetCoords(&(*atom), coords);
             float shifted[3] = {
@@ -282,7 +330,6 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
         min_x - padding, min_y - padding, min_z - padding,
         max_x + padding, max_y + padding, max_z + padding
     };
-    static const char* const AXIS[3] = {"x", "y", "z"};
     const double src_spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
     unsigned int pad_dim[3];
     double pad_mid[3];

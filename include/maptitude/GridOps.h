@@ -105,12 +105,16 @@ OESystem::OESkewGrid* diff_to_calc(
  * The molecule is modified in-place (coordinates shifted). The cell edges, the
  * padding, the source grid's geometry, the cell's commensurability and the
  * heavy-atom count are all checked before the shift, so a throw from any of
- * those leaves the molecule where it was. The errors raised while sizing and
- * building the padded grid come after the shift, and a molecule that needed one
- * is left where the shift put it. That place is the caller's own coordinates
- * plus whole multiples of the cell vectors, up to the rounding of storing them
- * back as floats, so the molecule sits at a crystallographically equivalent
- * position rather than a corrupted one; the shift is not rolled back.
+ * those leaves the molecule where it was. The shift is checked the same way:
+ * every atom's shifted coordinate is computed before any of them is written, so
+ * a shift whose result on some coordinate is not a finite value a float can
+ * hold raises GridError with the molecule untouched rather than leaving it
+ * partly moved. The errors raised while sizing and building the padded grid
+ * come after the shift, and a molecule that needed one is left where the shift
+ * put it. That place is the caller's own coordinates plus whole multiples of
+ * the cell vectors, up to the rounding of storing them back as floats, so the
+ * molecule sits at a crystallographically equivalent position rather than a
+ * corrupted one; the shift is not rolled back.
  *
  * @param grid CCP4 unit-cell grid.
  * @param mol Molecule to wrap (modified in-place).
@@ -129,11 +133,13 @@ OESystem::OESkewGrid* diff_to_calc(
  *         and inherits interpolate_density_periodic_at's commensurability
  *         requirement.
  * @throws GridError As get_grid_params, if padding is not a finite non-negative
- *         value, if an OESkewGrid setter rejects the padded geometry, if the
+ *         value, if centring the heavy-atom centroid on the grid would leave
+ *         some atom at a coordinate that is not a finite value a float can
+ *         hold, if an OESkewGrid setter rejects the padded geometry, if the
  *         atom extent plus padding is too thin on some axis to give the padded
- *         grid two nodes there, if that extent needs more node intervals on some
- *         axis than a grid dimension can hold, or if the padded grid's cell edge
- *         on some axis is larger than a float can hold.
+ *         grid two nodes there, if that extent needs more node intervals on
+ *         some axis than a grid dimension can hold, or if the padded grid's
+ *         cell edge on some axis is larger than a float can hold.
  */
 OESystem::OESkewGrid* wrap_and_pad_grid(
     const OESystem::OESkewGrid& grid,

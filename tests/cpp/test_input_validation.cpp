@@ -990,6 +990,106 @@ TEST(WrapAndPadValidationTest, RejectsAPaddedCellEdgeNoFloatCanHold) {
     }
 }
 
+// ---- wrap_and_pad_grid centroid-shift validation ----
+
+namespace {
+
+/// Every atom's coordinates in iteration order, for asserting that a rejected
+/// call left the caller's molecule alone.
+std::vector<float> AtomCoords(OEChem::OEMolBase& mol) {
+    std::vector<float> out;
+    float coords[3];
+    for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
+        mol.GetCoords(&(*atom), coords);
+        out.push_back(coords[0]);
+        out.push_back(coords[1]);
+        out.push_back(coords[2]);
+    }
+    return out;
+}
+
+/// A two-node cubic grid with the given cell edge, centred at `xmid` on x and
+/// at the origin on the other two axes.
+OESystem::OESkewGrid MakeHugeCellGrid(const float cell_edge, const float xmid) {
+    OESystem::OESkewGrid grid;
+    EXPECT_TRUE(grid.SetDim(2u, 2u, 2u));
+    EXPECT_TRUE(grid.SetUnitCell(cell_edge, cell_edge, cell_edge,
+                                 90.0f, 90.0f, 90.0f, 2u, 2u, 2u));
+    EXPECT_TRUE(grid.SetMid(xmid, 0.0f, 0.0f));
+    return grid;
+}
+
+}  // namespace
+
+TEST(WrapAndPadValidationTest, RejectsACentroidShiftNoFloatCoordinateCanHold) {
+    // The shift is computed in double and stored back as a float, and nothing
+    // bounded that narrowing. The atom below sits half a cell short of the grid
+    // centre, so std::round takes the shift to one full cell edge and the sum
+    // lands past the float maximum. Without this guard the conversion saturated
+    // on this host, the infinity was written into the caller's molecule, and what
+    // the caller saw was the sizing guard rejecting the infinite extent that
+    // produced -- an error raised over coordinates the call had already replaced.
+    //
+    // The grid centre is placed below the float maximum by half the cell edge's
+    // node interval, so the grid's own node coordinates stay finite and the shift
+    // is the only thing that overflows.
+    const float cell_edge = 0x1p127f;  // 1.70141e38 A over two nodes
+    const float grid_mid = std::numeric_limits<float>::max() - 0x1p125f;
+    const OESystem::OESkewGrid grid = MakeHugeCellGrid(cell_edge, grid_mid);
+
+    const double atom_x =
+        static_cast<double>(grid_mid) - 0.5 * static_cast<double>(cell_edge);
+    OEChem::OEGraphMol mol = MakeAtomMol(6, atom_x, 0.0, 0.0);
+    const std::vector<float> before = AtomCoords(mol);
+
+    // Assert on the message: the sizing guards below raise GridError from this same
+    // function, so the type alone cannot say which one fired.
+    try {
+        std::unique_ptr<OESystem::OESkewGrid> padded(
+            wrap_and_pad_grid(grid, mol, cell_edge, cell_edge, cell_edge, 0.0));
+        FAIL() << "expected GridError for a centroid shift past the float maximum";
+    } catch (const GridError& error) {
+        EXPECT_NE(std::string(error.what()).find("would shift atom"), std::string::npos)
+            << "rejected by the wrong branch: " << error.what();
+    }
+
+    // The reason the guard exists: a rejected call must leave the caller's
+    // coordinates as they were rather than saturated.
+    EXPECT_EQ(AtomCoords(mol), before) << "the rejected call moved the molecule";
+}
+
+TEST(WrapAndPadValidationTest, RejectsTheShiftBeforeMovingAnEarlierAtomThatFits) {
+    // A guard that tested each coordinate as it wrote it would pass the single-atom
+    // case above and still leave a multi-atom molecule half-shifted. Atom 0 sits at
+    // the Cartesian origin and atom 1 at the grid centre, so their centroid is
+    // between half a cell and one and a half cells short of that centre and the
+    // shift is again one full cell edge. Atom 0 lands exactly on that edge, a value
+    // a float holds; atom 1 lands past the float maximum. Atom 0 is written first,
+    // so it is what distinguishes rejecting before the first write from rejecting
+    // during the walk.
+    const float cell_edge = 0x1p127f;
+    const float grid_mid = std::numeric_limits<float>::max() - 0x1p125f;
+    const OESystem::OESkewGrid grid = MakeHugeCellGrid(cell_edge, grid_mid);
+
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    OEChem::OEAtomBase* far_atom = mol.NewAtom(6);
+    const double far_coords[3] = {static_cast<double>(grid_mid), 0.0, 0.0};
+    mol.SetCoords(far_atom, far_coords);
+    const std::vector<float> before = AtomCoords(mol);
+
+    try {
+        std::unique_ptr<OESystem::OESkewGrid> padded(
+            wrap_and_pad_grid(grid, mol, cell_edge, cell_edge, cell_edge, 0.0));
+        FAIL() << "expected GridError for a centroid shift past the float maximum";
+    } catch (const GridError& error) {
+        EXPECT_NE(std::string(error.what()).find("would shift atom"), std::string::npos)
+            << "rejected by the wrong branch: " << error.what();
+    }
+
+    EXPECT_EQ(AtomCoords(mol), before)
+        << "the rejected call moved at least one atom; the shift is not all-or-nothing";
+}
+
 // ---- Per-axis grid geometry derivation (spec §2.2, §4.4) ----
 
 namespace {
