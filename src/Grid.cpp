@@ -256,135 +256,132 @@ bool same_grid_geometry(const OESystem::OESkewGrid& lhs,
     return true;
 }
 
-std::vector<double> grid_to_vector(const OESystem::OEScalarGrid& grid) {
-    const size_t size = grid.GetSize();
+std::vector<double> grid_to_vector(const OESystem::OESkewGrid& grid) {
+    const unsigned int size = grid.GetSize();
+    const float* values = grid.GetValues();
     std::vector<double> result(size);
-    for (size_t i = 0; i < size; ++i) {
-        result[i] = grid[static_cast<unsigned int>(i)];
+    for (unsigned int i = 0; i < size; ++i) {
+        result[i] = values[i];
     }
     return result;
 }
 
-void vector_to_grid(const std::vector<double>& values, OESystem::OEScalarGrid& grid) {
-    const size_t size = grid.GetSize();
-    for (size_t i = 0; i < size && i < values.size(); ++i) {
-        grid[static_cast<unsigned int>(i)] = static_cast<float>(values[i]);
+void vector_to_grid(const std::vector<double>& values, OESystem::OESkewGrid& grid) {
+    const unsigned int size = grid.GetSize();
+    if (values.size() != size) {
+        std::ostringstream message;
+        message << "vector_to_grid needs exactly " << size << " values for this grid, got "
+                << values.size() << "; a short vector previously left the tail of the grid "
+                   "holding stale density";
+        throw GridError(message.str());
+    }
+    float* out = grid.GetValues();
+    for (unsigned int i = 0; i < size; ++i) {
+        out[i] = static_cast<float>(values[i]);
     }
 }
 
-double interpolate_density(const OESystem::OEScalarGrid& grid,
-                          const double x, const double y, const double z,
-                          const double default_value) {
-    if (!grid.IsInGrid(static_cast<float>(x),
-                       static_cast<float>(y),
-                       static_cast<float>(z))) {
-        return default_value;
-    }
-
-    // Use OpenEye's built-in trilinear interpolation
-    return OESystem::OEFloatGridLinearInterpolate(
-        grid,
-        static_cast<float>(x),
-        static_cast<float>(y),
-        static_cast<float>(z),
-        static_cast<float>(default_value));
+double interpolate_density(const OESystem::OESkewGrid& grid,
+                           const double x, const double y, const double z,
+                           const double default_value) {
+    const GridParams gp = get_grid_params(grid);
+    return interpolate_density_at(gp, grid.GetValues(), x, y, z, default_value);
 }
 
 std::vector<double> interpolate_density_batch(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const std::vector<double>& points,
     const size_t num_points,
     const double default_value) {
+    const GridParams gp = get_grid_params(grid);
+    const float* values = grid.GetValues();
     std::vector<double> result(num_points);
     for (size_t i = 0; i < num_points; ++i) {
-        result[i] = interpolate_density(
-            grid, points[i * 3], points[i * 3 + 1], points[i * 3 + 2],
+        result[i] = interpolate_density_at(
+            gp, values, points[i * 3], points[i * 3 + 1], points[i * 3 + 2],
             default_value);
     }
     return result;
 }
 
-double interpolate_density_periodic(
-    const OESystem::OEScalarGrid& grid,
+namespace {
+
+/// Wrap into the cell relative to the node origin, then interpolate.
+/// The wrap origin was GetXMin(), half a spacing below the first node; it is
+/// the node origin now, so wrapped points land on the sampled lattice.
+double InterpolateDensityPeriodicAt(
+    const GridParams& gp, const float* values,
     const double x, const double y, const double z,
     const double cell_a, const double cell_b, const double cell_c,
     const double default_value) {
-    // Wrap coordinates modulo unit cell dimensions relative to grid origin
-    const double orig_x = grid.GetXMin();
-    const double orig_y = grid.GetYMin();
-    const double orig_z = grid.GetZMin();
+    double wx = gp.x_origin + std::fmod(x - gp.x_origin, cell_a);
+    if (wx < gp.x_origin) wx += cell_a;
+    double wy = gp.y_origin + std::fmod(y - gp.y_origin, cell_b);
+    if (wy < gp.y_origin) wy += cell_b;
+    double wz = gp.z_origin + std::fmod(z - gp.z_origin, cell_c);
+    if (wz < gp.z_origin) wz += cell_c;
+    return interpolate_density_at(gp, values, wx, wy, wz, default_value);
+}
 
-    double wx = orig_x + std::fmod(x - orig_x, cell_a);
-    if (wx < orig_x) wx += cell_a;
+}  // namespace
 
-    double wy = orig_y + std::fmod(y - orig_y, cell_b);
-    if (wy < orig_y) wy += cell_b;
-
-    double wz = orig_z + std::fmod(z - orig_z, cell_c);
-    if (wz < orig_z) wz += cell_c;
-
-    return interpolate_density(grid, wx, wy, wz, default_value);
+double interpolate_density_periodic(
+    const OESystem::OESkewGrid& grid,
+    const double x, const double y, const double z,
+    const double cell_a, const double cell_b, const double cell_c,
+    const double default_value) {
+    const GridParams gp = get_grid_params(grid);
+    return InterpolateDensityPeriodicAt(gp, grid.GetValues(), x, y, z,
+                                        cell_a, cell_b, cell_c, default_value);
 }
 
 std::vector<double> interpolate_density_periodic_batch(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const std::vector<double>& points,
     const size_t num_points,
     const double cell_a, const double cell_b, const double cell_c,
     const double default_value) {
+    const GridParams gp = get_grid_params(grid);
+    const float* values = grid.GetValues();
     std::vector<double> result(num_points);
     for (size_t i = 0; i < num_points; ++i) {
-        result[i] = interpolate_density_periodic(
-            grid, points[i * 3], points[i * 3 + 1], points[i * 3 + 2],
+        result[i] = InterpolateDensityPeriodicAt(
+            gp, values, points[i * 3], points[i * 3 + 1], points[i * 3 + 2],
             cell_a, cell_b, cell_c, default_value);
     }
     return result;
 }
 
 std::vector<unsigned int> get_atom_grid_points(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const double x, const double y, const double z, const double radius) {
     std::vector<unsigned int> result;
 
-    const double spacing = grid.GetSpacing();
+    const GridParams gp = get_grid_params(grid);
     const double r2 = radius * radius;
+    const double origin[3] = {gp.x_origin, gp.y_origin, gp.z_origin};
+    const double spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
+    const unsigned int dim[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
+    const double centre[3] = {x, y, z};
 
-    // Grid node origin (ElementToSpatialCoord gives the actual first node
-    // position, whereas GetXMin returns the bounding-box edge which is
-    // offset by half a spacing)
-    float fx0, fy0, fz0;
-    grid.ElementToSpatialCoord(0, fx0, fy0, fz0);
-    const double x0 = fx0;
-    const double y0 = fy0;
-    const double z0 = fz0;
-    const unsigned int xdim = grid.GetXDim();
-    const unsigned int ydim = grid.GetYDim();
-    const unsigned int zdim = grid.GetZDim();
+    int lo[3], hi[3];
+    for (int i = 0; i < 3; ++i) {
+        lo[i] = std::max(0, static_cast<int>(
+            std::floor((centre[i] - radius - origin[i]) / spacing[i])));
+        hi[i] = std::min(static_cast<int>(dim[i]) - 1, static_cast<int>(
+            std::ceil((centre[i] + radius - origin[i]) / spacing[i])));
+    }
 
-    // Compute index range to search
-    const int ix_min = std::max(0, static_cast<int>(std::floor((x - radius - x0) / spacing)));
-    const int ix_max = std::min(static_cast<int>(xdim) - 1,
-                          static_cast<int>(std::ceil((x + radius - x0) / spacing)));
-    const int iy_min = std::max(0, static_cast<int>(std::floor((y - radius - y0) / spacing)));
-    const int iy_max = std::min(static_cast<int>(ydim) - 1,
-                          static_cast<int>(std::ceil((y + radius - y0) / spacing)));
-    const int iz_min = std::max(0, static_cast<int>(std::floor((z - radius - z0) / spacing)));
-    const int iz_max = std::min(static_cast<int>(zdim) - 1,
-                          static_cast<int>(std::ceil((z + radius - z0) / spacing)));
-
-    for (int ix = ix_min; ix <= ix_max; ++ix) {
-        const double gx = x0 + ix * spacing;
-        const double dx = gx - x;
-        for (int iy = iy_min; iy <= iy_max; ++iy) {
-            const double gy = y0 + iy * spacing;
-            const double dy = gy - y;
-            for (int iz = iz_min; iz <= iz_max; ++iz) {
-                const double gz = z0 + iz * spacing;
-                const double dz = gz - z;
+    for (int ix = lo[0]; ix <= hi[0]; ++ix) {
+        const double dx = origin[0] + ix * spacing[0] - x;
+        for (int iy = lo[1]; iy <= hi[1]; ++iy) {
+            const double dy = origin[1] + iy * spacing[1] - y;
+            for (int iz = lo[2]; iz <= hi[2]; ++iz) {
+                const double dz = origin[2] + iz * spacing[2] - z;
                 if (dx * dx + dy * dy + dz * dz <= r2) {
-                    const unsigned int idx = static_cast<unsigned int>(
-                        iz * xdim * ydim + iy * xdim + ix);
-                    result.push_back(idx);
+                    result.push_back(static_cast<unsigned int>(
+                        iz * static_cast<int>(dim[0]) * static_cast<int>(dim[1]) +
+                        iy * static_cast<int>(dim[0]) + ix));
                 }
             }
         }

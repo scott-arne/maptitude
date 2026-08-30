@@ -1,6 +1,6 @@
 /**
  * @file Grid.h
- * @brief Utilities for working with OEScalarGrid objects.
+ * @brief Utilities for working with OESkewGrid objects.
  *
  * Provides helper functions for converting between OpenEye grid
  * representations and raw data arrays used by the computation kernels.
@@ -13,7 +13,6 @@
 #include <vector>
 
 namespace OESystem {
-class OEScalarGrid;
 class OESkewGrid;
 }
 
@@ -154,20 +153,25 @@ bool same_grid_geometry(const OESystem::OESkewGrid& lhs,
                         double tol = 1e-6);
 
 /**
- * @brief Copy grid values to a flat vector (z-fastest order).
+ * @brief Copy grid values to a flat vector (x-fastest order).
+ *
+ * Element index is iz * x_dim * y_dim + iy * x_dim + ix.
  *
  * @param grid Input grid.
  * @return Vector of grid values.
  */
-std::vector<double> grid_to_vector(const OESystem::OEScalarGrid& grid);
+std::vector<double> grid_to_vector(const OESystem::OESkewGrid& grid);
 
 /**
  * @brief Copy values from a flat vector back into a grid.
  *
- * @param values Input values (must match grid size).
+ * @param values Input values; the size must equal the grid's element count.
  * @param grid Output grid (modified in place).
+ * @throws GridError If values.size() does not equal grid.GetSize(). The
+ *         previous behavior silently copied the shorter of the two and left
+ *         the rest of the grid holding whatever it held before.
  */
-void vector_to_grid(const std::vector<double>& values, OESystem::OEScalarGrid& grid);
+void vector_to_grid(const std::vector<double>& values, OESystem::OESkewGrid& grid);
 
 /**
  * @brief Trilinear interpolation at a Cartesian point.
@@ -179,7 +183,7 @@ void vector_to_grid(const std::vector<double>& values, OESystem::OEScalarGrid& g
  * @param default_value Value to return if point is outside grid.
  * @return Interpolated density value.
  */
-double interpolate_density(const OESystem::OEScalarGrid& grid,
+double interpolate_density(const OESystem::OESkewGrid& grid,
                            double x, double y, double z,
                            double default_value = 0.0);
 
@@ -193,7 +197,7 @@ double interpolate_density(const OESystem::OEScalarGrid& grid,
  * @return Vector of interpolated values.
  */
 std::vector<double> interpolate_density_batch(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
     double default_value = 0.0);
@@ -215,7 +219,7 @@ std::vector<double> interpolate_density_batch(
  * @return Interpolated density value.
  */
 double interpolate_density_periodic(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double x, double y, double z,
     double cell_a, double cell_b, double cell_c,
     double default_value = 0.0);
@@ -233,7 +237,7 @@ double interpolate_density_periodic(
  * @return Vector of interpolated values.
  */
 std::vector<double> interpolate_density_periodic_batch(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
     double cell_a, double cell_b, double cell_c,
@@ -253,7 +257,7 @@ std::vector<double> interpolate_density_periodic_batch(
  * @return Vector of grid element indices.
  */
 std::vector<unsigned int> get_atom_grid_points(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double x, double y, double z, double radius);
 
 }  // namespace Maptitude

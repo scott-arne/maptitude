@@ -7,7 +7,7 @@
 #define MAPTITUDE_GRIDOPS_H
 
 namespace OESystem {
-class OEScalarGrid;
+class OESkewGrid;
 }
 
 namespace OEChem {
@@ -34,24 +34,27 @@ enum class MapOp {
  * @param grid Grid to scale (modified in place).
  * @param factor Scale factor.
  */
-void scale_map(OESystem::OEScalarGrid& grid, double factor);
+void scale_map(OESystem::OESkewGrid& grid, double factor);
 
 /**
  * @brief Combine two grids element-wise.
  *
- * Both grids must have identical geometry (dimensions, spacing, and
- * origin/midpoints) as determined by OEGridSameGeometry. The returned
- * grid has the same geometry as the input grids.
+ * Both grids must have identical geometry (dimensions, node
+ * origin, and per-axis spacing) as determined by same_grid_geometry. The
+ * returned grid has the same geometry as the input grids.
  *
  * @param lhs Left-hand side grid.
  * @param rhs Right-hand side grid.
  * @param op Combination operation.
  * @return New grid with combined values. Caller owns the pointer.
  * @throws GridError if grids have different geometry.
+ * @throws GridError, CellError If either grid's geometry cannot be derived.
+ *         same_grid_geometry raises here where OEGridSameGeometry returned
+ *         false for a grid it could not compare.
  */
-OESystem::OEScalarGrid* combine_maps(
-    const OESystem::OEScalarGrid& lhs,
-    const OESystem::OEScalarGrid& rhs,
+OESystem::OESkewGrid* combine_maps(
+    const OESystem::OESkewGrid& lhs,
+    const OESystem::OESkewGrid& rhs,
     MapOp op);
 
 /**
@@ -59,17 +62,21 @@ OESystem::OEScalarGrid* combine_maps(
  *
  * Computes: rho_calc = rho_obs - 2 * rho_diff
  *
- * Both grids must have identical geometry (dimensions, spacing, and
- * origin/midpoints) as determined by OEGridSameGeometry.
+ * Both grids must have identical geometry (dimensions, node
+ * origin, and per-axis spacing) as determined by same_grid_geometry. The
+ * returned grid has the same geometry as the input grids.
  *
  * @param obs_grid Observed density map (2mFo-DFc).
  * @param diff_grid Difference density map (mFo-DFc).
  * @return New grid with calculated density. Caller owns the pointer.
  * @throws GridError if grids have different geometry.
+ * @throws GridError, CellError If either grid's geometry cannot be derived.
+ *         same_grid_geometry raises here where OEGridSameGeometry returned
+ *         false for a grid it could not compare.
  */
-OESystem::OEScalarGrid* diff_to_calc(
-    const OESystem::OEScalarGrid& obs_grid,
-    const OESystem::OEScalarGrid& diff_grid);
+OESystem::OESkewGrid* diff_to_calc(
+    const OESystem::OESkewGrid& obs_grid,
+    const OESystem::OESkewGrid& diff_grid);
 
 /**
  * @brief Translate molecule into the unit cell and optionally pad the grid.
@@ -96,8 +103,8 @@ OESystem::OEScalarGrid* diff_to_calc(
  * @throws StructureError If the molecule contains no heavy atoms.
  * @throws CellError If any cell dimension is not a finite positive value.
  */
-OESystem::OEScalarGrid* wrap_and_pad_grid(
-    const OESystem::OEScalarGrid& grid,
+OESystem::OESkewGrid* wrap_and_pad_grid(
+    const OESystem::OESkewGrid& grid,
     OEChem::OEMolBase& mol,
     double cell_a, double cell_b, double cell_c,
     double padding = 3.0);

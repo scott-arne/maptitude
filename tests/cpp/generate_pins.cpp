@@ -175,13 +175,16 @@ void EmitMetricPins(std::ostream& os) {
 /// index, so including it only inflates the tolerance without adding signal.
 /// It catches deterministic axis-order and stride permutations (e.g., a
 /// transposed grid with the same value multiset).
-void EmitGridSummary(std::ostream& os, const std::string& prefix, const OESystem::OEScalarGrid& grid) {
+void EmitGridSummary(std::ostream& os, const std::string& prefix, const OESystem::OESkewGrid& grid) {
+    const unsigned int size = grid.GetSize();
+    const float* values = grid.GetValues();
+
     double sum = 0.0, sum_sq = 0.0, index_moment = 0.0;
-    double lo = grid[0], hi = grid[0];
+    double lo = values[0], hi = values[0];
 
     // First pass: sum, sum_sq, min, max
-    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        const double v = grid[i];
+    for (unsigned int i = 0; i < size; ++i) {
+        const double v = values[i];
         sum += v;
         sum_sq += v * v;
         lo = std::min(lo, v);
@@ -189,9 +192,9 @@ void EmitGridSummary(std::ostream& os, const std::string& prefix, const OESystem
     }
 
     // Second pass: mean-centred index moment
-    const double mean = sum / static_cast<double>(grid.GetSize());
-    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        index_moment += static_cast<double>(i + 1) * (grid[i] - mean);
+    const double mean = sum / static_cast<double>(size);
+    for (unsigned int i = 0; i < size; ++i) {
+        index_moment += static_cast<double>(i + 1) * (values[i] - mean);
     }
 
     Emit(os, prefix + "_SUM", sum);
@@ -237,48 +240,48 @@ void EmitFcPins(std::ostream& os) {
 void EmitGridOpsPins(std::ostream& os) {
     // scale_map
     {
-        OESystem::OEScalarGrid grid = MakeRampGrid(2.0, 0.5);
+        OESystem::OESkewGrid grid = MakeRampGrid(2.0, 0.5);
         scale_map(grid, 1.5);
         EmitGridSummary(os, "GRIDOPS_SCALE", grid);
     }
 
     // combine_maps: ADD
     {
-        const OESystem::OEScalarGrid lhs = MakeRampGrid(2.0, 0.5);
-        const OESystem::OEScalarGrid rhs = MakeUniformGrid(10.0f, 2.0, 0.5);
-        std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(lhs, rhs, MapOp::ADD));
+        const OESystem::OESkewGrid lhs = MakeRampGrid(2.0, 0.5);
+        const OESystem::OESkewGrid rhs = MakeUniformGrid(10.0f, 2.0, 0.5);
+        std::unique_ptr<OESystem::OESkewGrid> result(combine_maps(lhs, rhs, MapOp::ADD));
         EmitGridSummary(os, "GRIDOPS_ADD", *result);
     }
 
     // combine_maps: SUBTRACT
     {
-        const OESystem::OEScalarGrid lhs = MakeRampGrid(2.0, 0.5);
-        const OESystem::OEScalarGrid rhs = MakeUniformGrid(10.0f, 2.0, 0.5);
-        std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(lhs, rhs, MapOp::SUBTRACT));
+        const OESystem::OESkewGrid lhs = MakeRampGrid(2.0, 0.5);
+        const OESystem::OESkewGrid rhs = MakeUniformGrid(10.0f, 2.0, 0.5);
+        std::unique_ptr<OESystem::OESkewGrid> result(combine_maps(lhs, rhs, MapOp::SUBTRACT));
         EmitGridSummary(os, "GRIDOPS_SUBTRACT", *result);
     }
 
     // combine_maps: MIN
     {
-        const OESystem::OEScalarGrid lhs = MakeRampGrid(2.0, 0.5);
-        const OESystem::OEScalarGrid rhs = MakeUniformGrid(50.0f, 2.0, 0.5);
-        std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(lhs, rhs, MapOp::MIN));
+        const OESystem::OESkewGrid lhs = MakeRampGrid(2.0, 0.5);
+        const OESystem::OESkewGrid rhs = MakeUniformGrid(50.0f, 2.0, 0.5);
+        std::unique_ptr<OESystem::OESkewGrid> result(combine_maps(lhs, rhs, MapOp::MIN));
         EmitGridSummary(os, "GRIDOPS_MIN", *result);
     }
 
     // combine_maps: MAX
     {
-        const OESystem::OEScalarGrid lhs = MakeRampGrid(2.0, 0.5);
-        const OESystem::OEScalarGrid rhs = MakeUniformGrid(-50.0f, 2.0, 0.5);
-        std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(lhs, rhs, MapOp::MAX));
+        const OESystem::OESkewGrid lhs = MakeRampGrid(2.0, 0.5);
+        const OESystem::OESkewGrid rhs = MakeUniformGrid(-50.0f, 2.0, 0.5);
+        std::unique_ptr<OESystem::OESkewGrid> result(combine_maps(lhs, rhs, MapOp::MAX));
         EmitGridSummary(os, "GRIDOPS_MAX", *result);
     }
 
     // diff_to_calc
     {
-        const OESystem::OEScalarGrid obs = MakeRampGrid(2.0, 0.5);
-        const OESystem::OEScalarGrid diff = MakeUniformGrid(3.0f, 2.0, 0.5);
-        std::unique_ptr<OESystem::OEScalarGrid> result(diff_to_calc(obs, diff));
+        const OESystem::OESkewGrid obs = MakeRampGrid(2.0, 0.5);
+        const OESystem::OESkewGrid diff = MakeUniformGrid(3.0f, 2.0, 0.5);
+        std::unique_ptr<OESystem::OESkewGrid> result(diff_to_calc(obs, diff));
         EmitGridSummary(os, "GRIDOPS_DIFF_TO_CALC", *result);
     }
 }

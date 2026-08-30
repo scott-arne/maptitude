@@ -11,6 +11,7 @@
 #include <oegrid.h>
 #include <oesystem.h>
 
+#include "maptitude/Grid.h"
 #include "maptitude/Metric.h"
 
 #include "fixtures.h"
@@ -25,7 +26,7 @@ std::string TestMapPath() {
 }  // namespace
 
 TEST(GridIoTest, ReadsCommittedCcp4Map) {
-    OESystem::OEScalarGrid grid;
+    OESystem::OESkewGrid grid;
     ASSERT_TRUE(OESystem::OEReadGrid(TestMapPath(), grid)) << "failed to read " << TestMapPath();
 
     // The fixture is committed, so its geometry is an exact contract rather
@@ -34,7 +35,12 @@ TEST(GridIoTest, ReadsCommittedCcp4Map) {
     EXPECT_EQ(grid.GetXDim(), 21u);
     EXPECT_EQ(grid.GetYDim(), 21u);
     EXPECT_EQ(grid.GetZDim(), 21u);
-    EXPECT_FLOAT_EQ(grid.GetSpacing(), 0.5f);
+    // The fixture is isotropic, so one spacing held for it before; asserting all
+    // three is what would now catch a reader that lost an axis's scale.
+    const GridParams gp = get_grid_params(grid);
+    EXPECT_DOUBLE_EQ(gp.x_spacing, 0.5);
+    EXPECT_DOUBLE_EQ(gp.y_spacing, 0.5);
+    EXPECT_DOUBLE_EQ(gp.z_spacing, 0.5);
 
     // Element index to coordinate, probed one step along each stride. This is
     // the axis-order guard: x varies fastest at stride 1, y at 21, z at 441, so
@@ -61,12 +67,14 @@ TEST(GridIoTest, ReadsCommittedCcp4Map) {
     // Payload: the Gaussian peaks at the centre and decays to a tiny but
     // strictly positive corner. Counting the nonzero voxels is what rules out a
     // read that populated only part of the map.
-    EXPECT_FLOAT_EQ(grid[4630], 1.0f);
-    EXPECT_GT(grid[0], 0.0f);
-    EXPECT_LT(grid[0], 1.0e-9f);
+    const float* values = grid.GetValues();
+    ASSERT_NE(values, nullptr);
+    EXPECT_FLOAT_EQ(values[4630], 1.0f);
+    EXPECT_GT(values[0], 0.0f);
+    EXPECT_LT(values[0], 1.0e-9f);
     unsigned int positive = 0u;
     for (unsigned int i = 0u; i < grid.GetSize(); ++i) {
-        if (grid[i] > 0.0f) {
+        if (values[i] > 0.0f) {
             ++positive;
         }
     }

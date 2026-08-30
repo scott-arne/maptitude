@@ -851,7 +851,7 @@ TEST(WrapAndPadValidationTest, RejectsZeroOrNonFiniteCellEdges) {
     const double pos_inf = std::numeric_limits<double>::infinity();
 
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid grid = MakeEmptyGrid(5.0, 1.0);
+    const OESystem::OESkewGrid grid(MakeEmptyGrid(5.0, 1.0));
 
     EXPECT_THROW(wrap_and_pad_grid(grid, mol, 0.0, 5.0, 5.0), CellError);
     EXPECT_THROW(wrap_and_pad_grid(grid, mol, 5.0, 0.0, 5.0), CellError);
@@ -868,14 +868,16 @@ TEST(WrapAndPadValidationTest, StillAcceptsPositiveCellEdges) {
     // larger than the grid keep the centroid shift at zero, so the atom stays near
     // the edge and padding is genuinely required.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 4.0, 4.0, 4.0);
-    OESystem::OEScalarGrid grid = MakeEmptyGrid(5.0, 1.0);
-    for (unsigned int i = 0; i < grid.GetSize(); ++i) grid[i] = 1.0f;
+    OESystem::OESkewGrid grid(MakeEmptyGrid(5.0, 1.0));
+    float* values = grid.GetValues();
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 1.0f;
 
-    std::unique_ptr<OESystem::OEScalarGrid> padded;
+    std::unique_ptr<OESystem::OESkewGrid> padded;
     ASSERT_NO_THROW(padded.reset(wrap_and_pad_grid(grid, mol, 20.0, 20.0, 20.0)));
     ASSERT_NE(padded, nullptr) << "expected the padding path, not the nullptr shortcut";
+    const float* padded_values = padded->GetValues();
     for (unsigned int i = 0; i < padded->GetSize(); ++i) {
-        ASSERT_FALSE(std::isnan((*padded)[i])) << "NaN voxel at " << i;
+        ASSERT_FALSE(std::isnan(padded_values[i])) << "NaN voxel at " << i;
     }
 }
 

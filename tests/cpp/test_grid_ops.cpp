@@ -20,17 +20,35 @@ TEST(GridOpsTest, MapOpEnumValues) {
 
 // --- Helper: create a small grid with a known pattern ---
 
-static OESystem::OEScalarGrid MakeTestGrid() {
-    // 10x10x10 grid, spacing 1.0, origin at (0,0,0)
-    // minmax: [0, 0, 0, 9, 9, 9]
-    double minmax[6] = {0.0, 0.0, 0.0, 9.0, 9.0, 9.0};
-    OESystem::OEScalarGrid grid(minmax, 1.0);
+/// Build a cubic skew grid: `n` nodes per axis at `spacing`, first node at
+/// `node0` on all three axes.
+///
+/// The skew carrier has no extents-box constructor, so the geometry is set
+/// explicitly. SetMid takes the grid centre, which sits (n - 1) * spacing / 2
+/// above the first node. SetDim must precede any GetValues() call: the value
+/// array does not exist until the dimensions are known.
+static OESystem::OESkewGrid MakeCubicGrid(const unsigned int n, const double spacing,
+                                          const double node0) {
+    OESystem::OESkewGrid grid;
+    EXPECT_TRUE(grid.SetDim(n, n, n));
+    const float edge = static_cast<float>(n * spacing);
+    EXPECT_TRUE(grid.SetUnitCell(edge, edge, edge, 90.0f, 90.0f, 90.0f, n, n, n));
+    const float mid = static_cast<float>(node0 + (n - 1) * spacing / 2.0);
+    EXPECT_TRUE(grid.SetMid(mid, mid, mid));
+    return grid;
+}
+
+static OESystem::OESkewGrid MakeTestGrid() {
+    // 10x10x10 grid, spacing 1.0, first node at (0,0,0)
+    OESystem::OESkewGrid grid = MakeCubicGrid(10u, 1.0, 0.0);
 
     // Fill with a pattern: value = x + 10*y + 100*z at grid points
-    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+    float* values = grid.GetValues();
+    const unsigned int size = grid.GetSize();
+    for (unsigned int i = 0; i < size; ++i) {
         float x, y, z;
         grid.ElementToSpatialCoord(i, x, y, z);
-        grid[i] = x + 10.0f * y + 100.0f * z;
+        values[i] = x + 10.0f * y + 100.0f * z;
     }
     return grid;
 }
@@ -126,7 +144,7 @@ TEST(GridOpsTest, WrapAndPadGridNoShiftNeeded) {
     // Molecule centroid at (5, 5, 5) — right at grid center, within padding
     auto mol = MakeTestMol(5.0, 5.0, 5.0);
 
-    OESystem::OEScalarGrid* result = wrap_and_pad_grid(
+    OESystem::OESkewGrid* result = wrap_and_pad_grid(
         grid, mol, 10.0, 10.0, 10.0, 3.0);
 
     // Atom is well within grid, no padding needed → nullptr
@@ -146,7 +164,7 @@ TEST(GridOpsTest, WrapAndPadGridShiftsCoordinates) {
     // Molecule at (25, 35, 45) — far from grid center, needs shifting
     auto mol = MakeTestMol(25.0, 35.0, 45.0);
 
-    OESystem::OEScalarGrid* result = wrap_and_pad_grid(
+    OESystem::OESkewGrid* result = wrap_and_pad_grid(
         grid, mol, 10.0, 10.0, 10.0, 3.0);
 
     // After shifting, atom should be near grid center
@@ -170,19 +188,19 @@ TEST(GridOpsTest, WrapAndPadGridShiftsCoordinates) {
 }
 
 TEST(GridOpsTest, WrapAndPadGridCreatesPaddedGrid) {
-    // Small 5x5x5 grid, spacing 1.0, origin at (0,0,0)
-    double minmax[6] = {0.0, 0.0, 0.0, 4.0, 4.0, 4.0};
-    OESystem::OEScalarGrid grid(minmax, 1.0);
+    // Small 5x5x5 grid, spacing 1.0, first node at (0,0,0)
+    OESystem::OESkewGrid grid = MakeCubicGrid(5u, 1.0, 0.0);
 
     // Fill with constant value 42.0
+    float* values = grid.GetValues();
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        grid[i] = 42.0f;
+        values[i] = 42.0f;
     }
 
     // Molecule at (2, 2, 2) with padding 5.0 will exceed the 5x5x5 grid
     auto mol = MakeTestMol(2.0, 2.0, 2.0);
 
-    OESystem::OEScalarGrid* result = wrap_and_pad_grid(
+    OESystem::OESkewGrid* result = wrap_and_pad_grid(
         grid, mol, 5.0, 5.0, 5.0, 5.0);  // large padding forces pad
 
     // Padded grid should have been created
@@ -198,16 +216,16 @@ TEST(GridOpsTest, WrapAndPadGridCreatesPaddedGrid) {
     result->ElementToSpatialCoord(0, sx, sy, sz);
     double val = interpolate_density_periodic(
         grid, sx, sy, sz, 5.0, 5.0, 5.0);
-    EXPECT_NEAR((*result)[0], static_cast<float>(val), 0.1);
+    EXPECT_NEAR(result->GetValues()[0], static_cast<float>(val), 0.1);
 
     delete result;
 }
 
-static OESystem::OEScalarGrid MakeShiftedGrid(double shift) {
-    double minmax[6] = {shift, shift, shift, 9.0 + shift, 9.0 + shift, 9.0 + shift};
-    OESystem::OEScalarGrid grid(minmax, 1.0);
+static OESystem::OESkewGrid MakeShiftedGrid(double shift) {
+    OESystem::OESkewGrid grid = MakeCubicGrid(10u, 1.0, shift);
+    float* values = grid.GetValues();
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        grid[i] = 1.0f;
+        values[i] = 1.0f;
     }
     return grid;
 }
@@ -215,8 +233,8 @@ static OESystem::OEScalarGrid MakeShiftedGrid(double shift) {
 TEST(GridOpsTest, CombineRejectsGridsWithDifferentOrigins) {
     // Same dims, same spacing, different origin. Element-wise combination would
     // mix densities from different points in space.
-    OESystem::OEScalarGrid a = MakeShiftedGrid(0.0);
-    OESystem::OEScalarGrid b = MakeShiftedGrid(5.0);
+    OESystem::OESkewGrid a = MakeShiftedGrid(0.0);
+    OESystem::OESkewGrid b = MakeShiftedGrid(5.0);
     EXPECT_THROW(combine_maps(a, b, MapOp::ADD), GridError);
 }
 
@@ -231,42 +249,56 @@ TEST(GridOpsTest, CombineRejectsGridsWhoseSpacingDiffersBelowTheOldTolerance) {
     // The dimensions are given explicitly rather than derived from a bounding box. From
     // a box the two spacings yield 19 and 18 points per axis, so the old dimension test
     // would reject them and the spacing comparison would never be reached.
-    OESystem::OEScalarGrid a(19, 19, 19, 4.5, 4.5, 4.5, 0.5);
-    OESystem::OEScalarGrid b(19, 19, 19, 4.5, 4.5, 4.5, static_cast<float>(0.5 + 1e-7));
-    // Spacing is the only difference among the quantities OEGridSameGeometry compares --
-    // dimensions, midpoints, and spacing -- which is what makes the rejection below the
-    // spacing's. It is not the only difference between the two grids: OEScalarGrid stores
-    // a midpoint and derives the origin from it, so the spacing delta moves the origin as
-    // well, by 9.54e-7 A here. An earlier version of this comment claimed spacing was the
-    // only difference outright.
-    ASSERT_EQ(a.GetXDim(), b.GetXDim()) << "the dimensions must match or this pins nothing";
+    //
+    // The perturbation is 4e-7, not the 1e-7 this case used against OEGridSameGeometry.
+    // same_grid_geometry compares per-axis spacing and node origin at a relative
+    // tolerance floored at 1.0, so it accepts a spacing delta of 1.06e-7 outright and
+    // the case stopped rejecting anything. The rejection available to it is the
+    // origin's: both grids are centred on the same midpoint, so a spacing delta moves
+    // the first node by nine half-steps and clears 1e-6 well before the spacing itself
+    // does. The guarded band is spacing deltas in roughly (1.1e-7, 1e-6) -- inside the
+    // old tolerance, outside the new one by way of the origin they move. 4e-7 sits with
+    // margin on both sides: 4.2e-7 of spacing against a 1e-6 ceiling, 3.8e-6 of origin
+    // against a 1e-6 floor.
+    //
+    // Both grids are built around midpoint 4.5, the way the old extents-box constructor
+    // worked: it stored a midpoint and derived the first node from it.
+    const double mid = 4.5;
+    const double sp_a = 0.5;
+    const double sp_b = static_cast<float>(0.5 + 4e-7);
+    OESystem::OESkewGrid a = MakeCubicGrid(19u, sp_a, mid - 9 * sp_a);
+    OESystem::OESkewGrid b = MakeCubicGrid(19u, sp_b, mid - 9 * sp_b);
+
+    const GridParams ga = get_grid_params(a);
+    const GridParams gb = get_grid_params(b);
+    ASSERT_EQ(ga.x_dim, gb.x_dim) << "the dimensions must match or this pins nothing";
     ASSERT_EQ(a.GetXMid(), b.GetXMid()) << "the midpoints must match or this pins nothing";
-    ASSERT_NEAR(std::fabs(a.GetXMin() - b.GetXMin()), 9.5367431640625e-7, 1e-13)
-        << "the origins were expected to move with the spacing";
-    ASSERT_NE(a.GetSpacing(), b.GetSpacing()) << "the two spacings collapsed to one float";
-    ASSERT_LT(std::fabs(a.GetSpacing() - b.GetSpacing()), 1e-6)
-        << "the delta must sit inside the old tolerance or this pins nothing";
+    ASSERT_NE(ga.x_spacing, gb.x_spacing) << "the two spacings collapsed to one float";
+    ASSERT_LT(std::fabs(ga.x_spacing - gb.x_spacing), 1e-6)
+        << "the spacing delta must sit inside the old tolerance or this pins nothing";
+    ASSERT_GT(std::fabs(ga.x_origin - gb.x_origin), 1e-6)
+        << "the origin delta must sit outside the new tolerance or nothing can reject";
     EXPECT_THROW(combine_maps(a, b, MapOp::ADD), GridError);
 }
 
 TEST(GridOpsTest, CombineStillAcceptsIdenticalGeometry) {
-    OESystem::OEScalarGrid a = MakeTestGrid();
-    OESystem::OEScalarGrid b = MakeTestGrid();
+    OESystem::OESkewGrid a = MakeTestGrid();
+    OESystem::OESkewGrid b = MakeTestGrid();
     EXPECT_NO_THROW({
-        std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(a, b, MapOp::ADD));
+        std::unique_ptr<OESystem::OESkewGrid> result(combine_maps(a, b, MapOp::ADD));
         ASSERT_NE(result, nullptr);
     });
 }
 
 TEST(GridOpsTest, DiffToCalcRejectsMismatchedGeometry) {
-    OESystem::OEScalarGrid obs = MakeShiftedGrid(0.0);
-    OESystem::OEScalarGrid diff = MakeShiftedGrid(5.0);
+    OESystem::OESkewGrid obs = MakeShiftedGrid(0.0);
+    OESystem::OESkewGrid diff = MakeShiftedGrid(5.0);
     EXPECT_THROW(diff_to_calc(obs, diff), GridError);
 }
 
 TEST(GridOpsTest, WrapAndPadThrowsWhenTheMoleculeHasNoHeavyAtoms) {
     OEChem::OEGraphMol mol;  // empty
-    OESystem::OEScalarGrid grid = MakeTestGrid();
+    OESystem::OESkewGrid grid = MakeTestGrid();
     EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
 }
 
@@ -276,7 +308,7 @@ TEST(GridOpsTest, WrapAndPadThrowsForAMoleculeOfOnlyDummyAtoms) {
     const float coords[3] = {4.5f, 4.5f, 4.5f};
     mol.SetCoords(atom, coords);
 
-    OESystem::OEScalarGrid grid = MakeTestGrid();
+    OESystem::OESkewGrid grid = MakeTestGrid();
     EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
 }
 
@@ -286,7 +318,7 @@ TEST(GridOpsTest, WrapAndPadThrowsForAnAllHydrogenMolecule) {
     const float coords[3] = {4.5f, 4.5f, 4.5f};
     mol.SetCoords(atom, coords);
 
-    OESystem::OEScalarGrid grid = MakeTestGrid();
+    OESystem::OESkewGrid grid = MakeTestGrid();
     EXPECT_THROW(wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0), StructureError);
 }
 
@@ -298,8 +330,50 @@ TEST(GridOpsTest, WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded) {
     const double coords[3] = {4.5, 4.5, 4.5};
     mol.SetCoords(atom, coords);
 
-    OESystem::OEScalarGrid grid = MakeTestGrid();
-    std::unique_ptr<OESystem::OEScalarGrid> result(
+    OESystem::OESkewGrid grid = MakeTestGrid();
+    std::unique_ptr<OESystem::OESkewGrid> result(
         wrap_and_pad_grid(grid, mol, 20.0, 25.0, 30.0));
     EXPECT_EQ(result, nullptr);
+}
+
+// The extents-box constructor is the one piece of scalar-carrier geometry the
+// skew carrier cannot express, so this test pins the reproduction directly
+// rather than trusting it.
+TEST(WrapAndPadGrid, ReproducesTheExtentsBoxConstructor) {
+    struct Case {
+        double minmax[6];
+        double spacing;
+        unsigned int dim[3];
+        double mid[3];
+        double node0[3];
+    };
+    const Case CASES[] = {
+        {{0.0, 0.0, 0.0, 9.0, 9.0, 9.0}, 1.0,
+         {10u, 10u, 10u}, {4.5, 4.5, 4.5}, {0.0, 0.0, 0.0}},
+        {{0.0, 0.0, 0.0, 9.5, 9.5, 9.5}, 1.0,
+         {10u, 10u, 10u}, {4.75, 4.75, 4.75}, {0.25, 0.25, 0.25}},
+        {{-1.3, 2.7, 0.4, 8.2, 11.1, 5.9}, 0.7,
+         {14u, 12u, 8u}, {3.45, 6.90, 3.15}, {-1.10, 3.05, 0.70}},
+    };
+
+    for (const Case& c : CASES) {
+        // The reference this reproduction is measured against is the scalar
+        // carrier's extents-box constructor itself.
+        double minmax[6];
+        for (int i = 0; i < 6; ++i) minmax[i] = c.minmax[i];
+        const OESystem::OEScalarGrid reference(minmax, c.spacing);  // OE-SCALARGRID-OK: the reproduction's reference
+
+        EXPECT_EQ(reference.GetXDim(), c.dim[0]);
+        EXPECT_EQ(reference.GetYDim(), c.dim[1]);
+        EXPECT_EQ(reference.GetZDim(), c.dim[2]);
+        EXPECT_NEAR(reference.GetXMid(), c.mid[0], 1e-5);
+        EXPECT_NEAR(reference.GetYMid(), c.mid[1], 1e-5);
+        EXPECT_NEAR(reference.GetZMid(), c.mid[2], 1e-5);
+
+        const OESystem::OESkewGrid converted(reference);
+        const GridParams gp = get_grid_params(converted);
+        EXPECT_NEAR(gp.x_origin, c.node0[0], 1e-5);
+        EXPECT_NEAR(gp.y_origin, c.node0[1], 1e-5);
+        EXPECT_NEAR(gp.z_origin, c.node0[2], 1e-5);
+    }
 }

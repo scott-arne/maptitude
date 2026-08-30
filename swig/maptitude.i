@@ -146,6 +146,7 @@ namespace OEPlatform {
 
 namespace OESystem {
     class OEScalarGrid;
+    class OESkewGrid;
     class OERecord;
     class OEMolRecord;
 }
@@ -885,7 +886,7 @@ DensityScoreResult coverage(
 // ============================================================================
 // Grid operations
 // ============================================================================
-void scale_map(OESystem::OEScalarGrid& grid, double factor);
+void scale_map(OESystem::OESkewGrid& grid, double factor);
 OESystem::OEScalarGrid* combine_maps(
     const OESystem::OEScalarGrid& lhs,
     const OESystem::OEScalarGrid& rhs,

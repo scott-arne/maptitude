@@ -515,7 +515,10 @@ TEST(InterpolationTiming, DISABLED_OpenEyeVersusMaptitudeOn1d26) {
 // reproduces a multilinear field exactly, so a guard built on one would agree
 // with any index or weight error that happens to be self-consistent.
 
-TEST(InterpolationEquivalence, MatchesOpenEyeOnTheSharedInteriorDomain) {
+TEST(InterpolationEquivalence, MatchesTheValuesOpenEyePinnedInTaskTwo) {
+    // Task 2 captured GUARD_SAMPLES from OEFloatGridLinearInterpolate while the
+    // OpenEye path still existed. It is gone now, so the literals are the
+    // reference: they are what OpenEye returned, not what maptitude returns.
     const OESystem::OEScalarGrid scalar = MakeGuardScalarGrid();  // OE-SCALARGRID-OK: the guard's OpenEye arm
     const OESystem::OESkewGrid skew(scalar);
     const GridParams gp = get_grid_params(skew);
@@ -523,56 +526,40 @@ TEST(InterpolationEquivalence, MatchesOpenEyeOnTheSharedInteriorDomain) {
     ASSERT_NE(values, nullptr);
 
     for (const GuardSample& s : GUARD_SAMPLES) {
-        const float oe = OESystem::OEFloatGridLinearInterpolate(
-            scalar, static_cast<float>(s.f[0]), static_cast<float>(s.f[1]),
-            static_cast<float>(s.f[2]), 0.0f);
-        EXPECT_NEAR(oe, s.expected, 1e-5)
-            << "pinned reference drifted at (" << s.f[0] << ", " << s.f[1]
-            << ", " << s.f[2] << ")";
-        // OpenEye's double→float→double round-trip incurs representation error;
-        // use relative tolerance for the maptitude arm.
+        // The literals are float32 captures and maptitude blends in double, so
+        // the residual is representation error, which scales with the value.
         EXPECT_NEAR(interpolate_density_at(gp, values, s.f[0], s.f[1], s.f[2], 0.0),
                     s.expected, 1e-5 * std::max(1.0, std::abs(s.expected)))
-            << "maptitude disagrees at (" << s.f[0] << ", " << s.f[1]
-            << ", " << s.f[2] << ")";
+            << "maptitude disagrees with OpenEye's pinned value at ("
+            << s.f[0] << ", " << s.f[1] << ", " << s.f[2] << ")";
     }
 }
 
-// ---- Far-face divergence (spec §3.4) ----
+// ---- Far face (spec §3.4) ----
 //
-// OEFloatGridLinearInterpolate treats the far face as outside the grid and
-// returns the caller's default. maptitude closes the interval and blends from
-// the nodes that are there. Each test pins both halves; Task 3 keeps only the
-// maptitude half, because by then there is no OpenEye call left to make.
+// OEFloatGridLinearInterpolate treated the far face as outside the grid and
+// returned the caller's default. maptitude closes the interval and blends from
+// the nodes that are there. These tests pinned both halves until the OpenEye
+// call went away with the carrier; what is left is the maptitude half.
 //
-// -99.0f is the sentinel default: no value in this field is near it, so a
-// "returned the default" result cannot be confused with a blend.
+// -99.0 is the sentinel default: no value in this field is near it, so a
+// "returned the default" result could not be confused with a blend.
 
-TEST(InterpolationFarFace, DivergesFromOpenEyeAtTheFarCorner) {
-    const OESystem::OEScalarGrid scalar = MakeGuardScalarGrid();  // OE-SCALARGRID-OK: the divergence test's OpenEye arm
-    const OESystem::OESkewGrid skew(scalar);
+TEST(InterpolationFarFace, ReturnsTheCornerNodeAtTheFarCorner) {
+    const OESystem::OESkewGrid skew(MakeGuardScalarGrid());
     const GridParams gp = get_grid_params(skew);
     const float* values = skew.GetValues();
     ASSERT_NE(values, nullptr);
-
-    EXPECT_FLOAT_EQ(
-        OESystem::OEFloatGridLinearInterpolate(scalar, 3.0f, 3.0f, 3.0f, -99.0f),
-        -99.0f);
     // All three fractional indices at n - 1: no blend, the corner node itself.
     EXPECT_NEAR(interpolate_density_at(gp, values, 3.0, 3.0, 3.0, -99.0),
                 GuardFieldValue(3.0, 3.0, 3.0), 1e-4);
 }
 
-TEST(InterpolationFarFace, DivergesFromOpenEyeOnAFarFace) {
-    const OESystem::OEScalarGrid scalar = MakeGuardScalarGrid();  // OE-SCALARGRID-OK: the divergence test's OpenEye arm
-    const OESystem::OESkewGrid skew(scalar);
+TEST(InterpolationFarFace, BilinearlyBlendsOnAFarFace) {
+    const OESystem::OESkewGrid skew(MakeGuardScalarGrid());
     const GridParams gp = get_grid_params(skew);
     const float* values = skew.GetValues();
     ASSERT_NE(values, nullptr);
-
-    EXPECT_FLOAT_EQ(
-        OESystem::OEFloatGridLinearInterpolate(scalar, 3.0f, 1.5f, 1.5f, -99.0f),
-        -99.0f);
     // One index pinned at n - 1, two interior: a bilinear blend of four nodes.
     const double expected =
         0.25 * (GuardFieldValue(3.0, 1.0, 1.0) + GuardFieldValue(3.0, 2.0, 1.0) +
@@ -581,16 +568,11 @@ TEST(InterpolationFarFace, DivergesFromOpenEyeOnAFarFace) {
                 expected, 1e-4);
 }
 
-TEST(InterpolationFarFace, DivergesFromOpenEyeOnAFarEdge) {
-    const OESystem::OEScalarGrid scalar = MakeGuardScalarGrid();  // OE-SCALARGRID-OK: the divergence test's OpenEye arm
-    const OESystem::OESkewGrid skew(scalar);
+TEST(InterpolationFarFace, LinearlyBlendsOnAFarEdge) {
+    const OESystem::OESkewGrid skew(MakeGuardScalarGrid());
     const GridParams gp = get_grid_params(skew);
     const float* values = skew.GetValues();
     ASSERT_NE(values, nullptr);
-
-    EXPECT_FLOAT_EQ(
-        OESystem::OEFloatGridLinearInterpolate(scalar, 3.0f, 3.0f, 1.5f, -99.0f),
-        -99.0f);
     // Two indices pinned at n - 1, one interior: a linear blend of two nodes.
     const double expected =
         0.5 * (GuardFieldValue(3.0, 3.0, 1.0) + GuardFieldValue(3.0, 3.0, 2.0));

@@ -35,14 +35,17 @@ struct GridSummary {
 /// index, so including it only inflates the tolerance without adding signal.
 /// It catches deterministic axis-order and stride permutations (e.g., a
 /// transposed grid with the same value multiset).
-inline GridSummary Summarize(const OESystem::OEScalarGrid& grid) {
+inline GridSummary Summarize(const OESystem::OESkewGrid& grid) {
+    const unsigned int size = grid.GetSize();
+    const float* values = grid.GetValues();
+
     GridSummary s;
-    s.min = grid[0];
-    s.max = grid[0];
+    s.min = values[0];
+    s.max = values[0];
 
     // First pass: sum, sum_sq, min, max
-    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        const double v = grid[i];
+    for (unsigned int i = 0; i < size; ++i) {
+        const double v = values[i];
         s.sum += v;
         s.sum_sq += v * v;
         s.min = std::min(s.min, v);
@@ -50,9 +53,9 @@ inline GridSummary Summarize(const OESystem::OEScalarGrid& grid) {
     }
 
     // Second pass: mean-centred index moment
-    const double mean = s.sum / static_cast<double>(grid.GetSize());
-    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        s.index_moment += static_cast<double>(i + 1) * (grid[i] - mean);
+    const double mean = s.sum / static_cast<double>(size);
+    for (unsigned int i = 0; i < size; ++i) {
+        s.index_moment += static_cast<double>(i + 1) * (values[i] - mean);
     }
 
     return s;

@@ -17,7 +17,7 @@ using namespace Maptitude;
 using namespace MaptitudeTest;
 
 TEST(GridOpsCharacterizationTest, ScaleMap) {
-    OESystem::OEScalarGrid grid = MakeRampGrid(2.0, 0.5);
+    OESystem::OESkewGrid grid = MakeRampGrid(2.0, 0.5);
     scale_map(grid, 1.5);
 
     const GridSummary s = Summarize(grid);
@@ -29,10 +29,10 @@ TEST(GridOpsCharacterizationTest, ScaleMap) {
 }
 
 TEST(GridOpsCharacterizationTest, CombineAdd) {
-    const OESystem::OEScalarGrid lhs = MakeRampGrid(2.0, 0.5);
-    const OESystem::OEScalarGrid rhs = MakeUniformGrid(10.0f, 2.0, 0.5);
+    const OESystem::OESkewGrid lhs = MakeRampGrid(2.0, 0.5);
+    const OESystem::OESkewGrid rhs = MakeUniformGrid(10.0f, 2.0, 0.5);
 
-    std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(lhs, rhs, MapOp::ADD));
+    std::unique_ptr<OESystem::OESkewGrid> result(combine_maps(lhs, rhs, MapOp::ADD));
     ASSERT_NE(result, nullptr);
 
     const GridSummary s = Summarize(*result);
@@ -44,10 +44,10 @@ TEST(GridOpsCharacterizationTest, CombineAdd) {
 }
 
 TEST(GridOpsCharacterizationTest, CombineSubtract) {
-    const OESystem::OEScalarGrid lhs = MakeRampGrid(2.0, 0.5);
-    const OESystem::OEScalarGrid rhs = MakeUniformGrid(10.0f, 2.0, 0.5);
+    const OESystem::OESkewGrid lhs = MakeRampGrid(2.0, 0.5);
+    const OESystem::OESkewGrid rhs = MakeUniformGrid(10.0f, 2.0, 0.5);
 
-    std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(lhs, rhs, MapOp::SUBTRACT));
+    std::unique_ptr<OESystem::OESkewGrid> result(combine_maps(lhs, rhs, MapOp::SUBTRACT));
     ASSERT_NE(result, nullptr);
 
     const GridSummary s = Summarize(*result);
@@ -59,10 +59,10 @@ TEST(GridOpsCharacterizationTest, CombineSubtract) {
 }
 
 TEST(GridOpsCharacterizationTest, CombineMin) {
-    const OESystem::OEScalarGrid lhs = MakeRampGrid(2.0, 0.5);
-    const OESystem::OEScalarGrid rhs = MakeUniformGrid(50.0f, 2.0, 0.5);
+    const OESystem::OESkewGrid lhs = MakeRampGrid(2.0, 0.5);
+    const OESystem::OESkewGrid rhs = MakeUniformGrid(50.0f, 2.0, 0.5);
 
-    std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(lhs, rhs, MapOp::MIN));
+    std::unique_ptr<OESystem::OESkewGrid> result(combine_maps(lhs, rhs, MapOp::MIN));
     ASSERT_NE(result, nullptr);
 
     const GridSummary s = Summarize(*result);
@@ -74,10 +74,10 @@ TEST(GridOpsCharacterizationTest, CombineMin) {
 }
 
 TEST(GridOpsCharacterizationTest, CombineMax) {
-    const OESystem::OEScalarGrid lhs = MakeRampGrid(2.0, 0.5);
-    const OESystem::OEScalarGrid rhs = MakeUniformGrid(-50.0f, 2.0, 0.5);
+    const OESystem::OESkewGrid lhs = MakeRampGrid(2.0, 0.5);
+    const OESystem::OESkewGrid rhs = MakeUniformGrid(-50.0f, 2.0, 0.5);
 
-    std::unique_ptr<OESystem::OEScalarGrid> result(combine_maps(lhs, rhs, MapOp::MAX));
+    std::unique_ptr<OESystem::OESkewGrid> result(combine_maps(lhs, rhs, MapOp::MAX));
     ASSERT_NE(result, nullptr);
 
     const GridSummary s = Summarize(*result);
@@ -89,10 +89,10 @@ TEST(GridOpsCharacterizationTest, CombineMax) {
 }
 
 TEST(GridOpsCharacterizationTest, DiffToCalc) {
-    const OESystem::OEScalarGrid obs = MakeRampGrid(2.0, 0.5);
-    const OESystem::OEScalarGrid diff = MakeUniformGrid(3.0f, 2.0, 0.5);
+    const OESystem::OESkewGrid obs = MakeRampGrid(2.0, 0.5);
+    const OESystem::OESkewGrid diff = MakeUniformGrid(3.0f, 2.0, 0.5);
 
-    std::unique_ptr<OESystem::OEScalarGrid> result(diff_to_calc(obs, diff));
+    std::unique_ptr<OESystem::OESkewGrid> result(diff_to_calc(obs, diff));
     ASSERT_NE(result, nullptr);
 
     const GridSummary s = Summarize(*result);
