@@ -1122,12 +1122,129 @@ TEST(SameGridGeometry, FalseWhenOnlyCellParametersDiffer) {
     EXPECT_FALSE(same_grid_geometry(lhs, rhs));
 }
 
-// Spacing-only difference cannot be isolated: changing the node interval while
-// holding dims, origin and cell all fixed is not constructible through the setters.
-//
-// HasUnitCell() presence mismatch at src/Grid.cpp:193 has no test: no construction
-// exists that produces a grid derivable through get_grid_params (which requires
-// at least a 2x2x2 extent with finite coordinates) but lacking a unit cell.
+TEST(SameGridGeometry, FalseWhenOnlyNodeSpacingDiffers) {
+    // Doubling only the x divisions halves the x node interval while leaving the
+    // six cell parameters byte-identical. The compensating mid shift restores the
+    // x origin. This proves the spacing comparison at src/Grid.cpp:186 is reachable.
+    OESystem::OESkewGrid lhs;
+    ASSERT_TRUE(lhs.SetDim(10u, 10u, 10u));
+    ASSERT_TRUE(lhs.SetUnitCell(10.0f, 10.0f, 10.0f, 90.0f, 90.0f, 90.0f,
+                                10u, 10u, 10u));
+    ASSERT_TRUE(lhs.SetMid(0.0f, 0.0f, 0.0f));
+
+    OESystem::OESkewGrid rhs;
+    ASSERT_TRUE(rhs.SetDim(10u, 10u, 10u));
+    ASSERT_TRUE(rhs.SetUnitCell(10.0f, 10.0f, 10.0f, 90.0f, 90.0f, 90.0f,
+                                20u, 10u, 10u));
+    ASSERT_TRUE(rhs.SetMid(-2.25f, 0.0f, 0.0f));
+
+    const GridParams a = get_grid_params(lhs);
+    const GridParams b = get_grid_params(rhs);
+
+    // Preconditions: dims match, origins match, both have unit cells with matching
+    // parameters, but x spacing differs by ~0.5 A.
+    ASSERT_EQ(a.x_dim, b.x_dim);
+    ASSERT_EQ(a.y_dim, b.y_dim);
+    ASSERT_EQ(a.z_dim, b.z_dim);
+    ASSERT_DOUBLE_EQ(a.x_origin, b.x_origin);
+    ASSERT_DOUBLE_EQ(a.y_origin, b.y_origin);
+    ASSERT_DOUBLE_EQ(a.z_origin, b.z_origin);
+    ASSERT_TRUE(lhs.HasUnitCell());
+    ASSERT_TRUE(rhs.HasUnitCell());
+    const UnitCellParams ca = get_unit_cell(lhs);
+    const UnitCellParams cb = get_unit_cell(rhs);
+    ASSERT_DOUBLE_EQ(ca.a, cb.a);
+    ASSERT_DOUBLE_EQ(ca.b, cb.b);
+    ASSERT_DOUBLE_EQ(ca.c, cb.c);
+    ASSERT_DOUBLE_EQ(ca.alpha, cb.alpha);
+    ASSERT_DOUBLE_EQ(ca.beta, cb.beta);
+    ASSERT_DOUBLE_EQ(ca.gamma, cb.gamma);
+    ASSERT_NEAR(std::abs(a.x_spacing - b.x_spacing), 0.5, 0.01);
+
+    EXPECT_FALSE(same_grid_geometry(lhs, rhs));
+}
+
+TEST(SameGridGeometry, FalseWhenOnlyUnitCellPresenceDiffers) {
+    // Two grids with matching derived geometry (dims, spacings, origins all equal),
+    // but one has a unit cell and the other does not. This proves the HasUnitCell
+    // presence check at src/Grid.cpp:193 is reachable.
+    //
+    // lhs: dim-only construction, measured to have no unit cell and spacings
+    // 0.5/0.5/0.5, x origin -0.75.
+    OESystem::OESkewGrid lhs;
+    ASSERT_TRUE(lhs.SetDim(4u, 5u, 6u));
+
+    // rhs: matching derived geometry with a unit cell.
+    OESystem::OESkewGrid rhs;
+    ASSERT_TRUE(rhs.SetDim(4u, 5u, 6u));
+    ASSERT_TRUE(rhs.SetUnitCell(2.0f, 2.5f, 3.0f, 90.0f, 90.0f, 90.0f,
+                                4u, 5u, 6u));
+    ASSERT_TRUE(rhs.SetMid(0.0f, 0.0f, 0.0f));
+
+    const GridParams a = get_grid_params(lhs);
+    const GridParams b = get_grid_params(rhs);
+
+    // Preconditions: dims, spacings, origins all match, but HasUnitCell differs.
+    ASSERT_EQ(a.x_dim, b.x_dim);
+    ASSERT_EQ(a.y_dim, b.y_dim);
+    ASSERT_EQ(a.z_dim, b.z_dim);
+    ASSERT_DOUBLE_EQ(a.x_spacing, b.x_spacing);
+    ASSERT_DOUBLE_EQ(a.y_spacing, b.y_spacing);
+    ASSERT_DOUBLE_EQ(a.z_spacing, b.z_spacing);
+    ASSERT_DOUBLE_EQ(a.x_origin, b.x_origin);
+    ASSERT_DOUBLE_EQ(a.y_origin, b.y_origin);
+    ASSERT_DOUBLE_EQ(a.z_origin, b.z_origin);
+    ASSERT_FALSE(lhs.HasUnitCell());
+    ASSERT_TRUE(rhs.HasUnitCell());
+
+    EXPECT_FALSE(same_grid_geometry(lhs, rhs));
+}
+
+TEST(SameGridGeometry, FalseWhenOnlyDimensionDiffers) {
+    // Two grids differing only in z_dim (6 vs 7), with a compensating mid shift
+    // that keeps z origin equal. This proves the dim check at src/Grid.cpp:185
+    // is reachable and isolated. FalseWhenADimensionDiffers (:1018) is not
+    // mutation-proof because its grids also differ in z origin.
+    OESystem::OESkewGrid lhs;
+    ASSERT_TRUE(lhs.SetDim(4u, 5u, 6u));
+    ASSERT_TRUE(lhs.SetUnitCell(4.0f, 5.0f, 6.0f, 90.0f, 90.0f, 90.0f,
+                                4u, 5u, 6u));
+    ASSERT_TRUE(lhs.SetMid(0.0f, 0.0f, 0.0f));
+
+    OESystem::OESkewGrid rhs;
+    ASSERT_TRUE(rhs.SetDim(4u, 5u, 7u));
+    ASSERT_TRUE(rhs.SetUnitCell(4.0f, 5.0f, 6.0f, 90.0f, 90.0f, 90.0f,
+                                4u, 5u, 6u));
+    ASSERT_TRUE(rhs.SetMid(0.0f, 0.0f, 0.5f));
+
+    const GridParams a = get_grid_params(lhs);
+    const GridParams b = get_grid_params(rhs);
+
+    // Preconditions: z_dim differs (6 vs 7), but x_dim and y_dim match; all three
+    // spacings match; all three origins match; both have unit cells with matching
+    // parameters.
+    ASSERT_NE(a.z_dim, b.z_dim);
+    ASSERT_EQ(a.x_dim, b.x_dim);
+    ASSERT_EQ(a.y_dim, b.y_dim);
+    ASSERT_DOUBLE_EQ(a.x_spacing, b.x_spacing);
+    ASSERT_DOUBLE_EQ(a.y_spacing, b.y_spacing);
+    ASSERT_DOUBLE_EQ(a.z_spacing, b.z_spacing);
+    ASSERT_DOUBLE_EQ(a.x_origin, b.x_origin);
+    ASSERT_DOUBLE_EQ(a.y_origin, b.y_origin);
+    ASSERT_DOUBLE_EQ(a.z_origin, b.z_origin);
+    ASSERT_TRUE(lhs.HasUnitCell());
+    ASSERT_TRUE(rhs.HasUnitCell());
+    const UnitCellParams ca = get_unit_cell(lhs);
+    const UnitCellParams cb = get_unit_cell(rhs);
+    ASSERT_DOUBLE_EQ(ca.a, cb.a);
+    ASSERT_DOUBLE_EQ(ca.b, cb.b);
+    ASSERT_DOUBLE_EQ(ca.c, cb.c);
+    ASSERT_DOUBLE_EQ(ca.alpha, cb.alpha);
+    ASSERT_DOUBLE_EQ(ca.beta, cb.beta);
+    ASSERT_DOUBLE_EQ(ca.gamma, cb.gamma);
+
+    EXPECT_FALSE(same_grid_geometry(lhs, rhs));
+}
 
 TEST(GridParamsDerivation, DerivesTheExpectedValuesForAKnownGrid) {
     // MakeSkewGrid(4,5,6) sets cell edges equal to the dims with matching divisions,
