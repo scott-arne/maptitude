@@ -350,11 +350,18 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
         //
         // The bound also caps what SetMid converts below. pad_mid's two paddings
         // cancel in exact arithmetic, but each term is rounded before they are
-        // added, so a large enough padding leaves a residue: with the heavy atoms
-        // all on the float maximum the midpoint passes what a float represents at a
-        // padding near 3e47, which the interval bound alone admits at the coarsest
-        // interval a float cell edge allows. An edge inside this bound holds the
-        // padding to about half a float maximum, some nine orders short of that.
+        // added, so some paddings leave a residue the midpoint carries. Which ones
+        // is not a matter of size alone: the residue tracks the ulp of the padding,
+        // so it steps rather than grows, and no threshold separates the safe values
+        // from the rest. A sweep of the region this bound admits -- five heavy-atom
+        // placements out to the float extremes, paddings walked by ulp below the
+        // ceiling and log-spaced across the nine orders beneath it -- found no
+        // midpoint past the float maximum. The margin above is narrow rather than
+        // comfortable: the worst of those placements puts the midpoint exactly on
+        // the float maximum at the ceiling, and the smallest overflowing padding
+        // the scan found above it is only about twice the ceiling.
+        // Loosening this bound needs its own measurement of SetMid; the argument
+        // here covers the region as it stands and does not extend past it.
         pad_cell_edge[i] = pad_dim[i] * src_spacing[i];
         if (pad_cell_edge[i] > MAX_PAD_CELL_EDGE) {
             std::ostringstream message;

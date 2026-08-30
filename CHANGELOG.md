@@ -87,9 +87,13 @@ This project is pre-1.0: breaking changes may land in a minor release.
   the atoms had to fit inside rather than widening it, and so does any atom
   extent and padding that between them need more node intervals than a grid
   dimension can hold, or that size a cell edge past what a `float` represents.
-  Zero padding remains admissible. Like the cell edges, the padding is checked
-  before the centroid shift, so a rejected value leaves the caller's molecule
-  where it was.
+  Zero padding remains admissible. Like the cell edges, the padding's own
+  finiteness and sign are checked before the centroid shift, so those two
+  rejections leave the caller's molecule where it was. The interval-count and
+  cell-edge limits are only known once the padded geometry has been derived,
+  which is after the shift, so a molecule that needed a shift and is then
+  rejected there is left translated by whole cell vectors -- a
+  crystallographically equivalent position, not a corrupted one.
 
 ### Removed
 

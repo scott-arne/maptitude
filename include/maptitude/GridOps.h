@@ -133,7 +133,7 @@ OESystem::OESkewGrid* diff_to_calc(
  *         atom extent plus padding is too thin on some axis to give the padded
  *         grid two nodes there, if that extent needs more node intervals on some
  *         axis than a grid dimension can hold, or if the padded grid's cell edge
- *         on some axis is not a value a float can represent.
+ *         on some axis is larger than a float can hold.
  */
 OESystem::OESkewGrid* wrap_and_pad_grid(
     const OESystem::OESkewGrid& grid,

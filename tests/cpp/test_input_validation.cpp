@@ -962,8 +962,9 @@ TEST(WrapAndPadValidationTest, RejectsAPaddedCellEdgeNoFloatCanHold) {
     // 2^127 A that a float holds exactly. A padding of 2^127 A gives an extent of
     // 2^128 A, four intervals, five nodes, and a padded edge of 5 * 2^126 =
     // 4.25e38 A, past the 3.40e38 a float holds -- while the count of 4 is nine
-    // orders inside the interval bound. Every value fed in here is a power of two,
-    // so the interval the node walk derives is exact and the count is exactly 4.
+    // orders inside the interval bound. The cell edge, the node interval and the
+    // padding are all powers of two, so the interval the node walk derives is
+    // exact and the count is exactly 4.
     //
     // Assert on the message. The two-node guard and the interval-count guard raise
     // GridError from this same loop, so the type alone cannot say which fired.
