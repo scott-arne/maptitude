@@ -106,10 +106,14 @@ OESystem::OESkewGrid* diff_to_calc(
  * double. It recentres as described while a double resolves the cell edge at
  * the coordinates in play, and can fail to past that: a carbon at the float
  * maximum, with an 11 A cell and the grid centred on the origin, lands 3.8e22 A
- * from that centre rather than within 5.5 A of it. The function does not reject
- * such an input, and no position it could deliver would be cell-accurate for
- * one that coarse -- a single float step at that coordinate spans 2e31 A, so
- * the caller's own coordinate does not place the molecule in a cell either.
+ * from that centre rather than within 5.5 A of it. Nothing checks for that
+ * before the shift is applied, and no position the function could deliver would
+ * be cell-accurate for an input that coarse -- a single float step at that
+ * coordinate spans 2e31 A, so the caller's own coordinate does not place the
+ * molecule in a cell either. Such a call is not thereby accepted: that example,
+ * run with the default padding, moves the atom and then raises GridError from
+ * the axis sizing below, which is the post-shift case the next paragraph
+ * describes.
  *
  * The molecule is modified in-place (coordinates shifted). The cell edges, the
  * padding, the source grid's geometry, the cell's commensurability and the
