@@ -99,10 +99,14 @@ This project is pre-1.0: breaking changes may land in a minor release.
   coordinate was narrowed to a `float` as that atom was written back, with
   nothing bounding the narrowing; a floating-point conversion is undefined for a
   value outside the destination's range, and on this arm64 host it saturates to
-  an infinity. A molecule far enough from the grid centre on a large enough cell
-  therefore had that infinity written into it. In the case this was reproduced
-  from, what the caller then saw was the sizing guard below rejecting the
-  infinite extent it produced -- an error raised over coordinates the call had
+  an infinity. How far the molecule starts from the grid centre is not what did
+  it -- the shift brings the centroid back to within half a cell edge of that
+  centre whatever it started at, so an atom ends up near the grid's centre,
+  offset by its own displacement from the centroid. The infinity was written
+  when those together passed the float maximum. In the case this was reproduced
+  from the grid's centre was itself a quarter of a cell edge short of that
+  maximum, and what the caller then saw was the sizing guard below rejecting the
+  infinite extent the write produced -- an error raised over coordinates the call had
   already replaced; and because that extent is measured over the heavy atoms
   alone, an overflow confined to the rest of the molecule had nothing later in
   the function looking at it. Every atom's shifted coordinate is now computed

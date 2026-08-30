@@ -236,13 +236,14 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     static const char* const AXIS[3] = {"x", "y", "z"};
 
     if (std::abs(shift_x) > 0.01 || std::abs(shift_y) > 0.01 || std::abs(shift_z) > 0.01) {
-        // The sum is a double and SetCoords takes a float, and a floating-point
-        // conversion is undefined for a value outside the destination's range;
-        // on this arm64 host it saturates to an infinity, and without this pass
-        // the write loop below puts that in the caller's molecule. Nothing
-        // downstream repairs it: in the case this guard was built from, the
-        // sizing loop did reject the infinite extent that produced, but only
-        // after the coordinates had been replaced, and that extent is measured
+        // The sum is a double and the write loop below narrows it to a float,
+        // and a floating-point conversion is undefined for a value outside the
+        // destination's range; on this arm64 host it saturates to an infinity,
+        // and without this pass the write loop puts that in the caller's
+        // molecule. Nothing downstream repairs it: in the case this guard was
+        // built from, the sizing loop did reject the infinite extent that
+        // produced, but only after the coordinates had been replaced, and that
+        // extent is measured
         // over heavy atoms alone, so an overflow confined to the rest of the
         // molecule has nothing later in this function looking at it. Compute
         // every component first so a shift that cannot be stored is refused with
