@@ -97,7 +97,9 @@ void ReadNodeCoord(const OESystem::OESkewGrid& grid, const unsigned int element,
 /// stored as a float too, and for a grid straddling the Cartesian origin it is
 /// the largest of the three -- up to 2n / (n - 1) times either endpoint. Scaling
 /// by the endpoints alone would then understate the noise fourfold on a two-node
-/// axis. The result is never zero: it is at least the cell edge, and
+/// axis. Dropping the cell edge from this max is not the simplification it looks
+/// like: GridOpsTest.InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent
+/// fails without it. The result is never zero: it is at least the cell edge, and
 /// get_grid_params has already rejected a non-positive interval.
 double AxisMagnitude(const double origin, const unsigned int dim, const double spacing) {
     return std::max(std::max(std::abs(origin), std::abs(origin + (dim - 1u) * spacing)),

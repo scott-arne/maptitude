@@ -179,9 +179,9 @@ TEST(GridOpsTest, InterpolateDensityAcceptsTheNominalNodeOrigin) {
     // 12.3 A reports its first node 1.9e-7 A away, eight orders further out than
     // the 1.5e-15 A a grid at the Cartesian origin shows from the cos(90 deg)
     // matrix term alone. Without a magnitude-aware tolerance the caller's own
-    // construction coordinate falls outside the node span at every origin float
-    // does not happen to represent exactly -- which is most of them. Only 0.0 was
-    // covered before.
+    // construction coordinate falls outside the node span at most origins float
+    // does not represent exactly, and float represents few origins exactly. Only
+    // 0.0 was covered before.
     constexpr unsigned int N = 5u;
     const double NODE0[] = {0.0, 0.1, 3.7, 12.3, -37.45};
 
@@ -249,12 +249,27 @@ TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent) 
     // which includes the cell edge and not only the two endpoints. On a grid
     // centred on the Cartesian origin the endpoints are +/- (n - 1) * spacing / 2
     // while the edge is n * spacing, so the edge leads by 2n / (n - 1): 4x at two
-    // nodes, 2.7x at four, and tending to 2x as n grows. The twenty-node case
-    // above reaches only 2.1x, which the counted bound absorbs, so it does not
-    // pin the term -- these do. Scaled by the endpoints alone, both of these
-    // grids are refused a cell they tile exactly.
+    // nodes, 2.7x at four, and tending to 2x as n grows, which is why a small
+    // centred grid is the shape to look at. Scaled by the endpoints alone, both
+    // of these grids are refused a cell they tile exactly, where the twenty-node
+    // case above is not.
+    //
+    // The ratio picks the shape but does not decide the outcome, because nothing
+    // in it depends on the spacing. What also has to be large is the gap between
+    // the derived extent and the nominal one, and that turns on how the geometry
+    // rounds at this particular spacing: of 4000 spacings from 0.005 to 20 A,
+    // only 46 put the gap past the endpoint-only allowance on the two-node
+    // centred grid and 13 on the four-node one, and 5.5, 5.4 and 0.9 are all well
+    // inside it. SPACING is load-bearing, not illustrative. The assertion below
+    // is what says so: without it, rounding the constant to 5.5 would leave an
+    // EXPECT_NO_THROW that passes under either scale.
     constexpr double SPACING = 5.45;
     const unsigned int DIMS[] = {2u, 4u};
+
+    // Mirrors src/Grid.cpp, which keeps both file-local. Exporting them would
+    // widen the public surface for a test's benefit, which is the worse trade.
+    constexpr double FLOAT_HALF_ULP = 0x1p-24;
+    constexpr double CELL_EXTENT_ROUNDINGS = 8.0;
 
     for (const unsigned int n : DIMS) {
         SCOPED_TRACE(n);
@@ -263,6 +278,21 @@ TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent) 
         for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 1.0f;
 
         const double extent = n * SPACING;
+
+        // The premise, in the unit the scale counts in: half-ulps of float times
+        // the magnitude it is handed. Against the further endpoint -- the
+        // magnitude the endpoint-only scale would use -- the derived extent is
+        // 8.2 of those units off nominal at two nodes and 9.4 at four, past the
+        // eight allowed, so that scale really would refuse both of these grids.
+        const GridParams gp = get_grid_params(grid);
+        const double far_endpoint = std::max(
+            std::abs(gp.x_origin), std::abs(gp.x_origin + (gp.x_dim - 1u) * gp.x_spacing));
+        const double deviation = std::abs(gp.x_dim * gp.x_spacing - extent);
+        ASSERT_GT(deviation / (FLOAT_HALF_ULP * far_endpoint), CELL_EXTENT_ROUNDINGS)
+            << "SPACING no longer puts the derived extent outside the endpoint-only "
+               "allowance, so this grid would be accepted with the cell edge dropped "
+               "from the scale and the case pins nothing";
+
         EXPECT_NO_THROW(
             interpolate_density_periodic(grid, 0.0, 0.0, 0.0, extent, extent, extent, -99.0));
 

@@ -110,10 +110,12 @@ bool grid_contains(const GridParams& gp, double x, double y, double z);
  * proportional to the largest magnitude the axis's geometry takes -- the further
  * of its two endpoints, or the sampled extent n_i * spacing_i, whichever is
  * greater -- because the error it absorbs is a float rounding of a quantity at
- * that magnitude. It is not a function of the grid's distance from the Cartesian
- * origin: a five-node unit-spacing grid starting at 0 and the same grid centred
- * on the origin get the identical tolerance, because on both the extent is the
- * larger of the two.
+ * that magnitude. Which of those two dominates decides whether the tolerance
+ * tracks the grid's distance from the Cartesian origin. While no endpoint is
+ * further out than the extent it does not: a five-node unit-spacing grid
+ * starting at 0 and the same grid centred on the origin get the identical
+ * tolerance. Once an endpoint is further out, it does: the same grid starting
+ * at 3000 A gets a tolerance about 600x wider.
  *
  * @p gp must come from get_grid_params, and that is what makes the base-index
  * clamp safe: check 1 there rejects any axis with fewer than two nodes, so the
@@ -148,10 +150,10 @@ double interpolate_density_at(const GridParams& gp, const float* values,
  * their magnitude, and on a grid centred on the Cartesian origin the extent is
  * always the larger of the two -- by 2n_i / (n_i - 1), which is fourfold on a
  * two-node axis. Leaving it out of the scale is enough to make a two-node grid
- * at 5.45 A centred on the origin fail on a cell it tiles exactly, which
- * tests/cpp pins. A cell that disagrees for a real reason
- * disagrees by a fraction of a node interval at least, which is orders above the
- * allowance for any grid a crystallographic map produces.
+ * at 5.45 A centred on the origin fail on a cell it tiles exactly. A cell that
+ * disagrees for a real reason disagrees by a fraction of a node interval at
+ * least, which is orders above the allowance for any grid a crystallographic
+ * map produces.
  *
  * Exposed so a caller that is about to sample the grid periodically can reject
  * a bad cell before doing any other work, rather than after.
