@@ -75,17 +75,21 @@ This project is pre-1.0: breaking changes may land in a minor release.
   fall short by up to that fraction of the requested extent, which is deliberate
   and is part of the function's documented contract.
 - **`wrap_and_pad_grid` requires a finite, non-negative `padding`, and rejects an
-  extent it cannot size a grid for.** That node count is derived from the atom
-  extent widened by the padding, and the interval
-  count it produces becomes a grid dimension through a conversion that is
-  undefined for a value outside the range that type represents. Neither term was
-  bounded. A NaN padding compared false against every grid face and returned
-  `nullptr`, reporting that the atoms already fit; it now raises `GridError`. So
-  does a negative padding, which shrank the box the atoms had to fit inside
-  rather than widening it, and so does any atom extent and padding that between
-  them need more node intervals than a grid dimension can hold. Zero padding
-  remains admissible. Like the cell edges, the padding is checked before the
-  centroid shift, so a rejected value leaves the caller's molecule where it was.
+  extent it cannot size a grid for.** The padded grid's node count is derived
+  from the atom extent widened by the padding, and the interval count it
+  produces becomes a grid dimension through a conversion that is undefined for a
+  value outside the range that type represents. Neither term was bounded. The
+  cell edge the padded grid is built with is that dimension times the source
+  grid's node interval, narrowed to a `float` under the same rule; bounding the
+  dimension does not bound that product. A NaN padding compared false against
+  every grid face and returned `nullptr`, reporting that the atoms already fit;
+  it now raises `GridError`. So does a negative padding, which shrank the box
+  the atoms had to fit inside rather than widening it, and so does any atom
+  extent and padding that between them need more node intervals than a grid
+  dimension can hold, or that size a cell edge past what a `float` represents.
+  Zero padding remains admissible. Like the cell edges, the padding is checked
+  before the centroid shift, so a rejected value leaves the caller's molecule
+  where it was.
 
 ### Removed
 

@@ -50,6 +50,17 @@ void RequireSetter(const bool ok, const char* setter, Args... args) {
 constexpr double MAX_PAD_INTERVALS =
     static_cast<double>(std::numeric_limits<unsigned int>::max() - 1u);
 
+/// Largest padded cell edge wrap_and_pad_grid may convert to a float.
+///
+/// SetUnitCell takes the edge as a float, so the rule that bounds the interval
+/// count applies here too. The two bounds are not redundant: the count divides
+/// the padded extent by the source node interval and the edge multiplies it back
+/// by that same interval, so a coarse interval overflows the edge at a count far
+/// inside MAX_PAD_INTERVALS, and a fine one overflows the count at an edge far
+/// inside this.
+constexpr double MAX_PAD_CELL_EDGE =
+    static_cast<double>(std::numeric_limits<float>::max());
+
 }  // namespace
 
 /// Render a grid's geometry for an error message: dimensions, centre, spacing.
@@ -158,9 +169,9 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     // is a property of the argument alone, so which error a caller sees for a bad
     // padding should not turn on whether the grid's geometry happens to derive;
     // and it has to precede the in-place shift, so a rejected call leaves the
-    // molecule where the caller left it. A negative padding is not only an
-    // out-of-range value for that conversion -- it shrinks the box the atoms have
-    // to fit inside, which is the opposite of what a margin means.
+    // molecule where the caller left it. A negative padding can drive that
+    // conversion out of range, and it also shrinks the box the atoms have to fit
+    // inside, which is the opposite of what a margin means.
     if (!std::isfinite(padding) || padding < 0.0) {
         std::ostringstream message;
         message << "wrap_and_pad_grid requires a finite non-negative padding (got "
@@ -275,6 +286,7 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     const double src_spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
     unsigned int pad_dim[3];
     double pad_mid[3];
+    double pad_cell_edge[3];
     for (int i = 0; i < 3; ++i) {
         const double extent = minmax[i + 3] - minmax[i];
         // src_spacing is measured off float node coordinates, so an extent that is
@@ -327,6 +339,34 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
                     << " A node interval the grid is sampled at";
             throw GridError(message.str());
         }
+
+        // A dimension inside the interval bound multiplied by a coarse enough node
+        // interval still gives SetUnitCell an edge no float represents. Left
+        // through, it does not surface as an overflow: with this check disabled on
+        // this arm64 host the conversion saturated to inf, SetUnitCell returned
+        // true after warning on stderr that SetSpacing could not handle the value,
+        // and what reached the caller was get_grid_params reporting a non-finite
+        // coordinate against the grid this function had just built.
+        //
+        // The bound also caps what SetMid converts below. pad_mid's two paddings
+        // cancel in exact arithmetic, but each term is rounded before they are
+        // added, so a large enough padding leaves a residue: with the heavy atoms
+        // all on the float maximum the midpoint passes what a float represents at a
+        // padding near 3e47, which the interval bound alone admits at the coarsest
+        // interval a float cell edge allows. An edge inside this bound holds the
+        // padding to about half a float maximum, some nine orders short of that.
+        pad_cell_edge[i] = pad_dim[i] * src_spacing[i];
+        if (pad_cell_edge[i] > MAX_PAD_CELL_EDGE) {
+            std::ostringstream message;
+            message << "wrap_and_pad_grid sized axis " << AXIS[i] << " at a cell edge of "
+                    << pad_cell_edge[i] << " A, which no float can hold (the limit is "
+                    << MAX_PAD_CELL_EDGE << "): the heavy atoms span "
+                    << (minmax[i + 3] - minmax[i] - 2.0 * padding)
+                    << " A there, a padding of " << padding << " A widens that to "
+                    << extent << " A, and the grid samples the axis at a "
+                    << src_spacing[i] << " A node interval";
+            throw GridError(message.str());
+        }
     }
 
     // Every setter below can throw, and so can get_grid_params and the periodic
@@ -335,13 +375,12 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     RequireSetter(padded->SetDim(pad_dim[0], pad_dim[1], pad_dim[2]),
                   "SetDim", pad_dim[0], pad_dim[1], pad_dim[2]);
     RequireSetter(padded->SetUnitCell(
-                      static_cast<float>(pad_dim[0] * src_spacing[0]),
-                      static_cast<float>(pad_dim[1] * src_spacing[1]),
-                      static_cast<float>(pad_dim[2] * src_spacing[2]),
+                      static_cast<float>(pad_cell_edge[0]),
+                      static_cast<float>(pad_cell_edge[1]),
+                      static_cast<float>(pad_cell_edge[2]),
                       90.0f, 90.0f, 90.0f,
                       pad_dim[0], pad_dim[1], pad_dim[2]),
-                  "SetUnitCell", pad_dim[0] * src_spacing[0],
-                  pad_dim[1] * src_spacing[1], pad_dim[2] * src_spacing[2]);
+                  "SetUnitCell", pad_cell_edge[0], pad_cell_edge[1], pad_cell_edge[2]);
     RequireSetter(padded->SetMid(static_cast<float>(pad_mid[0]),
                                  static_cast<float>(pad_mid[1]),
                                  static_cast<float>(pad_mid[2])),

@@ -950,6 +950,45 @@ TEST(WrapAndPadValidationTest, RejectsAnIntervalCountNoGridDimensionCanHold) {
     }
 }
 
+TEST(WrapAndPadValidationTest, RejectsAPaddedCellEdgeNoFloatCanHold) {
+    // The interval count is not the only quantity the sizing narrows. The padded
+    // grid's cell edge is pad_dim times the source node interval, and OESkewGrid
+    // takes it as a float. A count well inside MAX_PAD_INTERVALS still drives that
+    // conversion out of range when the source grid is sampled coarsely enough: the
+    // count divides the extent by the interval and the edge multiplies it back, so
+    // the count bound does not constrain the edge.
+    //
+    // The source grid is two nodes at a 2^126 A interval, which is a cell edge of
+    // 2^127 A that a float holds exactly. A padding of 2^127 A gives an extent of
+    // 2^128 A, four intervals, five nodes, and a padded edge of 5 * 2^126 =
+    // 4.25e38 A, past the 3.40e38 a float holds -- while the count of 4 is nine
+    // orders inside the interval bound. Every value fed in here is a power of two,
+    // so the interval the node walk derives is exact and the count is exactly 4.
+    //
+    // Assert on the message. The two-node guard and the interval-count guard raise
+    // GridError from this same loop, so the type alone cannot say which fired.
+    const float cell_edge = 0x1p127f;  // 1.70141e38 A over two nodes
+    OESystem::OESkewGrid grid;
+    ASSERT_TRUE(grid.SetDim(2u, 2u, 2u));
+    ASSERT_TRUE(grid.SetUnitCell(cell_edge, cell_edge, cell_edge,
+                                 90.0f, 90.0f, 90.0f, 2u, 2u, 2u));
+    ASSERT_TRUE(grid.SetMid(0.0f, 0.0f, 0.0f));
+
+    // The atom sits at the grid centre, so no coordinate shift runs and the extent
+    // under test is the padding's alone.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    try {
+        std::unique_ptr<OESystem::OESkewGrid> padded(
+            wrap_and_pad_grid(grid, mol, cell_edge, cell_edge, cell_edge, 0x1p127));
+        FAIL() << "expected GridError for a padded cell edge past the float maximum";
+    } catch (const GridError& error) {
+        EXPECT_NE(std::string(error.what()).find("which no float can hold"),
+                  std::string::npos)
+            << "rejected by the wrong branch: " << error.what();
+    }
+}
+
 // ---- Per-axis grid geometry derivation (spec §2.2, §4.4) ----
 
 namespace {

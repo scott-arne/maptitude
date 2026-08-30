@@ -68,8 +68,9 @@ constexpr double NODE_SPAN_ROUNDINGS = 6.0;
 /// raising the value here leaves the mirror behind and nothing says so. Measured
 /// at 9: that test's two-node grid has a derived extent 8.22 of these units off
 /// nominal, so the endpoint-only scale the case exists to rule out would then
-/// accept it and the case stops discriminating -- while the mirrored 8 keeps the
-/// test's own guard assertion passing, and no test that passes at 8 fails at 9.
+/// accept it and the two-node case stops discriminating -- while the mirrored 8
+/// keeps the test's own guard assertion passing, and no test that passes at 8
+/// fails at 9.
 /// Change the mirror in the same edit.
 constexpr double CELL_EXTENT_ROUNDINGS = 8.0;
 
