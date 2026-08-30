@@ -309,9 +309,15 @@ TEST(GridOpsTest, WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded) {
 
 // Disabled by default: it reads a 222 KB asset and runs millions of samples.
 // Run with:
-//   ./build-debug/tests/cpp/maptitude_tests \
+//   ./build-release/tests/cpp/maptitude_tests \
 //     --gtest_also_run_disabled_tests --gtest_filter=Interpolation*Timing*
 TEST(InterpolationTiming, DISABLED_OpenEyeVersusMaptitudeOn1d26) {
+#ifndef NDEBUG
+    GTEST_SKIP() << "timing is only meaningful against an optimized build; "
+                    "configure with `cmake --preset local-release` and run "
+                    "./build-release/tests/cpp/maptitude_tests";
+#endif
+
     const std::string path = std::string(MAPTITUDE_TEST_ASSET_DIR) + "/1d26_2fofc.ccp4";
 
     // The OpenEye arm of the timing comparison needs the scalar overload of
@@ -364,7 +370,7 @@ TEST(InterpolationTiming, DISABLED_OpenEyeVersusMaptitudeOn1d26) {
               << " OEFloatGridLinearInterpolate=" << oe_ms << " ms"
               << " interpolate_density_at=" << mt_ms << " ms"
               << " ratio=" << (oe_ms / mt_ms) << "\n";
-    EXPECT_GT(sink, 0.0) << "sink keeps both loops from being optimized away";
+    EXPECT_NE(sink, 0.0) << "sink keeps both loops from being optimized away";
 }
 
 // ---- Interpolation equivalence guard (spec §3.4) ----
