@@ -9,6 +9,7 @@
 #include <oechem.h>
 #include <oegrid.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -393,6 +394,50 @@ TEST(InterpolateDensityAt, BlendsAcrossASingleCellOnATwoNodeAxis) {
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 1.0, 0.0, 0.0, OUTSIDE), 1.0);
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.5, 0.5, 0.5, OUTSIDE), 3.5);
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 1.5, 0.0, 0.0, OUTSIDE), OUTSIDE);
+}
+
+TEST(InterpolateDensityAt, ResolvesEachAxisOnANonCubicGrid) {
+    // Every other fixture here is cubic, which cannot distinguish
+    // stride_z = x_dim * y_dim from x_dim * x_dim, nor a containment bound
+    // from the wrong axis's. Distinct dimensions plus a value encoding that
+    // names each node's index triple make any such transposition read a
+    // different decade.
+    constexpr unsigned int NX = 3u;
+    constexpr unsigned int NY = 4u;
+    constexpr unsigned int NZ = 5u;
+    const GridParams gp{0.0, 0.0, 0.0, NX, NY, NZ, 1.0, 1.0, 1.0};
+    std::vector<float> v(NX * NY * NZ);
+    for (unsigned int iz = 0; iz < NZ; ++iz) {
+        for (unsigned int iy = 0; iy < NY; ++iy) {
+            for (unsigned int ix = 0; ix < NX; ++ix) {
+                v[iz * NX * NY + iy * NX + ix] =
+                    static_cast<float>(100u * ix + 10u * iy + iz);
+            }
+        }
+    }
+
+    // Nodes: each axis reaches its own last index and none of the others'.
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, 0.0, OUTSIDE), 0.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 2.0, 0.0, 0.0, OUTSIDE), 200.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 3.0, 0.0, OUTSIDE), 30.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, 4.0, OUTSIDE), 4.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 2.0, 3.0, 4.0, OUTSIDE), 234.0);
+
+    // Blends: one axis at a time, then all three at once.
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.5, 0.0, 0.0, OUTSIDE), 50.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.5, 0.0, OUTSIDE), 5.0);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, 0.5, OUTSIDE), 0.5);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.5, 0.5, 0.5, OUTSIDE), 55.5);
+
+    // The last cell of each longer axis, where the clamp pins i0 at n - 2.
+    // These fall outside only if the axis borrowed a shorter axis's bound.
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, 3.5, OUTSIDE), 3.5);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 2.5, 0.0, OUTSIDE), 25.0);
+
+    // Just past each axis's own last node.
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 2.5, 0.0, 0.0, OUTSIDE), OUTSIDE);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 3.5, 0.0, OUTSIDE), OUTSIDE);
+    EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), 0.0, 0.0, 4.5, OUTSIDE), OUTSIDE);
 }
 
 // Disabled by default: it reads a 222 KB asset and runs millions of samples.
