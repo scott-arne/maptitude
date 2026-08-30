@@ -549,6 +549,45 @@ TEST(GridOpsTest, WrapAndPadGridRejectsAPaddingTooSmallForTheNodeInterval) {
     }
 }
 
+TEST(GridOpsTest, LeavesAShiftedMoleculeAtALatticeTranslateWhenTheSizingThrows) {
+    // The sizing errors are raised after the in-place shift, and the case above uses a
+    // molecule the shift leaves alone, so nothing pinned where a molecule that is moved
+    // ends up. The header promises the original position plus whole multiples of the
+    // cell vectors -- a crystallographically equivalent place rather than a corrupted
+    // one -- and that promise is what makes not rolling the shift back defensible.
+    //
+    // The atom sits one cell along x from the 9.4 A the case above uses, so
+    // round((4.5 - 19.4) / 10) is -1 and the shift moves it by exactly one cell vector,
+    // landing it where that case starts: past the node span, where a zero padding
+    // cannot give the padded x axis a second node.
+    constexpr double CELL = 10.0;
+    OESystem::OESkewGrid grid = MakeTestGrid();  // spacing 1.0, node span [0, 9], centre 4.5
+    auto mol = MakeTestMol(9.4 + CELL, 4.5, 4.5);
+
+    OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms();
+    float before[3];
+    mol.GetCoords(&(*atom), before);
+
+    EXPECT_THROW(wrap_and_pad_grid(grid, mol, CELL, CELL, CELL, 0.0), GridError);
+
+    float after[3];
+    mol.GetCoords(&(*atom), after);
+
+    // Without a shift the assertion below would hold vacuously, on the very path the
+    // case above already covers.
+    ASSERT_NE(after[0], before[0]) << "no shift ran, so this case pins nothing";
+
+    for (int i = 0; i < 3; ++i) {
+        SCOPED_TRACE(i);
+        const double displacement =
+            static_cast<double>(after[i]) - static_cast<double>(before[i]);
+        const double cells = displacement / CELL;
+        EXPECT_NEAR(cells, std::round(cells), 1e-6)
+            << "the molecule moved " << displacement << " A on this axis, which is not a"
+            << " whole number of " << CELL << " A cell vectors";
+    }
+}
+
 TEST(GridOpsTest, WrapAndPadGridRejectsACellThatIsNotTheSampledExtent) {
     // The padded grid is filled by periodic sampling, so it inherits the periodic
     // path's precondition: the cell has to be the extent the grid samples.

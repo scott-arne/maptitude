@@ -102,15 +102,24 @@ OESystem::OESkewGrid* diff_to_calc(
  * 3. Otherwise, creates a new grid covering the atom range plus padding,
  *    filled by sampling the original grid with periodic wrapping.
  *
- * The molecule is modified in-place (coordinates shifted). Both cell checks run
- * before the shift, so a CellError leaves the molecule where it was.
+ * The molecule is modified in-place (coordinates shifted). The cell edges, the
+ * padding, the source grid's geometry, the cell's commensurability and the
+ * heavy-atom count are all checked before the shift, so a throw from any of
+ * those leaves the molecule where it was. The errors raised while sizing and
+ * building the padded grid come after the shift, and a molecule that needed one
+ * is left where the shift put it. That place is the caller's own coordinates
+ * plus whole multiples of the cell vectors, up to the rounding of storing them
+ * back as floats, so the molecule sits at a crystallographically equivalent
+ * position rather than a corrupted one; the shift is not rolled back.
  *
  * @param grid CCP4 unit-cell grid.
  * @param mol Molecule to wrap (modified in-place).
  * @param cell_a Unit cell dimension a (Angstroms), finite and positive.
  * @param cell_b Unit cell dimension b (Angstroms), finite and positive.
  * @param cell_c Unit cell dimension c (Angstroms), finite and positive.
- * @param padding Extra margin around atoms (Angstroms).
+ * @param padding Extra margin around atoms (Angstroms), finite and
+ *        non-negative. Zero is admissible; a negative value would shrink the
+ *        box the atoms have to fit inside rather than widen it.
  * @return A newly allocated padded grid, or nullptr if the molecule already
  *         fits and no padding is needed. The caller owns the returned grid.
  * @throws StructureError If the molecule contains no heavy atoms.
@@ -118,9 +127,11 @@ OESystem::OESkewGrid* diff_to_calc(
  *         a cell dimension is not the extent the grid samples on that axis --
  *         the padded grid is filled by periodic sampling and inherits
  *         interpolate_density_periodic_at's commensurability requirement.
- * @throws GridError As get_grid_params, if an OESkewGrid setter rejects the
- *         padded geometry, or if the atom extent plus padding is too thin on
- *         some axis to give the padded grid two nodes there.
+ * @throws GridError As get_grid_params, if padding is not a finite non-negative
+ *         value, if an OESkewGrid setter rejects the padded geometry, if the
+ *         atom extent plus padding is too thin on some axis to give the padded
+ *         grid two nodes there, or if that extent needs more node intervals on
+ *         some axis than a grid dimension can hold.
  */
 OESystem::OESkewGrid* wrap_and_pad_grid(
     const OESystem::OESkewGrid& grid,

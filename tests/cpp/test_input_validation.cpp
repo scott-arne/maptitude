@@ -882,6 +882,74 @@ TEST(WrapAndPadValidationTest, StillAcceptsPositiveCellEdges) {
     }
 }
 
+// ---- wrap_and_pad_grid padding and interval-count validation ----
+
+TEST(WrapAndPadValidationTest, RejectsNonFiniteOrNegativePadding) {
+    // padding grows the extent the padded grid is sized from, and that extent divides
+    // by the node interval into a float-to-unsigned conversion, which is undefined
+    // outside the range the type represents. Of the values below only +inf reached
+    // that conversion before this guard existed: for this molecule the other four
+    // make every needs_pad comparison false, so the function returned nullptr and
+    // reported that the atoms already fit. Turning that silent answer into an error
+    // is the behaviour this changes.
+    //
+    // Assert on the message. +inf does reach the sizing loop and is already rejected
+    // there on this arm64 host -- see the interval-count case below -- so the
+    // exception type alone cannot say which guard fired.
+    const double nan_value = std::numeric_limits<double>::quiet_NaN();
+    const double pos_inf = std::numeric_limits<double>::infinity();
+
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+    const OESystem::OESkewGrid grid(MakeEmptyGrid(5.0, 1.0));  // 11 nodes at 1.0 A, cell 11
+
+    // -1e-9 is here because the contract is non-negative rather than "not badly
+    // negative": a negative padding shrinks the box the atoms have to fit inside,
+    // whatever its magnitude. Zero stays admissible and is covered by
+    // GridOpsTest.WrapAndPadGridRejectsAPaddingTooSmallForTheNodeInterval.
+    for (const double bad : {nan_value, pos_inf, -pos_inf, -5.0, -1e-9}) {
+        try {
+            std::unique_ptr<OESystem::OESkewGrid> padded(
+                wrap_and_pad_grid(grid, mol, 11.0, 11.0, 11.0, bad));
+            FAIL() << "expected GridError for a padding of " << bad;
+        } catch (const GridError& error) {
+            EXPECT_NE(std::string(error.what()).find("finite non-negative padding"),
+                      std::string::npos)
+                << "rejected by the wrong branch at padding " << bad << ": " << error.what();
+        }
+    }
+}
+
+TEST(WrapAndPadValidationTest, RejectsAnIntervalCountNoGridDimensionCanHold) {
+    // A valid padding is not sufficient: the atom extent is caller-controlled too, and
+    // it reaches the same conversion. The two atoms below are 5e9 A apart, a separation
+    // the two targets convert differently. Compiling the conversion for both: on this
+    // arm64 host 5e9 saturates to UINT_MAX, whose `+ 1u` wraps to 0 and is caught by
+    // the two-node guard; built for x86-64 it wraps modularly to 705032704, and the
+    // dimension of 705032705 that follows passes that guard and reaches SetDim.
+    //
+    // So assert on the message: on this host the type is GridError with the bound
+    // removed as well as with it, and only the message says which guard fired.
+    //
+    // The atoms straddle the grid centre, so no coordinate shift runs and the extent
+    // under test is the pair's own separation.
+    OEChem::OEGraphMol mol = MakeAtomMol(6, -2.5e9, 0.0, 0.0);
+    OEChem::OEAtomBase* far_atom = mol.NewAtom(6);
+    const double far_coords[3] = {2.5e9, 0.0, 0.0};
+    mol.SetCoords(far_atom, far_coords);
+
+    const OESystem::OESkewGrid grid(MakeEmptyGrid(5.0, 1.0));  // 11 nodes at 1.0 A, cell 11
+
+    try {
+        std::unique_ptr<OESystem::OESkewGrid> padded(
+            wrap_and_pad_grid(grid, mol, 11.0, 11.0, 11.0, 0.0));
+        FAIL() << "expected GridError for a 5e9 A atom extent at a 1 A node interval";
+    } catch (const GridError& error) {
+        EXPECT_NE(std::string(error.what()).find("no grid dimension can hold"),
+                  std::string::npos)
+            << "rejected by the wrong branch: " << error.what();
+    }
+}
+
 // ---- Per-axis grid geometry derivation (spec §2.2, §4.4) ----
 
 namespace {

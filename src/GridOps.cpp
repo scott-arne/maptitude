@@ -41,6 +41,15 @@ void RequireSetter(const bool ok, const char* setter, Args... args) {
     throw GridError(message.str());
 }
 
+/// Largest node-interval count wrap_and_pad_grid may convert to a grid dimension.
+///
+/// Converting a floating-point value to an integer type is undefined unless the
+/// truncated value is representable there, so the count has to be tested against
+/// that range before the conversion is made rather than after. One less than the
+/// unsigned maximum, because the count becomes a dimension by way of `+ 1u`.
+constexpr double MAX_PAD_INTERVALS =
+    static_cast<double>(std::numeric_limits<unsigned int>::max() - 1u);
+
 }  // namespace
 
 /// Render a grid's geometry for an error message: dimensions, centre, spacing.
@@ -141,6 +150,22 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
                     << " (got " << edges[i] << ")";
             throw CellError(message.str());
         }
+    }
+
+    // padding widens the box the padded grid is sized from, and that size ends in
+    // a float-to-unsigned conversion further down. It is checked here, with the
+    // cell edges and ahead of anything derived from the grid, for two reasons: it
+    // is a property of the argument alone, so which error a caller sees for a bad
+    // padding should not turn on whether the grid's geometry happens to derive;
+    // and it has to precede the in-place shift, so a rejected call leaves the
+    // molecule where the caller left it. A negative padding is not only an
+    // out-of-range value for that conversion -- it shrinks the box the atoms have
+    // to fit inside, which is the opposite of what a margin means.
+    if (!std::isfinite(padding) || padding < 0.0) {
+        std::ostringstream message;
+        message << "wrap_and_pad_grid requires a finite non-negative padding (got "
+                << padding << ")";
+        throw GridError(message.str());
     }
 
     const GridParams gp = get_grid_params(grid);
@@ -262,6 +287,31 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
             std::abs(intervals - whole) <= PAD_INTERVAL_COUNT_TOL * std::max(1.0, whole)
                 ? whole
                 : std::ceil(intervals);
+        // Validating padding is not enough on its own: the atom extent is the
+        // other caller-controlled term, and either can drive count past what the
+        // conversion below is defined for. What that costs was measured by
+        // compiling the same conversion for both targets over the values +Inf,
+        // 4e300, 5e9 and 2^32. On this arm64 host all four convert to the
+        // unsigned maximum, whose `+ 1u` wraps to 0 and is caught by the two-node
+        // guard a few lines down -- which is why this went unnoticed here. Built
+        // for x86-64 the first, second and fourth convert to 0 and are caught
+        // too, but 5e9 wraps modularly to 705032704, and the dimension of
+        // 705032705 that follows passes that guard and reaches SetDim. x86-64 is
+        // a target this project ships wheels for, so the saturation is not
+        // something to rest on. The condition is negated so a NaN count falls on
+        // the reject side rather than through it.
+        if (!(count >= 0.0 && count <= MAX_PAD_INTERVALS)) {
+            std::ostringstream message;
+            message << "wrap_and_pad_grid sized axis " << AXIS[i] << " at " << count
+                    << " node intervals, which no grid dimension can hold (the limit is "
+                    << MAX_PAD_INTERVALS << "): the heavy atoms span "
+                    << (minmax[i + 3] - minmax[i] - 2.0 * padding)
+                    << " A there, a padding of " << padding << " A widens that to "
+                    << extent << " A, and the grid samples the axis at a "
+                    << src_spacing[i] << " A node interval";
+            throw GridError(message.str());
+        }
+
         pad_dim[i] = static_cast<unsigned int>(count) + 1u;
         pad_mid[i] = (minmax[i] + minmax[i + 3]) / 2.0;
 
