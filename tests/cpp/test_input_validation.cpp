@@ -1031,9 +1031,12 @@ TEST(SameGridGeometry, ThrowsRatherThanReportingDifferentForAnUnderivableGrid) {
 }
 
 TEST(SameGridGeometry, TrueForOriginDifferenceBelowRelativeTolerance) {
-    // At an origin coordinate of 50.0, absolute tol is 1e-6 but relative tol is
-    // 5e-5. A 2e-5 A shift sits strictly between them: fails absolute by 20x,
-    // passes relative by 2.5x. This confirms the tolerance is scaled, not absolute.
+    // The two mids differ by one representable step near 50: 50.00002f is the
+    // float 50.0000190734863, and the derivation carries that rigidly to the
+    // node origins at 45.5 and 45.5000190734863. The resulting 1.907e-5 A gap
+    // sits strictly between the two tolerance regimes -- 19.1x over an absolute
+    // 1e-6, and 2.4x inside the relative 1e-6 * 45.5 = 4.55e-5. Measured, not
+    // derived: an absolute comparison reports these two grids as different.
     OESystem::OESkewGrid lhs;
     ASSERT_TRUE(lhs.SetDim(10u, 10u, 10u));
     ASSERT_TRUE(lhs.SetUnitCell(10.0f, 10.0f, 10.0f, 90.0f, 90.0f, 90.0f,
