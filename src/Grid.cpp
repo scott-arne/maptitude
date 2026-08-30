@@ -191,7 +191,8 @@ double interpolate_density_at(const GridParams& gp, const float* values,
     }
 
     // Clamping the base index keeps a point exactly on the far face inside the
-    // last cell with t == 1.0, rather than indexing one node past the end.
+    // last cell with t == 1.0, rather than indexing one node past the end. The
+    // lower clamp is belt-and-braces: the containment check already rejects f < 0.
     const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
     unsigned int i0[3];
     double t[3];
