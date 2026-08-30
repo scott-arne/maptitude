@@ -1051,3 +1051,128 @@ TEST(SameGridGeometry, TrueForOriginDifferenceBelowRelativeTolerance) {
 
     EXPECT_TRUE(same_grid_geometry(lhs, rhs));
 }
+
+TEST(SameGridGeometry, FalseWhenOnlyNodeOriginDiffers) {
+    // Two grids with identical dims and cells, mids at (0,0,0) and (5,0,0).
+    // This proves the origin comparison at src/Grid.cpp:189 is reachable: dims,
+    // spacings match, but origins differ by 5 A (far outside any tolerance).
+    OESystem::OESkewGrid lhs;
+    ASSERT_TRUE(lhs.SetDim(10u, 10u, 10u));
+    ASSERT_TRUE(lhs.SetUnitCell(10.0f, 10.0f, 10.0f, 90.0f, 90.0f, 90.0f,
+                                10u, 10u, 10u));
+    ASSERT_TRUE(lhs.SetMid(0.0f, 0.0f, 0.0f));
+
+    OESystem::OESkewGrid rhs;
+    ASSERT_TRUE(rhs.SetDim(10u, 10u, 10u));
+    ASSERT_TRUE(rhs.SetUnitCell(10.0f, 10.0f, 10.0f, 90.0f, 90.0f, 90.0f,
+                                10u, 10u, 10u));
+    ASSERT_TRUE(rhs.SetMid(5.0f, 0.0f, 0.0f));
+
+    const GridParams a = get_grid_params(lhs);
+    const GridParams b = get_grid_params(rhs);
+
+    // Assert preconditions: dims and spacings match, origins differ substantially.
+    ASSERT_EQ(a.x_dim, b.x_dim);
+    ASSERT_EQ(a.y_dim, b.y_dim);
+    ASSERT_EQ(a.z_dim, b.z_dim);
+    ASSERT_DOUBLE_EQ(a.x_spacing, b.x_spacing);
+    ASSERT_DOUBLE_EQ(a.y_spacing, b.y_spacing);
+    ASSERT_DOUBLE_EQ(a.z_spacing, b.z_spacing);
+    ASSERT_GT(std::abs(a.x_origin - b.x_origin), 1.0);
+
+    EXPECT_FALSE(same_grid_geometry(lhs, rhs));
+}
+
+TEST(SameGridGeometry, FalseWhenOnlyCellParametersDiffer) {
+    // Two grids with identical dims and mid, cells with a-edge 10 vs 20 and
+    // matching divisions (10 vs 20). This keeps the x node interval at 1.0 A
+    // for both grids, and with the same mid and dims the node origins coincide
+    // too. Dims, spacings, origins all match; only cell a differs (10 vs 20).
+    // This proves the cell-parameter comparison at src/Grid.cpp:197 is reachable.
+    OESystem::OESkewGrid lhs;
+    ASSERT_TRUE(lhs.SetDim(10u, 10u, 10u));
+    ASSERT_TRUE(lhs.SetUnitCell(10.0f, 10.0f, 10.0f, 90.0f, 90.0f, 90.0f,
+                                10u, 10u, 10u));
+    ASSERT_TRUE(lhs.SetMid(0.0f, 0.0f, 0.0f));
+
+    OESystem::OESkewGrid rhs;
+    ASSERT_TRUE(rhs.SetDim(10u, 10u, 10u));
+    ASSERT_TRUE(rhs.SetUnitCell(20.0f, 10.0f, 10.0f, 90.0f, 90.0f, 90.0f,
+                                20u, 10u, 10u));
+    ASSERT_TRUE(rhs.SetMid(0.0f, 0.0f, 0.0f));
+
+    const GridParams a = get_grid_params(lhs);
+    const GridParams b = get_grid_params(rhs);
+
+    // Assert preconditions: dims match, spacings match (both 1.0 A on all axes),
+    // origins match, both have unit cells, and cell a differs by ~10.0.
+    ASSERT_EQ(a.x_dim, b.x_dim);
+    ASSERT_EQ(a.y_dim, b.y_dim);
+    ASSERT_EQ(a.z_dim, b.z_dim);
+    ASSERT_DOUBLE_EQ(a.x_spacing, b.x_spacing);
+    ASSERT_DOUBLE_EQ(a.y_spacing, b.y_spacing);
+    ASSERT_DOUBLE_EQ(a.z_spacing, b.z_spacing);
+    ASSERT_DOUBLE_EQ(a.x_origin, b.x_origin);
+    ASSERT_DOUBLE_EQ(a.y_origin, b.y_origin);
+    ASSERT_DOUBLE_EQ(a.z_origin, b.z_origin);
+    ASSERT_TRUE(lhs.HasUnitCell());
+    ASSERT_TRUE(rhs.HasUnitCell());
+    ASSERT_NEAR(std::abs(get_unit_cell(lhs).a - get_unit_cell(rhs).a), 10.0, 0.1);
+
+    EXPECT_FALSE(same_grid_geometry(lhs, rhs));
+}
+
+// Spacing-only difference cannot be isolated: changing the node interval while
+// holding dims, origin and cell all fixed is not constructible through the setters.
+//
+// HasUnitCell() presence mismatch at src/Grid.cpp:193 has no test: no construction
+// exists that produces a grid derivable through get_grid_params (which requires
+// at least a 2x2x2 extent with finite coordinates) but lacking a unit cell.
+
+TEST(GridParamsDerivation, DerivesTheExpectedValuesForAKnownGrid) {
+    // MakeSkewGrid(4,5,6) sets cell edges equal to the dims with matching divisions,
+    // so each axis's node interval is edge/divisions == 1.0 A by construction.
+    // This is the independent assertion proving the derivation is correct.
+    const OESystem::OESkewGrid grid = MakeSkewGrid(4u, 5u, 6u);
+    const GridParams gp = get_grid_params(grid);
+
+    // Dims match the construction.
+    EXPECT_EQ(gp.x_dim, 4u);
+    EXPECT_EQ(gp.y_dim, 5u);
+    EXPECT_EQ(gp.z_dim, 6u);
+
+    // Spacings are 1.0 A on all axes (independent: derived from the fixture, not
+    // from reading the implementation).
+    EXPECT_NEAR(gp.x_spacing, 1.0, 1e-6);
+    EXPECT_NEAR(gp.y_spacing, 1.0, 1e-6);
+    EXPECT_NEAR(gp.z_spacing, 1.0, 1e-6);
+
+    // The derivation's arithmetic is self-consistent: the far coordinate on each
+    // axis equals origin + (dim - 1) * spacing.
+    const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
+    const unsigned int step[3] = {1u, n[0], n[0] * n[1]};  // x-fastest linearization
+    const double origin[3] = {gp.x_origin, gp.y_origin, gp.z_origin};
+    const double spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
+
+    for (int axis = 0; axis < 3; ++axis) {
+        float coord[3] = {0.0f, 0.0f, 0.0f};
+        ASSERT_TRUE(grid.ElementToSpatialCoord((n[axis] - 1u) * step[axis],
+                                               coord[0], coord[1], coord[2]));
+        const double expected_far = origin[axis] + (n[axis] - 1u) * spacing[axis];
+        EXPECT_NEAR(static_cast<double>(coord[axis]), expected_far, 1e-5);
+    }
+
+    // Origins equal what ElementToSpatialCoord(0) reports. This shares its oracle
+    // with the implementation (both read element 0), so it is a consistency check
+    // rather than an independent one — the spacings and span identity above are
+    // the load-bearing assertions.
+    float x0 = 0.0f, y0 = 0.0f, z0 = 0.0f;
+    ASSERT_TRUE(grid.ElementToSpatialCoord(0u, x0, y0, z0));
+    EXPECT_DOUBLE_EQ(gp.x_origin, static_cast<double>(x0));
+    EXPECT_DOUBLE_EQ(gp.y_origin, static_cast<double>(y0));
+    EXPECT_DOUBLE_EQ(gp.z_origin, static_cast<double>(z0));
+
+    // Limitation: this fixture is isotropic 1.0 A on all three axes, so it cannot
+    // catch an x/y/z divisor swap. Task 6's test_per_axis_spacing_matches_gemmi
+    // owns that case against real anisotropic assets.
+}
