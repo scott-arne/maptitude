@@ -111,12 +111,14 @@ bool grid_contains(const GridParams& gp, double x, double y, double z);
 /**
  * @brief True when two grids describe the same sampling of the same region.
  *
- * Equal dims, per-axis spacing and node origin within @p tol Angstroms, and
- * equal unit-cell presence and parameters.
+ * Equal dims, and per-axis spacing, node origin, and cell parameters within a
+ * relative tolerance of @p tol (floored at 1.0 to keep sub-Angstrom quantities
+ * absolute). Equal unit-cell presence.
  *
  * Both operands go through get_grid_params, so a grid whose geometry cannot be
  * derived throws here where OEGridSameGeometry returned false.
  *
+ * @param tol Relative tolerance with unit floor (default 1e-6).
  * @throws GridError, CellError As get_grid_params, for either operand.
  */
 bool same_grid_geometry(const OESystem::OESkewGrid& lhs,

@@ -1029,3 +1029,22 @@ TEST(SameGridGeometry, ThrowsRatherThanReportingDifferentForAnUnderivableGrid) {
     const OESystem::OESkewGrid rhs;  // default-constructed: 1x1x1
     EXPECT_THROW(same_grid_geometry(lhs, rhs), GridError);
 }
+
+TEST(SameGridGeometry, TrueForOriginDifferenceBelowRelativeTolerance) {
+    // At an origin coordinate of 50.0, absolute tol is 1e-6 but relative tol is
+    // 5e-5. A 2e-5 A shift sits strictly between them: fails absolute by 20x,
+    // passes relative by 2.5x. This confirms the tolerance is scaled, not absolute.
+    OESystem::OESkewGrid lhs;
+    ASSERT_TRUE(lhs.SetDim(10u, 10u, 10u));
+    ASSERT_TRUE(lhs.SetUnitCell(10.0f, 10.0f, 10.0f, 90.0f, 90.0f, 90.0f,
+                                10u, 10u, 10u));
+    ASSERT_TRUE(lhs.SetMid(50.0f, 0.0f, 0.0f));
+
+    OESystem::OESkewGrid rhs;
+    ASSERT_TRUE(rhs.SetDim(10u, 10u, 10u));
+    ASSERT_TRUE(rhs.SetUnitCell(10.0f, 10.0f, 10.0f, 90.0f, 90.0f, 90.0f,
+                                10u, 10u, 10u));
+    ASSERT_TRUE(rhs.SetMid(50.00002f, 0.0f, 0.0f));
+
+    EXPECT_TRUE(same_grid_geometry(lhs, rhs));
+}

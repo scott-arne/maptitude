@@ -3,6 +3,7 @@
 
 #include <oegrid.h>
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 #include <string>
@@ -55,6 +56,18 @@ bool ContainsFractionalIndex(const GridParams& gp,
            fx >= 0.0 && fx <= gp.x_dim - 1.0 &&
            fy >= 0.0 && fy <= gp.y_dim - 1.0 &&
            fz >= 0.0 && fz <= gp.z_dim - 1.0;
+}
+
+/// True when two quantities agree to within @p tol scaled by their magnitude.
+///
+/// The operands descend from OpenEye's float grid coordinates, where one ulp
+/// exceeds an absolute 1e-6 above roughly 8.4 Angstroms — so an absolute
+/// comparison is exact float equality on every real crystallographic cell.
+/// The unit floor keeps the tolerance absolute for sub-Angstrom quantities
+/// such as node spacings, and gives the degree-valued cell angles a scale
+/// their own magnitude supplies.
+bool NearlyEqual(const double p, const double q, const double tol) {
+    return std::abs(p - q) <= tol * std::max({1.0, std::abs(p), std::abs(q)});
 }
 
 }  // namespace
@@ -170,23 +183,23 @@ bool same_grid_geometry(const OESystem::OESkewGrid& lhs,
     const GridParams b = get_grid_params(rhs);
 
     if (a.x_dim != b.x_dim || a.y_dim != b.y_dim || a.z_dim != b.z_dim) return false;
-    if (std::abs(a.x_spacing - b.x_spacing) > tol) return false;
-    if (std::abs(a.y_spacing - b.y_spacing) > tol) return false;
-    if (std::abs(a.z_spacing - b.z_spacing) > tol) return false;
-    if (std::abs(a.x_origin - b.x_origin) > tol) return false;
-    if (std::abs(a.y_origin - b.y_origin) > tol) return false;
-    if (std::abs(a.z_origin - b.z_origin) > tol) return false;
+    if (!NearlyEqual(a.x_spacing, b.x_spacing, tol)) return false;
+    if (!NearlyEqual(a.y_spacing, b.y_spacing, tol)) return false;
+    if (!NearlyEqual(a.z_spacing, b.z_spacing, tol)) return false;
+    if (!NearlyEqual(a.x_origin, b.x_origin, tol)) return false;
+    if (!NearlyEqual(a.y_origin, b.y_origin, tol)) return false;
+    if (!NearlyEqual(a.z_origin, b.z_origin, tol)) return false;
 
     if (lhs.HasUnitCell() != rhs.HasUnitCell()) return false;
     if (lhs.HasUnitCell()) {
         const UnitCellParams ca = get_unit_cell(lhs);
         const UnitCellParams cb = get_unit_cell(rhs);
-        if (std::abs(ca.a - cb.a) > tol) return false;
-        if (std::abs(ca.b - cb.b) > tol) return false;
-        if (std::abs(ca.c - cb.c) > tol) return false;
-        if (std::abs(ca.alpha - cb.alpha) > tol) return false;
-        if (std::abs(ca.beta - cb.beta) > tol) return false;
-        if (std::abs(ca.gamma - cb.gamma) > tol) return false;
+        if (!NearlyEqual(ca.a, cb.a, tol)) return false;
+        if (!NearlyEqual(ca.b, cb.b, tol)) return false;
+        if (!NearlyEqual(ca.c, cb.c, tol)) return false;
+        if (!NearlyEqual(ca.alpha, cb.alpha, tol)) return false;
+        if (!NearlyEqual(ca.beta, cb.beta, tol)) return false;
+        if (!NearlyEqual(ca.gamma, cb.gamma, tol)) return false;
     }
     return true;
 }
