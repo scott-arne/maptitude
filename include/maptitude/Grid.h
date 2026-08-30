@@ -107,8 +107,13 @@ bool grid_contains(const GridParams& gp, double x, double y, double z);
  * point exactly on the far face interpolates rather than falling out of the
  * grid, and so does one a rounding error beyond it: the span's endpoints are
  * derived from float node coordinates and are not exact. The tolerance is
- * proportional to how far the grid sits from the Cartesian origin, because the
- * error it absorbs is a float rounding of coordinates at that magnitude.
+ * proportional to the largest magnitude the axis's geometry takes -- the further
+ * of its two endpoints, or the sampled extent n_i * spacing_i, whichever is
+ * greater -- because the error it absorbs is a float rounding of a quantity at
+ * that magnitude. It is not a function of the grid's distance from the Cartesian
+ * origin: a five-node unit-spacing grid starting at 0 and the same grid centred
+ * on the origin get the identical tolerance, because on both the extent is the
+ * larger of the two.
  *
  * @p gp must come from get_grid_params, and that is what makes the base-index
  * clamp safe: check 1 there rejects any axis with fewer than two nodes, so the
@@ -136,11 +141,17 @@ double interpolate_density_at(const GridParams& gp, const float* values,
  * it would return densities from the wrong place with nothing to mark them as
  * wrong.
  *
- * The comparison is absolute, against an allowance proportional to how far the
- * grid sits from the Cartesian origin: n_i * spacing_i is derived from float node
- * coordinates, whose error grows with their magnitude. A cell that disagrees for
- * a real reason disagrees by a fraction of a node interval at least, which is
- * orders above the allowance for any grid a crystallographic map produces.
+ * The comparison is absolute, against an allowance proportional to the largest
+ * magnitude the axis's geometry takes -- the further of its two endpoints, or
+ * n_i * spacing_i itself, whichever is greater. Both sides of that max matter:
+ * the extent is derived from float node coordinates, whose error grows with
+ * their magnitude, and on a grid centred on the Cartesian origin the extent is
+ * always the larger of the two -- by 2n_i / (n_i - 1), which is fourfold on a
+ * two-node axis. Leaving it out of the scale is enough to make a two-node grid
+ * at 5.45 A centred on the origin fail on a cell it tiles exactly, which
+ * tests/cpp pins. A cell that disagrees for a real reason
+ * disagrees by a fraction of a node interval at least, which is orders above the
+ * allowance for any grid a crystallographic map produces.
  *
  * Exposed so a caller that is about to sample the grid periodically can reject
  * a bad cell before doing any other work, rather than after.

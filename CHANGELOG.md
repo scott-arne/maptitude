@@ -7,6 +7,20 @@ This project is pre-1.0: breaking changes may land in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- `require_commensurate_cell` in `Grid.h`, the check the periodic entry points
+  make on the cell edges they are given, as a public function. A caller about to
+  sample a grid periodically can reject a cell that is not the grid's own
+  sampled extent before doing any other work — which is how `wrap_and_pad_grid`
+  now uses it, ahead of the centroid shift. C++ only; a Python caller gets the
+  behaviour through the functions that call it.
+- `PAD_INTERVAL_COUNT_TOL` in `GridOps.h`, the relative tolerance
+  `wrap_and_pad_grid` uses to recognise a whole number of node intervals in the
+  extent it has to cover. It was a constant inside the function; it is public
+  because it bounds how far short of the requested extent the padded grid may
+  fall, and that bound is part of the function's contract.
+
 ### Changed
 
 - **Periodic interpolation is now genuinely periodic across the cell boundary.**
@@ -35,15 +49,22 @@ This project is pre-1.0: breaking changes may land in a minor release.
   and reported nothing.
 - **A point on a grid's own corner interpolates instead of falling out of the
   grid.** The node span is derived from `ElementToSpatialCoord`, and its error
-  scales with the coordinates the grid sits at, because OpenEye holds the
-  geometry in float: a five-node grid nominally starting at 12.3 A reports that
-  node 1.9e-7 A away, where the same grid at the Cartesian origin is off by
-  1.5e-15 A. A caller querying the coordinate they built the grid from was told
-  the point lay outside. The domain test and the commensurability test now share
-  one tolerance scheme, a counted number of half-ulps of float times the largest
-  magnitude the axis's geometry takes. Discrimination is unaffected: the
-  boundary tolerance stays four to five orders below half a node interval, and
-  the commensurability tolerance three or more orders below one node interval.
+  scales with the magnitude of the floats OpenEye holds the geometry in: a
+  five-node grid nominally starting at 12.3 A reports that node 1.9e-7 A away,
+  where the same grid at the Cartesian origin is off by 1.5e-15 A. A caller
+  querying the coordinate they built the grid from was told the point lay
+  outside. The domain test and the commensurability test now share one tolerance
+  scheme, a counted number of half-ulps of float times the largest magnitude the
+  axis's geometry takes — the further endpoint, or the sampled extent
+  `n * spacing`, whichever is greater. Discrimination is preserved, but it is no
+  longer a constant: half a node interval is
+  `spacing / (12 * 2^-24 * magnitude)` times the boundary tolerance, so the
+  ratio falls as a grid's coordinates grow. It is about 5500x for a 256-node
+  0.9 A map at the Cartesian origin and about 420x for a 20-node map of that
+  spacing 3000 A out; the commensurability tolerance's margin against a whole
+  node interval is 1.5x those figures. The boundary tolerance would reach half a
+  node interval only at a magnitude of about 1.4 million node intervals, which
+  for a 0.9 A map is over 100 micrometres.
 - **The grid `wrap_and_pad_grid` builds covers the extent it was sized for.**
   The node count truncated the interval count rather than rounding it up, so an
   atom extent that was not a whole number of node intervals produced a grid

@@ -316,11 +316,13 @@ TEST(InterpolateDensityAt, InterpolatesOnTheClosedFarFace) {
 TEST(InterpolateDensityAt, ReturnsTheDefaultOutsideTheBoundaryTolerance) {
     const GridParams gp = UnitGridParams();
     const std::vector<float> v = ElementNumberValues();
-    // The node-span tolerance scales with the coordinate magnitude the grid
-    // samples, which is 3 A here, so it is around 5e-7 A. 1e-4 clears that by two
-    // orders while staying five thousandths of a node interval inside the old
-    // half-spacing shell, so this pins the face position and not the tolerance's
-    // magnitude.
+    // The node-span tolerance is a counted number of float half-ulps times the
+    // largest magnitude in the axis's geometry. For this grid that is the sampled
+    // extent dim * spacing = 4 A, not the 3 A far node, giving
+    // 6 * 2^-24 * 4 = 1.43e-6 A. The 1e-4 offset is about 70x that, and is a
+    // ten-thousandth of the 1 A node interval, so it lies well outside the
+    // tolerance and well inside the half-spacing shell the scalar carrier used to
+    // admit. What is pinned is the face's position, not the tolerance's magnitude.
     const double over = 3.0 + 1e-4;
     const double under = -1e-4;
     EXPECT_DOUBLE_EQ(interpolate_density_at(gp, v.data(), over, 0.0, 0.0, OUTSIDE), OUTSIDE);

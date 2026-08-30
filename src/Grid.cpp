@@ -452,12 +452,14 @@ double WrapAndBlendPeriodic(const GridParams& gp, const float* values,
         // Wrapping the fractional index modulo the node count, rather than the
         // Cartesian coordinate modulo the cell edge, makes the reduction itself
         // exact: fmod is exact by IEEE 754, and the period is the integer n_i.
-        // The wrapped index therefore carries only the error already in f[i], and
-        // a point a hundred cells out is placed no less accurately than one just
-        // past the edge. Reducing the coordinate instead would subtract a rounded
-        // multiple of a rounded cell edge, and that error would grow with the
-        // number of cells crossed. Adding the period back for a negative remainder
-        // can round the sum up to exactly n_i, which the modulus below absorbs.
+        // The wrapped index therefore carries only the error already in f[i].
+        // That error does grow with distance -- f[i] is (x - origin) / spacing, so
+        // a point further out is formed from larger operands and rounds coarser --
+        // but it is incurred once, and the reduction adds nothing to it. Reducing
+        // the coordinate instead would subtract a rounded multiple of a rounded
+        // cell edge, so the error would grow a second time, once per cell crossed.
+        // Adding the period back for a negative remainder can round the sum up to
+        // exactly n_i, which the modulus below absorbs.
         const double period = static_cast<double>(n[i]);
         double w = std::fmod(f[i], period);
         if (w < 0.0) w += period;

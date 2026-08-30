@@ -174,13 +174,14 @@ TEST(GridOpsTest, InterpolateDensityPeriodicRejectsAnIncommensurateCell) {
 
 TEST(GridOpsTest, InterpolateDensityAcceptsTheNominalNodeOrigin) {
     // The node span is derived from ElementToSpatialCoord, and the error in it is
-    // proportional to the coordinates the grid sits at: OpenEye holds the grid
-    // centre as a float, so a grid nominally starting at 12.3 A reports its first
-    // node 1.9e-7 A away, eight orders further out than the 1.5e-15 A a grid at
-    // the Cartesian origin shows from the cos(90 deg) matrix term alone. Without a
-    // magnitude-aware tolerance the caller's own construction coordinate falls
-    // outside the node span at every origin float does not happen to represent
-    // exactly -- which is most of them. Only 0.0 was covered before.
+    // proportional to the magnitude of the floats the geometry is held in:
+    // OpenEye holds the grid centre as a float, so a grid nominally starting at
+    // 12.3 A reports its first node 1.9e-7 A away, eight orders further out than
+    // the 1.5e-15 A a grid at the Cartesian origin shows from the cos(90 deg)
+    // matrix term alone. Without a magnitude-aware tolerance the caller's own
+    // construction coordinate falls outside the node span at every origin float
+    // does not happen to represent exactly -- which is most of them. Only 0.0 was
+    // covered before.
     constexpr unsigned int N = 5u;
     const double NODE0[] = {0.0, 0.1, 3.7, 12.3, -37.45};
 
@@ -214,9 +215,11 @@ TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsAGridsOwnExtentFarFromTheOrig
     constexpr unsigned int N = 20u;
     constexpr double SPACING = 0.9020833333333;  // 1d26's node interval
     // The last entry centres the grid on the Cartesian origin, which is the
-    // hardest case: the endpoints are as close to zero as this span allows while
-    // the cell edge -- itself a stored float -- is twice as large, so a tolerance
-    // scaled by the endpoints alone understates the noise fourfold.
+    // hardest of these five: the endpoints are as close to zero as this span
+    // allows while the cell edge -- itself a stored float -- is 2n / (n - 1)
+    // times larger, which at twenty nodes is 2.1x. That ratio grows as n falls,
+    // and the case that actually needs the cell edge in the scale is the small
+    // one below; these cases cover the origin-distance axis instead.
     const double NODE0[] = {0.0, 100.0, 1000.0, 3000.0, -0.5 * (N - 1u) * SPACING};
     const double extent = N * SPACING;
 
@@ -239,6 +242,37 @@ TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsAGridsOwnExtentFarFromTheOrig
     EXPECT_THROW(interpolate_density_periodic(distant, 3000.0, 3000.0, 3000.0,
                                               one_node_too_wide, extent, extent, -99.0),
                  CellError);
+}
+
+TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent) {
+    // The allowance is scaled by the largest magnitude in the axis's geometry,
+    // which includes the cell edge and not only the two endpoints. On a grid
+    // centred on the Cartesian origin the endpoints are +/- (n - 1) * spacing / 2
+    // while the edge is n * spacing, so the edge leads by 2n / (n - 1): 4x at two
+    // nodes, 2.7x at four, and tending to 2x as n grows. The twenty-node case
+    // above reaches only 2.1x, which the counted bound absorbs, so it does not
+    // pin the term -- these do. Scaled by the endpoints alone, both of these
+    // grids are refused a cell they tile exactly.
+    constexpr double SPACING = 5.45;
+    const unsigned int DIMS[] = {2u, 4u};
+
+    for (const unsigned int n : DIMS) {
+        SCOPED_TRACE(n);
+        OESystem::OESkewGrid grid = MakeCubicGrid(n, SPACING, -0.5 * (n - 1u) * SPACING);
+        float* values = grid.GetValues();
+        for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 1.0f;
+
+        const double extent = n * SPACING;
+        EXPECT_NO_THROW(
+            interpolate_density_periodic(grid, 0.0, 0.0, 0.0, extent, extent, extent, -99.0));
+
+        // One node interval too many is still a different lattice at this shape,
+        // so widening the allowance to admit the grid's own extent has not cost
+        // the check its purpose.
+        EXPECT_THROW(interpolate_density_periodic(grid, 0.0, 0.0, 0.0,
+                                                  (n + 1u) * SPACING, extent, extent, -99.0),
+                     CellError);
+    }
 }
 
 TEST(GridOpsTest, InterpolateDensityPeriodicReturnsTheDefaultForANonFiniteCoordinate) {
@@ -499,8 +533,9 @@ TEST(GridOpsTest, WrapAndPadGridRejectsAnIncommensurateCellBeforeMovingTheMolecu
     // shift took the nullptr shortcut before any check ran: the caller got their
     // coordinates translated by a vector that is not a lattice vector of the map,
     // no padded grid, and no error. Here the wrong cell would move the atom to
-    // x = 25 - round((4.5 - 25)/12) * 12 = 1.0 -- inside the span with room for a
-    // 0.5 A padding -- where the correct cell puts it at 5.0.
+    // x = 25 + round((4.5 - 25)/12) * 12 = 25 + round(-1.71) * 12 = 1.0 -- inside
+    // the span with room for a 0.5 A padding -- where the correct cell puts it
+    // at 5.0.
     OESystem::OESkewGrid grid = MakeTestGrid();  // 10 nodes at spacing 1.0, extent 10
     auto mol = MakeTestMol(25.0, 4.5, 4.5);
 
