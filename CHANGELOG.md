@@ -92,8 +92,10 @@ This project is pre-1.0: breaking changes may land in a minor release.
   rejections leave the caller's molecule where it was. The interval-count and
   cell-edge limits are only known once the padded geometry has been derived,
   which is after the shift, so a molecule that needed a shift and is then
-  rejected there is left translated by whole cell vectors -- a
-  crystallographically equivalent position, not a corrupted one.
+  rejected there is left translated by whole cell vectors -- to within one float
+  store's rounding at the coarser of its old and new coordinates -- a position
+  crystallographically equivalent to the one its own float coordinates fixed,
+  not a corrupted one.
 - **`wrap_and_pad_grid` rejects a centroid shift it cannot store, and rejects it
   before moving any atom.** The shift is computed in double and each shifted
   coordinate was narrowed to a `float` as that atom was written back, with
@@ -101,15 +103,16 @@ This project is pre-1.0: breaking changes may land in a minor release.
   value outside the destination's range, and on this arm64 host it saturates to
   an infinity. How far the molecule starts from the grid centre is not what did
   it -- the shift brings the centroid back to within half a cell edge of that
-  centre whatever it started at, so an atom ends up near the grid's centre,
-  offset by its own displacement from the centroid. The infinity was written
-  when those together passed the float maximum. In the case this was reproduced
-  from the grid's centre was itself a quarter of a cell edge short of that
-  maximum, and what the caller then saw was the sizing guard below rejecting the
-  infinite extent the write produced -- an error raised over coordinates the call had
-  already replaced; and because that extent is measured over the heavy atoms
-  alone, an overflow confined to the rest of the molecule had nothing later in
-  the function looking at it. Every atom's shifted coordinate is now computed
+  centre from any starting distance at which a double still resolves the cell
+  edge, which the reproduction below is well inside, so an atom ends up near the
+  grid's centre, offset by its own displacement from the centroid. The infinity
+  was written when those together passed the float maximum. In the case this was
+  reproduced from, the grid's centre was itself a quarter of a cell edge short
+  of that maximum, and what the caller then saw was the sizing guard below
+  rejecting the infinite extent the write produced -- an error raised over
+  coordinates the call had already replaced; and because that extent is measured
+  over the heavy atoms alone, an overflow confined to the rest of the molecule
+  had nothing later in the function looking at it. Every atom's shifted coordinate is now computed
   before any of them is written, and a component that is not a finite value a
   `float` can hold raises `GridError` with no atom modified, so a shift that
   cannot be stored no longer leaves the molecule part-way through one. A shift

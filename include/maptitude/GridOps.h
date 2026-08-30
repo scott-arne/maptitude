@@ -102,6 +102,15 @@ OESystem::OESkewGrid* diff_to_calc(
  * 3. Otherwise, creates a new grid covering the atom range plus padding,
  *    filled by sampling the original grid with periodic wrapping.
  *
+ * Step 1's shift is round((centre - centroid) / edge) * edge, computed in
+ * double. It recentres as described while a double resolves the cell edge at
+ * the coordinates in play, and can fail to past that: a carbon at the float
+ * maximum, with an 11 A cell and the grid centred on the origin, lands 3.8e22 A
+ * from that centre rather than within 5.5 A of it. The function does not reject
+ * such an input, and no position it could deliver would be cell-accurate for
+ * one that coarse -- a single float step at that coordinate spans 2e31 A, so
+ * the caller's own coordinate does not place the molecule in a cell either.
+ *
  * The molecule is modified in-place (coordinates shifted). The cell edges, the
  * padding, the source grid's geometry, the cell's commensurability and the
  * heavy-atom count are all checked before the shift, so a throw from any of
@@ -115,9 +124,11 @@ OESystem::OESkewGrid* diff_to_calc(
  * while sizing and building the padded grid
  * come after the shift, and a molecule that needed one is left where the shift
  * put it. That place is the caller's own coordinates plus whole multiples of
- * the cell vectors, up to the rounding of storing them back as floats, so the
- * molecule sits at a crystallographically equivalent position rather than a
- * corrupted one; the shift is not rolled back.
+ * the cell vectors, up to the rounding of one float store at the caller's
+ * coordinate or at the value written back, whichever of the two is coarser, so
+ * the molecule sits at a position crystallographically equivalent to the one
+ * the caller's own float coordinates fixed rather than a corrupted one; the
+ * shift is not rolled back.
  *
  * @param grid CCP4 unit-cell grid.
  * @param mol Molecule to wrap (modified in-place).
