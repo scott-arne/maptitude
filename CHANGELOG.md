@@ -27,11 +27,18 @@ below is written for that reader.
   only. The first two write their results through out-parameters;
   `interpolate_density_at` is deliberately not exposed through SWIG.
 - `require_commensurate_cell` in `Grid.h`, the check the periodic entry points
-  make on the cell edges they are given, as a public function. A caller about to
-  sample a grid periodically can reject a cell that is not the grid's own
-  sampled extent before doing any other work — which is how `wrap_and_pad_grid`
-  now uses it, ahead of the centroid shift. C++ only; a Python caller gets the
-  behaviour through the functions that call it.
+  make on the cell edges they are given, as a public function. It accepts a cell
+  edge spanning a whole number of node intervals — `n` of them or `n - 1`,
+  according to whether the grid's closing plane repeats its first node — rejects
+  anything else with `CellError`, and returns the accepted count per axis as a
+  `CellPeriods`. A grid sampling more than one cell is rejected too: the counts
+  are the two a grid whose nodes span a single period can have, not every count
+  that could divide the node span. A caller about to sample a grid periodically
+  can reject an unusable cell before doing any other work, which is how
+  `wrap_and_pad_grid` uses it ahead of the centroid shift;
+  `interpolate_density_periodic_batch` keeps the returned periods so the check
+  runs once per batch rather than once per point. C++ only; a Python caller
+  gets the behaviour through the functions that call it.
 - `PAD_INTERVAL_COUNT_TOL` in `GridOps.h`, the relative tolerance
   `wrap_and_pad_grid` uses to recognise a whole number of node intervals in the
   extent it has to cover. It was a constant inside the function; it is public
@@ -86,8 +93,17 @@ below is written for that reader.
   readers share; the MRC `ORIGIN` record is that case and is recorded as such.
 - **Periodic interpolation is now genuinely periodic across the cell boundary.**
   `interpolate_density_periodic`, `interpolate_density_periodic_batch` and the
-  padded grid built by `wrap_and_pad_grid` treat node `n - 1` as adjacent to node
-  0 on each axis, so a point in an axis's final node interval blends the two.
+  padded grid built by `wrap_and_pad_grid` wrap on the period the caller's cell
+  names rather than on the node count: for a cell edge spanning `p` node
+  intervals, node `p - 1`'s upper neighbour is node 0, so a point in that last
+  interval blends the two. Which period applies is a real choice, not a
+  formality. On `1d26_2fofc.ccp4`, whose own cell is `p = n - 1 = 48` because
+  the reader appends a closing plane, sweeping `x` across that last interval
+  with `y` and `z` held 3.5 spacings above their first nodes gives `-0.0017`,
+  `0.0213`, `0.0442` and `0.0662` at a quarter, a half, three quarters and 0.99
+  of the way through; wrapping on `n` holds flat at `-0.0246` across all four,
+  the plateau produced by blending the duplicated closing plane against its
+  source.
   Previously the wrap produced coordinates one node interval wider than the
   domain the interpolator accepts, and every point in that final interval came
   back as `default_value`: on a 10-node, 1.0 A, cell-10 grid, `x` anywhere in
@@ -98,13 +114,15 @@ below is written for that reader.
   coordinate and also a finite one large enough that dividing it by the spacing
   overflows.
 - **The periodic entry points and `wrap_and_pad_grid` raise `CellError` for a
-  cell that is not the extent the grid samples**, meaning `n * spacing` per
-  axis. Making the last node adjacent to the first only reproduces the crystal
-  when one period of the map is exactly the nodes the grid holds; wrapping an
-  incommensurate cell returned density from the wrong place with nothing to mark
-  it as wrong. Callers passing a cell edge that is not the grid's own sampled
-  extent must now correct it. `wrap_and_pad_grid` makes the check before it
-  shifts the molecule, so a rejected cell leaves the caller's coordinates where
+  cell edge that is not a whole number of the grid's node intervals**, and that
+  number has to be the node count or one less — `n * spacing` or
+  `(n - 1) * spacing` per axis, according to whether the closing plane repeats
+  the first node. Making the last node adjacent to the first only reproduces
+  the crystal when the cell closes on nodes the grid holds; wrapping an
+  incommensurate cell returned density from the wrong place with nothing to
+  mark it as wrong. Callers passing a cell edge that is neither must now
+  correct it. `wrap_and_pad_grid` makes the check before it shifts the
+  molecule, so a rejected cell leaves the caller's coordinates where
   they were; an incommensurate cell that happened to need no padding previously
   translated the molecule by a vector that was not a lattice vector of the map
   and reported nothing.
@@ -332,8 +350,9 @@ geometry and stays self-consistent, so the grid still reads plausibly and fails
 only where the cell is used. Measured on a 4x6x8 grid spaced
 `(1.0, 0.5, 0.25)`, `SetDim(7, 6, 8)` alone left `get_unit_cell` reporting
 `a = 4.0` against a sampled extent of 7.0, and `interpolate_density_periodic`
-raised `CellError: ... got 4 A against 7 A (7 nodes at 1 A) ...`; reapplying
-`SetUnitCell` as above cleared it and the call returned. `SetMid` on its own does
+raised `CellError: ... got 4 A against 7 A (7 nodes at 1 A, every node
+distinct) or 6 A (6 intervals, ...) ...`; reapplying `SetUnitCell` as above
+cleared it and the call returned. `SetMid` on its own does
 not need that second call: on the same grid it left all three dims and spacings
 and the cell itself untouched, moving only the origin.
 
@@ -575,9 +594,10 @@ numbered here so the pin table below can cite them.
    for `3q9g` and 66 780 for `340d`. None of the three sources holds an exact
    zero either, so every padded node carries interpolated density. A default fill
    is distinguishable: it is exactly `0.0`, and at a point a quarter of a spacing
-   below `1d26`'s first node `interpolate_density` returns that `0.0` while
-   `interpolate_density_periodic` returns `-0.2315`. How many nodes that is a
-   change of is not measured: the box-edge anchor is no longer in the tree, so no
+   below `1d26`'s first node on all three axes `interpolate_density` returns
+   that `0.0` while `interpolate_density_periodic` returns `0.0420`. How many
+   nodes that is a change of is not measured: the box-edge anchor is no longer
+   in the tree, so no
    shipped entry point produces the value it would have written, and the figures
    this paragraph previously carried came from a Python reimplementation of the
    rebuild rather than from either path as shipped. This item moved no pin

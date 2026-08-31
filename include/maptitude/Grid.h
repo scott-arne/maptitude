@@ -163,7 +163,8 @@ double interpolate_density_at(const GridParams& gp, const float* values,
  * and all four come back with M + 1 nodes per axis -- so one period spans
  * `n_i - 1` intervals. Measured on all four, that appended plane is a bit-exact
  * copy of plane 0 on every axis: 0 differing values, out of 1225 to 7380 per
- * plane. All four report a cell of `(n_i - 1) * spacing_i` on all three axes.
+ * plane. All four report a cell within 8e-06 A of `(n_i - 1) * spacing_i` on all
+ * three axes, which is the interval count `llround` selects on each.
  * The reader does not do this unconditionally, and `tests/data/test_map.ccp4`
  * is the case that shows so: it stores 21 of its cell's 42 samples at
  * `NxSTART = -10` and 21 nodes come back, with no period at all.
