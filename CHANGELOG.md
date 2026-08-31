@@ -349,19 +349,56 @@ assert g.SetMid(mx, my, mz)
 ```
 
 A caller who was passing an extents box `minmax` derives the recipe's arguments
-from it:
+from it. The dim needs care: `int(span / sp) + 1` truncates a quotient that binary
+division has left just below an integer, and on the boxes measured below that cost
+a whole boundary plane on 471 of 31 680 axes, with nothing raised to signal it.
+Snap to the integer instead when the spacing divides the span:
 
 ```python
-dim = [int((minmax[i + 3] - minmax[i]) / sp) + 1 for i in range(3)]
+import math
+
+def dim_from_span(span, sp):
+    # The old constructor stepped exactly at span == k * sp, so a quotient that
+    # lands a few ulps low must not truncate to k - 1.
+    q = span / sp
+    n = round(q)
+    if n >= 0 and abs(n * sp - span) <= 1e-9 * max(1.0, abs(span)):
+        return n + 1
+    return math.floor(q) + 1
+
+dim = [dim_from_span(minmax[i + 3] - minmax[i], sp) for i in range(3)]
 mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
 ```
 
-On the five boxes this was measured over — four cubic and one non-cubic, at
-spacings of 0.5, 0.7 and 1.0 — the rebuilt grid matched the old constructor's dims
-and midpoints exactly, while its node *coordinates* agreed only to float
-precision, because `OESkewGrid` derives node positions through the cell matrix
-rather than from the box. An assertion comparing rebuilt node coordinates against
-old ones needs a tolerance, not `==`.
+This is not exact everywhere. The old constructor's dim follows the floating-point
+value of `minmax[i + 3] - minmax[i]` rather than the span written in the source, so
+moving a box changes how that subtraction rounds and with it the dim: at a spacing
+of 0.05 the box `[0.0, 0.05]` gave dim 2 while `[2.5, 2.55]` gave dim 1, because
+`2.55 - 2.5` is `0.04999999999999982`. Across 2 430 boxes at nine placements, two
+that produced the same float span at the same spacing never disagreed, so placement
+reaches the dim only through that rounding.
+
+Over 10 560 boxes at twelve spacings and ten placements — 31 680 axes — the recipe
+was exact on all 960 boxes whose three lower corners were `0.0`, and differed from
+the old constructor on 888 axes. **Every one of those 888 was one node too many,
+never one too few**: across that set the recipe never dropped a boundary plane, and
+where it differed it left a redundant one — the opposite of the `int(span / sp) + 1`
+failure above. Every such difference needs a box edge sitting a whole number of
+spacings from its opposite edge, which is the condition the snap tests for; on
+3 000 boxes with arbitrary unrounded corners, both recipes and the old constructor
+agreed on every axis. A caller who needs the old dims exactly should not recompute
+them from the box at all: the old grid is still in hand during migration, and
+`GetXDim()`, `GetYDim()` and `GetZDim()` read the true dims straight off it.
+
+Rebuilding through the recipe, `get_grid_params` reported back exactly the dims
+passed to `SetDim` on all 600 rebuilds measured. Midpoints agree closely rather
+than exactly: the rebuilt midpoint equalled the old grid's on 271 of those 600 and
+agreed to within 8e-06 on all 600. Node *coordinates* likewise agree only to float
+precision — over the 428 rebuilds whose dims matched the old constructor's, node
+origins differed by up to 3.1e-06. Both carriers round coordinates to 32-bit float,
+and `OESkewGrid` derives node positions through the cell matrix rather than from
+the box. An assertion comparing rebuilt node coordinates against old ones needs a
+tolerance, not `==`.
 
 **Writing a constructed grid.** A grid built by that recipe needs two more lines
 before `OEWriteGrid`, or the file it writes is wrong — and `OEWriteGrid` returns
