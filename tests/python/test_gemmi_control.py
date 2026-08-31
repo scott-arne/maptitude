@@ -1,0 +1,165 @@
+"""Independent index-correspondence control for the map readers.
+
+Every other check in this phase compares maptitude against OpenEye or against
+its own pins, so a shared misreading of CCP4/MRC would pass all of them. gemmi
+is an unrelated reader; agreeing with it node for node is the evidence that the
+grid maptitude scores against is the grid on disk.
+
+tests/data/test_map.ccp4 is deliberately not covered here. Its header NX (21)
+and MX (42) differ and its NxSTART is (-10, -10, -10): it is a sub-block of a
+larger sampled cell, so the dims relation asserted below does not apply to it.
+It is the isotropic-invariance fixture of the carrier phase, not a faithfulness
+fixture.
+"""
+
+import gemmi
+import pytest
+from openeye import oegrid
+
+import maptitude
+
+ASSETS = "tests/assets/mapq"
+
+# (asset, gemmi dims, OpenEye dims, cell a/b/c/alpha/beta/gamma). OpenEye
+# appends a closing plane on every axis, so its dims are gemmi's plus one on
+# each; the appended plane is a byte copy of plane 0, the periodic image.
+CASES = [
+    ("1d26_2fofc.ccp4", (48, 48, 24), (49, 49, 25),
+     (43.3, 43.3, 24.52, 90.0, 90.0, 90.0)),
+    ("340d_2fofc.ccp4", (60, 60, 36), (61, 61, 37),
+     (43.18, 43.18, 25.12, 90.0, 90.0, 90.0)),
+    ("3q9g_2fofc.ccp4", (36, 36, 60), (37, 37, 61),
+     (32.867, 32.867, 55.413, 90.0, 90.0, 90.0)),
+    ("390_emd_30342_A_z4.mrc", (89, 81, 63), (90, 82, 64),
+     (99.05701, 90.15301, 70.119, 90.0, 90.0, 90.0)),
+]
+
+
+def read_both(name):
+    path = f"{ASSETS}/{name}"
+    g = gemmi.read_ccp4_map(path)
+    oe = oegrid.OESkewGrid()
+    assert oegrid.OEReadGrid(path, oe), f"OEReadGrid failed on {name}"
+    return g, oe
+
+
+@pytest.mark.parametrize("name,gemmi_dims,oe_dims,cell", CASES)
+def test_dimensions_differ_by_exactly_the_closing_plane(name, gemmi_dims, oe_dims, cell):
+    """KNOWN GAP, closed by the map I/O phase.
+
+    OpenEye returns one node more per axis than the payload stores. Asserting
+    the difference exactly, rather than asserting equality and tolerating a
+    failure, makes this an executable statement of what the map I/O phase owes.
+    That phase replaces the reader and this assertion is expected to change
+    with it.
+    """
+    g, oe = read_both(name)
+    assert (g.grid.nu, g.grid.nv, g.grid.nw) == gemmi_dims
+    assert (oe.GetXDim(), oe.GetYDim(), oe.GetZDim()) == oe_dims
+    assert oe_dims == tuple(n + 1 for n in gemmi_dims)
+
+
+@pytest.mark.parametrize("name,gemmi_dims,oe_dims,cell", CASES)
+def test_per_axis_spacing_matches_gemmi(name, gemmi_dims, oe_dims, cell):
+    """maptitude's walked spacing is gemmi's cell edge over its node count.
+
+    This is the check the whole phase exists for: a scalar carrier could not
+    represent 1d26's (0.902083, 0.902083, 1.021667) without resampling one axis.
+    """
+    g, oe = read_both(name)
+    gp = maptitude.get_grid_params(oe)
+    uc = g.grid.unit_cell
+
+    assert gp.x_spacing == pytest.approx(uc.a / g.grid.nu, rel=1e-6)
+    assert gp.y_spacing == pytest.approx(uc.b / g.grid.nv, rel=1e-6)
+    assert gp.z_spacing == pytest.approx(uc.c / g.grid.nw, rel=1e-6)
+
+
+@pytest.mark.parametrize("name,gemmi_dims,oe_dims,cell", CASES)
+def test_unit_cell_matches_gemmi(name, gemmi_dims, oe_dims, cell):
+    g, oe = read_both(name)
+    uc = g.grid.unit_cell
+    assert (uc.a, uc.b, uc.c) == pytest.approx(cell[:3], rel=1e-6)
+    assert (uc.alpha, uc.beta, uc.gamma) == pytest.approx(cell[3:], rel=1e-6)
+
+    mine = maptitude.get_unit_cell(oe)
+    assert (mine.a, mine.b, mine.c) == pytest.approx(cell[:3], rel=1e-5)
+    assert (mine.alpha, mine.beta, mine.gamma) == pytest.approx(cell[3:], rel=1e-5)
+
+
+@pytest.mark.parametrize("name,gemmi_dims,oe_dims,cell", CASES)
+def test_values_agree_node_for_node(name, gemmi_dims, oe_dims, cell):
+    g, oe = read_both(name)
+    values = oe.GetValues()
+    nx, ny, _ = oe_dims
+
+    # Exact float equality: both readers decode the same IEEE-754 words, so any
+    # difference is a decode or an index error, not rounding. The comparison
+    # runs over the shared payload block [0,NX) x [0,NY) x [0,NZ) and nowhere
+    # else -- OpenEye's appended planes have no gemmi counterpart. The strides
+    # are literals so a failure is reproducible.
+    for iw in range(0, gemmi_dims[2], 7):
+        for iv in range(0, gemmi_dims[1], 5):
+            for iu in range(0, gemmi_dims[0], 3):
+                el = iw * nx * ny + iv * nx + iu
+                assert values[el] == g.grid.get_value(iu, iv, iw), (
+                    f"{name} disagrees at ({iu}, {iv}, {iw})"
+                )
+
+
+@pytest.mark.parametrize("name,gemmi_dims,oe_dims,cell", CASES)
+def test_the_closing_plane_repeats_the_first_on_every_axis(name, gemmi_dims, oe_dims, cell):
+    """A statement about OpenEye's reader convention, not about density.
+
+    Plane NX has no gemmi counterpart, so it cannot be compared across readers;
+    what can be checked is that it is the periodic image of plane 0.
+    """
+    _, oe = read_both(name)
+    values = oe.GetValues()
+    nx, ny, nz = oe_dims
+
+    for iz in range(0, nz, 11):
+        for iy in range(0, ny, 9):
+            base = iz * nx * ny + iy * nx
+            assert values[base + nx - 1] == values[base], (
+                f"{name} x closing plane differs at ({iy}, {iz})"
+            )
+    for iz in range(0, nz, 11):
+        for ix in range(0, nx, 9):
+            plane = iz * nx * ny
+            assert values[plane + (ny - 1) * nx + ix] == values[plane + ix], (
+                f"{name} y closing plane differs at ({ix}, {iz})"
+            )
+    for iy in range(0, ny, 11):
+        for ix in range(0, nx, 9):
+            row = iy * nx + ix
+            assert values[(nz - 1) * nx * ny + row] == values[row], (
+                f"{name} z closing plane differs at ({ix}, {iy})"
+            )
+
+
+def test_neither_reader_applies_the_origin_record():
+    """KNOWN GAP, closed by the map I/O phase.
+
+    390_emd_30342_A_z4.mrc is the only asset carrying a nonzero ORIGIN record
+    (header words 50-52). Measured against gemmi 0.7.5 and OpenEye 2026.1.0,
+    BOTH readers ignore it and place node 0 at the coordinate origin, so the
+    two agree with each other while both sit below the map's true position by
+    exactly ORIGIN. Agreement here is therefore not evidence of correctness --
+    it is a shared gap, recorded so the map I/O phase has an executable
+    statement of what it must change.
+    """
+    origin = (145.825, 112.825, 120.517)
+    g, oe = read_both("390_emd_30342_A_z4.mrc")
+
+    assert [g.header_float(i) for i in (50, 51, 52)] == pytest.approx(origin, abs=1e-3)
+
+    gemmi_node0 = g.grid.get_position(0, 0, 0)
+    assert (gemmi_node0.x, gemmi_node0.y, gemmi_node0.z) == pytest.approx(
+        (0.0, 0.0, 0.0), abs=1e-6
+    )
+
+    gp = maptitude.get_grid_params(oe)
+    assert (gp.x_origin, gp.y_origin, gp.z_origin) == pytest.approx(
+        (gemmi_node0.x, gemmi_node0.y, gemmi_node0.z), abs=1e-3
+    )
