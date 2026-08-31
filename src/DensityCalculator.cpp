@@ -501,7 +501,7 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
     // How far the map's sampling and the cell's may disagree before they are
     // taken to describe different samplings rather than the same one recorded
     // with rounding. Measured on 1d26, the disagreement is 2.5e-16 on a and
-    // 1.2e-16 on b but 7.8e-08 on c; the worst of the three still sits four
+    // 1.2e-16 on b but 7.4e-08 on c; the worst of the three still sits four
     // orders of magnitude inside this limit.
     constexpr double SAMPLING_AGREEMENT_TOLERANCE = 1e-3;
 
