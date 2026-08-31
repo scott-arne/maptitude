@@ -187,7 +187,8 @@ value = interpolate_density(grid, x, y, z)
 # Inspect grid geometry
 params = get_grid_params(grid)
 print(f"Dimensions: {params.x_dim} x {params.y_dim} x {params.z_dim}")
-print(f"Spacing: {params.spacing} A")
+print(f"Spacing: {params.x_spacing} x {params.y_spacing} x {params.z_spacing} A")
+print(f"First node: {params.x_origin}, {params.y_origin}, {params.z_origin}")
 ```
 
 ### Crystallographic Types
@@ -320,7 +321,7 @@ raised already.
 |----------------------------------------------------------------------|-------------------------------|
 | A non-finite or non-positive `resolution`, at any entry point         | `GridError`                   |
 | A `resolution` and unit cell needing a Miller-index box over 2e8 points | `GridError`                 |
-| A grid spacing at or above twice a cell edge                          | `GridError`                   |
+| A node interval at or above twice its own axis's cell edge            | `GridError`                   |
 | `n_scale_shells` outside `[1, 1000]`                                  | `GridError`                   |
 | A non-orthorhombic unit cell                                          | `CellError`                   |
 | A zero, negative, or non-finite cell edge to `wrap_and_pad_grid`      | `CellError`                   |
