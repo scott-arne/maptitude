@@ -259,6 +259,8 @@ The coordinate-to-index direction needs its own recipe, and the binning is the
 part that catches people out:
 
 ```python
+import math
+
 gp = maptitude.get_grid_params(grid)
 
 def x_idx(x):
@@ -290,7 +292,12 @@ No maptitude predicate reproduces that domain: `grid_contains(gp, x, y, z)`
 tests the node span rather than the box and is therefore narrower — on that grid
 it is `True` at `-1.5` and `1.5` and `False` at `-1.75`, where
 `SpatialCoordToGridIdx` still answered `(0, 2, 2)`. Code that needs the old
-domain has to widen the node span by half a spacing per face itself.
+domain has to widen the node span by half a spacing on each face itself, and
+close only the lower one. On three grids probed on all three axes, one of them
+with its origin away from zero, the accepted interval per axis was
+`[origin_i - s_i/2, origin_i + (n_i - 1) * s_i + s_i/2)`: the low face answered
+and the high face raised, the largest accepted coordinate sitting one float step
+below it.
 `grid_fractional_index`, which computes the unclamped fractional index, is C++
 only and is not on the Python surface.
 
@@ -402,21 +409,55 @@ maptitude API change. A grid that came from `OEReadGrid` does not need either
 line, so code that reads, scores and discards is unaffected; code that builds a
 grid and writes it is.
 
-**The break that is not a vanished method.** `GetSpacing()` still exists on
-`OESkewGrid` and still returns a single scalar, where there are now three
-spacings. Measured on three constructed grids whose smallest node interval was on
-x, on y and on z in turn, it returned the smallest of the three in every case —
-so it is right on an isotropic map and **wrong and silent** on an anisotropic
-one. Two items in this section fail without raising, and this is one; the other
-is the unfixed write path above, where `OEWriteGrid` returns `True` over a wrong
+**The breaks that are not vanished methods.** `GetSpacing()` and `SetSpacing()`
+both survive the carrier switch, and neither is safe on an anisotropic map: one
+reports a spacing that is not the map's, the other sets one that is not the one
+asked for. `SetSpacing()` damages an isotropic map too, by a second route — it
+sets the nodes correctly there and leaves the unit cell behind.
+
+`GetSpacing()` still returns a single scalar, where there are now three spacings.
+Measured on three constructed grids whose smallest node interval was on x, on y
+and on z in turn, it returned the smallest of the three in every case — so it is
+right on an isotropic map and **wrong and silent** on an anisotropic one.
+
+`SetSpacing()` is the same error in the write direction, and it returns `True`.
+It sets the *smallest* of the three intervals to the value asked for and scales
+the other two by that same factor: over seven calls spanning five geometries the
+result was the old spacings multiplied by `requested / min(old)` on every axis,
+to float precision. A 4x6x8 grid spaced `(1.0, 0.5, 0.25)` given
+`SetSpacing(0.5)` came back spaced `(2.0, 1.0, 0.5)` — dims and midpoint
+unchanged, every interval doubled, the node extent doubled from
+`(3.0, 2.5, 1.75)` to `(6.0, 5.0, 3.5)`.
+
+The cell is the second route. Its edges were unchanged after the call in all
+seven, so the five whose scale factor was not 1 ended up with a cell their nodes
+no longer tile: the `(1.0, 0.5, 0.25)` grid above kept a `(4.0, 3.0, 2.0)`
+cell against a sampled extent of `(8.0, 6.0, 4.0)`. That is the desync described
+under **Box geometry**, with the same consequence —
+`interpolate_density_periodic` raised `CellError` while `interpolate_density`
+returned without complaint. Both isotropic grids measured took this half of the
+break and not the other: on 4³ at 1.0 A, `SetSpacing(0.5)` moved the nodes the
+way `OEScalarGrid.SetSpacing` did on the same geometry — dims and midpoint kept,
+the interval halved — and still left a 4.0 A cell over 2.0 A of nodes.
+
+`OESkewGrid` carries no per-axis setter of any kind, so there is nothing narrower
+to reach for. Change a spacing by rebuilding the cell with the **Construction**
+recipe instead: on the 4x6x8 grid above, `SetUnitCell`
+with the wanted edges followed by `SetMid` gave the requested uniform 0.5 on all
+three axes and a cell the grid still tiles.
+
+Three breaks in this section fail without raising: these two spacing calls, and
+the unfixed write path above where `OEWriteGrid` returns `True` over a wrong
 file, so a migrator who verifies writes by checking that return value gets a
-false pass. Everywhere else in this section the break announces itself: the
-removed methods are absent from `OESkewGrid`, and an `OEScalarGrid` handed to a
-maptitude function raises `TypeError` at the boundary. Where a replacement's
-semantics differ from what it replaces, as under **Containment** and **Box
-geometry**, the item says so. Downstream code reading a spacing off a grid bound
-for maptitude must derive three, from `get_grid_params(grid).x_spacing` and its
-siblings.
+false pass. The other five items in this section are removals, and a removal
+announces itself: the method is absent from `OESkewGrid`, and an `OEScalarGrid`
+handed to a maptitude function raises `TypeError` at the boundary. Where a
+replacement's semantics differ from what it replaces, as under **Containment**
+and **Box geometry**, the item says so. Of the 46 public methods the two carriers
+share, three are named for a scalar spacing: the two above and `IsSpacingSet()`,
+which answered `True` on an anisotropic grid and so will not tell a caller the
+map has three. Downstream code reading a spacing off a grid bound for maptitude
+must derive three, from `get_grid_params(grid).x_spacing` and its siblings.
 
 ### Why recorded values moved
 
