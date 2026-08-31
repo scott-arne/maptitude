@@ -24,7 +24,7 @@
 /** @brief Major version number */
 #define MAPTITUDE_VERSION_MAJOR 0
 /** @brief Minor version number */
-#define MAPTITUDE_VERSION_MINOR 3
+#define MAPTITUDE_VERSION_MINOR 4
 /** @brief Patch version number */
 #define MAPTITUDE_VERSION_PATCH 0
 

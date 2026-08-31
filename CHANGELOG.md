@@ -5,10 +5,27 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
-## [Unreleased]
+## [0.4.0]
+
+The anisotropic-carrier release. Every density grid maptitude accepts, returns or
+stores is now an `OESkewGrid`, which carries a unit cell and so a separate node
+interval per axis, in place of `OEScalarGrid` and its one scalar spacing. On an
+isotropic map the two describe the same lattice; on an anisotropic one the scalar
+path applied a single spacing to all three axes, resampling values onto a lattice
+the experiment never produced. This is a breaking release across C++ signatures,
+the SWIG layer and the Python API, with no shim, no dual code path and no
+deprecation window. Downstream code that subscripts a grid, constructs one from
+an extents box, or reads a spacing off one is affected; **The Python break**
+below is written for that reader.
 
 ### Added
 
+- `get_unit_cell`, `grid_contains` and `same_grid_geometry` — the unit-cell
+  accessor, the in-grid predicate and the geometry comparison the per-axis
+  carrier needs. All three are reachable from Python.
+- `grid_node_origin`, `grid_fractional_index` and `interpolate_density_at`, C++
+  only. The first two write their results through out-parameters;
+  `interpolate_density_at` is deliberately not exposed through SWIG.
 - `require_commensurate_cell` in `Grid.h`, the check the periodic entry points
   make on the cell edges they are given, as a public function. A caller about to
   sample a grid periodically can reject a cell that is not the grid's own
@@ -23,6 +40,50 @@ This project is pre-1.0: breaking changes may land in a minor release.
 
 ### Changed
 
+- **`OESkewGrid` replaces `OEScalarGrid` as the density carrier** everywhere it
+  appeared: C++ signatures, the SWIG typemaps, and the Python API. There is no
+  overload taking the old type and no conversion layer, so every caller moves at
+  once. The `OEScalarGrid` SWIG machinery is deleted.
+- **`GridParams` carries `x_spacing`, `y_spacing` and `z_spacing`; the scalar
+  `spacing` field is gone.** Code that read `gp.spacing` reads three fields now,
+  and code that assumed one spacing has to decide which axis it meant.
+- **`vector_to_grid` raises `GridError` when the vector's length is not the
+  grid's element count**, where it previously copied the shorter of the two and
+  reported nothing. Too short, too long and empty all raise
+  (`tests/cpp/test_grid_ops.cpp:351`).
+- **`MAX_FFT_GRID_POINTS` (`2e8`) bounds the calculated-density FFT sampling
+  grid.** A request whose per-axis counts multiply out past that now raises
+  instead of attempting the allocation.
+- **A spacing that spans the cell edge in one node interval is still accepted,
+  but the accepting case is now stated as such** — the fixture that pinned it is
+  `DensityCalculatorValidationTest.StillAcceptsOneNodeIntervalSpanningTheCellEdge`
+  (`tests/cpp/test_input_validation.cpp:725`). This is a narrowing of what the
+  suite claims, not of what the library accepts.
+- **`combine_maps` rejects grids whose spacing differs by less than the old
+  tolerance.** The geometry gate is `same_grid_geometry`, which compares the
+  derived per-axis geometry rather than a single spacing within a loose
+  tolerance, so a pair that used to combine can now raise
+  (`GridOpsTest.CombineRejectsGridsWhoseSpacingDiffersBelowTheOldTolerance`).
+- **The test suite gained an independent third-party reader as a control.**
+  `tests/python/test_gemmi_control.py` decodes the same CCP4/MRC assets with
+  gemmi and compares them to what maptitude reads through OpenEye, which is the
+  only check in the suite that can see a format misreading maptitude and OpenEye
+  share. gemmi is a **dev/test-only** dependency: it is declared in the `dev`
+  extra and the wheel's runtime dependencies are unchanged. CI installs it in the
+  three `Test wheel` steps of `.github/workflows/build-wheels.yml`, which
+  previously installed only `pytest`, `numpy` and the built wheel and would have
+  failed collection on a clean runner. That workflow runs on `v*` tags, so the
+  gap was latent until a release tag was pushed. On the four assets it covers the
+  control rules out a shared format misreading insofar as it shows in the dims,
+  the unit cell and the node values it walks; an off-by-one at the closing plane;
+  a node origin misplaced by more than 1e-3 A on `390_emd_30342_A_z4.mrc`, the
+  only asset its origin test reads; and an x/y transposition of the grid *dims*
+  on that same asset, the only one whose x and y dims differ. It does **not**
+  rule out an x/y transposition of the grid *spacings*: on three of the four
+  assets the x and y spacings are exactly equal, and on the fourth they differ by
+  1.0e-08 relative, a hundredfold under the `rel=1e-6` the spacing test asserts
+  at, so such a swap passes the module. Nor does it catch a misplacement both
+  readers share; the MRC `ORIGIN` record is that case and is recorded as such.
 - **Periodic interpolation is now genuinely periodic across the cell boundary.**
   `interpolate_density_periodic`, `interpolate_density_periodic_batch` and the
   padded grid built by `wrap_and_pad_grid` treat node `n - 1` as adjacent to node
@@ -120,11 +181,220 @@ This project is pre-1.0: breaking changes may land in a minor release.
 
 ### Removed
 
+- **`OEGridSameGeometry` as the geometry comparison.** `same_grid_geometry`
+  replaces it and is not a drop-in: where the old check returned `false` for a
+  grid whose geometry cannot be derived, the new one raises. Measured, a grid
+  built with a zero unit cell — whose node coordinates come back `nan` — gives
+  `GridError: Grid element 0 (walking axis x) has a non-finite x coordinate
+  (nan); the geometry cannot be derived`. `GridError` derives from
+  `MaptitudeError`, which derives from `Exception` and **not** from
+  `RuntimeError`, so a handler catching `RuntimeError` will not catch it.
+- **The implicit `OEScalarGrid` argument conversion.** Passing an `OEScalarGrid`
+  to a maptitude function raises at the boundary instead of being converted:
+  measured, `TypeError: Expected OESkewGrid-derived object.`
 - `grid_bounds`, a bounding-box helper added earlier in this unreleased cycle and
   withdrawn before release. It reported the scalar carrier's box — half a node
   interval outside the first and last nodes on each face — which is not the
   domain any maptitude function interpolates over. Use `grid_contains`, or
   `get_grid_params` and the node span.
+
+The Python-surface removals that follow from the carrier switch are grouped in
+**The Python break** below rather than repeated here.
+
+### Fixed
+
+- **`wrap_and_pad_grid` aimed the centroid shift half a node interval off centre
+  on every axis.** The padded grid is now centred where the arithmetic intended.
+  The value this moves is the shift asserted by
+  `GridOpsTest.WrapAndPadGridShiftsCoordinates`, whose tolerance was exactly the
+  size of the error.
+
+### The Python break
+
+The carrier switch removes five classes of method from the grid objects a Python
+caller handles, because `OESkewGrid` does not have them. Each item below is the
+call that stopped existing and the path that replaces it. Every absence in this
+section was confirmed by attribute lookup against `OESkewGrid` on OpenEye
+2026.1.0; every replacement was confirmed by running it.
+
+**Value access.** `__getitem__`, `__setitem__`, `__iter__`, `GetValue`,
+`SetValue`, `SetAll` and `CheckValues` are gone. Subscripting is the most common
+downstream idiom this release breaks — `grid[i]` now raises `TypeError:
+'OESkewGrid' object is not subscriptable`. Read through `GetValues()` and write
+through `SetValues(OEFloatArray, int)`, against the x-fastest linearization
+`el = iz * n_x * n_y + iy * n_x + ix`:
+
+```python
+# read: hoist GetValues() out of the loop -- it returns a list copy of the
+# whole grid, so calling it per element copies the grid per element, and
+# writing into the copy does not touch the grid.
+values = grid.GetValues()
+for iz in range(n_z):
+    for iy in range(n_y):
+        for ix in range(n_x):
+            v = values[iz * n_x * n_y + iy * n_x + ix]
+
+# write: fill one OEFloatArray, then one SetValues call.
+arr = oechem.OEFloatArray(grid.GetSize())
+for i in range(grid.GetSize()):
+    arr[i] = compute(i)
+assert grid.SetValues(arr, grid.GetSize())
+```
+
+**Containment.** `IsInGrid` is gone. `grid_contains` replaces it and is a
+narrower predicate — see the in-grid domain item under **Why recorded values
+moved** — so it is not a rename.
+
+**Index and coordinate maps.** `GridIdxToElement`, `GridIdxToSpatialCoord`,
+`SpatialCoordToElement`, `SpatialCoordToGridIdx`, `GetXIdx`, `GetXInc` and their
+`GetY`/`GetZ` counterparts are gone. Derive the mapping from
+`get_grid_params(grid)`, whose per-axis origin, dim and spacing give node
+positions directly, and use the linearization above.
+
+**Box geometry.** The `GetXMin`/`GetXMax` family, `SetXDim`, `SetXMid` and
+`IsXMidSet`, with their `Y` and `Z` counterparts, are gone. The node span
+`[origin_i, origin_i + (n_i - 1) * spacing_i]` from `get_grid_params` replaces
+the box, and it is not the same region: the old box lay half a node interval
+outside the first and last nodes on each face.
+
+**Construction.** Both `OEScalarGrid` constructors are gone — the extents-box
+form `OEScalarGrid(OEDoubleArray, spacing)` and the seven-argument
+`OEScalarGrid(nx, ny, nz, mx, my, mz, spacing)`. One recipe replaces both:
+
+```python
+g = oegrid.OESkewGrid()
+assert g.SetDim(nx, ny, nz)
+assert g.SetUnitCell(nx * sx, ny * sy, nz * sz, 90.0, 90.0, 90.0, nx, ny, nz)
+assert g.SetMid(mx, my, mz)
+```
+
+A caller who was passing an extents box `minmax` derives the recipe's arguments
+from it:
+
+```python
+dim = [int((minmax[i + 3] - minmax[i]) / sp) + 1 for i in range(3)]
+mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
+```
+
+On the five boxes this was measured over — four cubic and one non-cubic, at
+spacings of 0.5, 0.7 and 1.0 — the rebuilt grid matched the old constructor's dims
+and midpoints exactly, while its node *coordinates* agreed only to float
+precision, because `OESkewGrid` derives node positions through the cell matrix
+rather than from the box. An assertion comparing rebuilt node coordinates against
+old ones needs a tolerance, not `==`.
+
+**Writing a constructed grid.** A grid built by that recipe needs two more lines
+before `OEWriteGrid`, or the file it writes has its origin one node interval too
+high on each axis — and `OEWriteGrid` returns `True` either way:
+
+```python
+assert g.SetUnitCell(2 * nx * sx, 2 * ny * sy, 2 * nz * sz, 90.0, 90.0, 90.0,
+                     2 * nx, 2 * ny, 2 * nz)   # doubled cell, unchanged spacing
+assert g.SetSpaceGroup(1)                      # P1
+```
+
+Setting a space group makes the writer emit the exact node index instead of
+`node0 / spacing + 1`; doubling the cell and its division count together keeps
+the reader from re-expanding the map by one node per axis, and leaves the grid in
+memory unchanged. This is an OpenEye write-path behaviour that the carrier switch
+exposes, not a maptitude API change. A grid that came from `OEReadGrid` does not
+need either line, so code that reads, scores and discards is unaffected; code
+that builds a grid and writes it is.
+
+**The break that is not a vanished method.** `GetSpacing()` still exists on
+`OESkewGrid` and still returns a single scalar, where there are now three
+spacings. Measured on three constructed grids whose smallest node interval was on
+x, on y and on z in turn, it returned the smallest of the three in every case —
+so it is right on an isotropic map and **wrong and silent** on an anisotropic
+one. This is the only item in this section that fails without raising. Downstream
+code reading a spacing off a grid bound for maptitude must derive three, from
+`get_grid_params(grid).x_spacing` and its siblings.
+
+### Why recorded values moved
+
+Nine corrections account for every recorded value this release moves. They are
+numbered here so the pin table below can cite them.
+
+1. **The carrier switch itself.** On an anisotropic map the scalar path applied
+   one spacing to all three axes, resampling values onto a lattice the experiment
+   never produced and drifting node positions along the coarser axes. Per-axis
+   sampling removes both. Scores on an anisotropic map move; scores on an
+   isotropic map do not.
+2. **The in-grid domain narrowed.** `grid_contains` is a true fractional-index
+   test where bounding-box `IsInGrid` was not, so the outer half-spacing shell is
+   now outside the grid, and the six prechecks in `src/Metric.cpp` reject points
+   they used to accept.
+3. **Interpolation is maptitude's own trilinear kernel, with the node span closed
+   on the far face.** `interpolate_density` returns a blend at `f == n - 1` where
+   OpenEye returned the caller's default. The blend also runs in `double` where
+   the OpenEye call took `float` coordinates and returned a `float`, so every
+   interpolated value moves at roughly 1e-7 relative — including on an isotropic
+   map.
+4. **The Q-score radial step** is taken from the smallest of the three node
+   intervals rather than from one scalar spacing.
+5. **The calculated-density FFT sampling counts** are derived per axis, as
+   `n_i = round(edge_i / spacing_i)`.
+6. **The calculated-density FFT sampling origin** is the first node rather than
+   the bounding-box edge — a half-spacing move.
+7. **`wrap_and_pad_grid`'s padding decision is tested against the node bounds**
+   `[origin_i, origin_i + (n_i - 1) * spacing_i]` rather than the half-spacing
+   box. Relative to the old box each edge moves *inward* by half a spacing, so the
+   tested region shrinks by a full node interval per axis and `needs_pad` can only
+   flip `false` to `true`, never the reverse. **No case in the test suite
+   flipped.** The three tests that encode the decision as a literal assertion —
+   `WrapAndPadGridNoShiftNeeded` (`false` before, `false` after),
+   `WrapAndPadGridCreatesPaddedGrid` (`true`, `true`) and
+   `WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded` (`false`, `false`) — all
+   decide as they did before. This item moved no pin: no pin-producing path
+   reaches the function.
+8. **Both periodic wraps anchor at the node origin rather than the bounding-box
+   edge**, a half-spacing shift in where the periodic image lands. The two sites
+   are `interpolate_density_periodic` and the padded rebuild inside
+   `wrap_and_pad_grid`. The second is the one with a visible consequence: the
+   box-edge anchor pushed part of the padded grid outside the source and filled
+   it with the default, so a padded grid now carries real density where it
+   carried zeros. Over the three committed validation structures the counts of
+   values that changed from zero to data were **1 932 of 32 928**, **525 of
+   18 375**, and **0 of 66 096** — on the third structure the anchor move changed
+   nothing. These three figures are derived from a Python reimplementation of the
+   rebuild over those three assets, not measured against the shipped C++ path.
+   This item moved no pin either, for the same reason as item 7.
+9. **`wrap_and_pad_grid` centred the molecule half a spacing off on every axis** —
+   the bug fix recorded under **Fixed** above. Unpinned, like items 7 and 8.
+
+**The pins that moved.** Six values in `tests/cpp/pin_values.h` changed, and no
+others. The two Q-score pins are read on `tests/data/test_map.ccp4`, which is
+exactly isotropic at 0.5 A on all three axes, so items 1, 4 and 5 cannot move a
+value there; the size of the move is the float-to-double residual of item 3. The
+four `SHELLS4` pins come from a fixture that differs from the single-shell
+`FC_ORTHORHOMBIC` case in one argument, `n_scale_shells` 4 against 1, and the
+per-shell branch is the only place that samples the observed map from the FFT
+origin item 6 moved; the single-shell pins beside it did not move.
+
+| pin | from | to | relative change | correction |
+|---|---|---|---|---|
+| `QSCORE_CARBON_DEFAULT` | `0.96296527998254844` | `0.96296527987682856` | `-1.1e-10` | 3 |
+| `QSCORE_CARBON_SIGMA08` | `0.9943922001151142` | `0.99439220042494902` | `+3.1e-10` | 3 |
+| `FC_ORTHORHOMBIC_SHELLS4_SUM` | `13893.220623970032` | `13937.487342774868` | `+0.32%` | 6 |
+| `FC_ORTHORHOMBIC_SHELLS4_SUM_SQ` | `12354.318438706807` | `12433.449584055335` | `+0.64%` | 6 |
+| `FC_ORTHORHOMBIC_SHELLS4_MIN` | `0.82632350921630859` | `0.82111889123916626` | `-0.63%` | 6 |
+| `FC_ORTHORHOMBIC_SHELLS4_INDEX_MOMENT` | `-92984.176744340395` | `-115006.82435095034` | `-23.7%` | 6 |
+
+`EDIAM_*`, `COVERAGE_*` and the `FC_*` pins outside the `SHELLS4` group did not
+move, so this release does not shift every metric. No Tier 1 analytic test was
+repinned: `tests/cpp/test_metric_analytic.cpp` reads no pin, and its assertions
+pass unchanged. A value moving below a characterization test's tolerance is not
+visible in this table — `tests/cpp/grid_summary.h` compares at `1e-6` — so "no
+pin moved" means "no pin moved by more than that", not "nothing changed".
+
+### Performance
+
+Interpolation was characterized on the 1d26 asset in a Release build: mean
+**8.283 ms** for the OpenEye kernel against **7.542 ms** for maptitude's, a mean
+ratio of **1.0995** over 15 samples, with roughly ±10% run-to-run noise. The
+ratio sits inside that noise band, so the measurement supports **no regression,
+and roughly 10% faster on this asset** — it does not support a precise
+multiplier.
 
 ## [0.3.0]
 

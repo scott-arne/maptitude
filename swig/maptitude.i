@@ -645,7 +645,7 @@ CellError = _maptitude.CellError
 // Version macros
 // ============================================================================
 #define MAPTITUDE_VERSION_MAJOR 0
-#define MAPTITUDE_VERSION_MINOR 3
+#define MAPTITUDE_VERSION_MINOR 4
 #define MAPTITUDE_VERSION_PATCH 0
 
 // ============================================================================
@@ -1429,5 +1429,5 @@ def get_scattering_factor_table():
     return entries, len(entries)
 
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 %}
