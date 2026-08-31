@@ -568,12 +568,20 @@ numbered here so the pin table below can cite them.
    `wrap_and_pad_grid`. The second is the one with a visible consequence: the
    box-edge anchor pushed part of the padded grid outside the source and filled
    it with the default, so a padded grid now carries real density where it
-   carried zeros. Over the three committed validation structures the counts of
-   values that changed from zero to data were **1 932 of 32 928**, **525 of
-   18 375**, and **0 of 66 096** — on the third structure the anchor move changed
-   nothing. These three figures are derived from a Python reimplementation of the
-   rebuild over those three assets, not measured against the shipped C++ path.
-   This item moved no pin either, for the same reason as item 7.
+   carried zeros. Measured on the three committed validation structures, read as
+   `tests/python/test_validation.py` reads them and then padded by the shipped
+   C++ `wrap_and_pad_grid`, **no node of any of the three padded grids is
+   default-filled**: 0 values of exactly zero out of 32 422 for `1d26`, 20 592
+   for `3q9g` and 66 780 for `340d`. None of the three sources holds an exact
+   zero either, so every padded node carries interpolated density. A default fill
+   is distinguishable: it is exactly `0.0`, and at a point a quarter of a spacing
+   below `1d26`'s first node `interpolate_density` returns that `0.0` while
+   `interpolate_density_periodic` returns `-0.2315`. How many nodes that is a
+   change of is not measured: the box-edge anchor is no longer in the tree, so no
+   shipped entry point produces the value it would have written, and the figures
+   this paragraph previously carried came from a Python reimplementation of the
+   rebuild rather than from either path as shipped. This item moved no pin
+   either, for the same reason as item 7.
 9. **`wrap_and_pad_grid` centred the molecule half a spacing off on every axis** —
    the bug fix recorded under **Fixed** above. Unpinned, like items 7 and 8.
 
