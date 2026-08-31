@@ -372,8 +372,9 @@ mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
 
 This is not exact everywhere. The old constructor's dim follows the floating-point
 value of `minmax[i + 3] - minmax[i]` rather than the span written in the source, so
-moving a box changes how that subtraction rounds and with it the dim: at a spacing
-of 0.05 the box `[0.0, 0.05]` gave dim 2 while `[2.5, 2.55]` gave dim 1, because
+where the box sits reaches the dim through the rounding of that subtraction: at a
+spacing of 0.05 the box `[0.0, 0.05]` gave dim 2 while `[2.5, 2.55]` gave dim 1,
+because
 `2.55 - 2.5` is `0.04999999999999982`. Across 2 430 boxes at nine placements, two
 that produced the same float span at the same spacing never disagreed, so placement
 reaches the dim only through that rounding.
