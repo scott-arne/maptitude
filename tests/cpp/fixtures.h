@@ -38,9 +38,10 @@ static inline OEChem::OEGraphMol MakeAtomMol(unsigned int atomic_num, double x, 
 /// the first at `-half_width` and the last at `-half_width + (n - 1) * spacing`.
 ///
 /// That last node is `+half_width` only when the spacing divides `2 *
-/// half_width`. Every geometry under tests/cpp satisfies that except one,
-/// reached through `MakeGaussianGrid(..., HALF_WIDTH, c.spacing)` at
-/// test_metric_analytic.cpp:203 with `HALF_WIDTH = 4.0` and `c.spacing = 3.5`:
+/// half_width`. Every half_width/spacing pair reaching this builder under
+/// tests/cpp satisfies that except one, passed to
+/// `MakeGaussianGrid(..., HALF_WIDTH, c.spacing)` at
+/// test_metric_analytic.cpp:204 with `HALF_WIDTH = 4.0` and `c.spacing = 3.5`:
 /// it gives 3 nodes running -4.0 to 3.0, so the far face is never reached. That
 /// geometry is deliberate -- the test asserts that an adaptive Q-score sweep at
 /// a step this coarse raises -- so do not "fix" it here.

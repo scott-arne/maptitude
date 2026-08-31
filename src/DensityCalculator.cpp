@@ -497,11 +497,12 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
     // edges and the map's per-axis intervals. Deriving them from one scalar
     // spacing resampled one of the three axes: on 1d26 the header says
     // 48x48x24 and a scalar spacing gives 48x48x27.
-    //
+
     // How far the map's sampling and the cell's may disagree before they are
     // taken to describe different samplings rather than the same one recorded
-    // with rounding. On 1d26 the recorded edges and intervals agree to float
-    // precision on all three axes, which is orders of magnitude inside this.
+    // with rounding. Measured on 1d26, the disagreement is 2.5e-16 on a and
+    // 1.2e-16 on b but 7.8e-08 on c; the worst of the three still sits four
+    // orders of magnitude inside this limit.
     constexpr double SAMPLING_AGREEMENT_TOLERANCE = 1e-3;
 
     const GridParams obs_gp = get_grid_params(obs_grid);
