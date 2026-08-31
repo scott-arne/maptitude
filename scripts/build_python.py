@@ -386,6 +386,40 @@ def get_version_from_pyproject(pyproject_path):
     return None
 
 
+def find_swig_lib_dir(swig_exe, verbose=False):
+    """Locate the SWIG library directory belonging to one SWIG executable.
+
+    ``find_package(SWIG)`` resolves ``SWIG_DIR`` on its own, so pinning only
+    ``SWIG_EXECUTABLE`` can pair one installation's binary with another's
+    ``.swg`` files. That pairing still prints the pinned binary's version
+    banner into the generated proxy while generating the body from the other
+    installation's typemaps, which is not something a version check on the
+    output can see.
+
+    :param swig_exe: Path to the SWIG executable to interrogate.
+    :param verbose: Print the command before running.
+    :returns: Path to the directory holding ``swig.swg``, or None if the
+        executable could not be run or reported no usable directory.
+    """
+    try:
+        result = run_command(
+            [str(swig_exe), '-swiglib'], capture_output=True, check=True,
+            verbose=verbose,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+    # -swiglib prints one directory per line: a single line for both SWIG
+    # installations on this host, but SWIG can report a search list. Take the
+    # first entry that actually holds swig.swg, which is the file FindSWIG
+    # searches these directories for.
+    for line in result.stdout.splitlines():
+        candidate = line.strip()
+        if candidate and (Path(candidate) / 'swig.swg').is_file():
+            return Path(candidate)
+    return None
+
+
 def build_wheel(project_dir, python_exe, openeye_root, openeye_info, config,
                 cmake_defines=None, verbose=False):
     """Build the binary wheel for the project.
@@ -438,6 +472,17 @@ def build_wheel(project_dir, python_exe, openeye_root, openeye_info, config,
     swig_exe = next((p for p in swig_candidates if p.exists()), None)
     if swig_exe:
         cmd.extend(['-C', f'cmake.define.SWIG_EXECUTABLE={swig_exe.as_posix()}'])
+        # Pin the library from the same installation as the executable. CMake
+        # resolves SWIG_DIR independently and caches it, so the two can end up
+        # from different SWIG versions on a host that has more than one.
+        swig_dir = find_swig_lib_dir(swig_exe, verbose=verbose)
+        if swig_dir:
+            cmd.extend(['-C', f'cmake.define.SWIG_DIR={swig_dir.as_posix()}'])
+        else:
+            print_step(
+                f"Could not read the SWIG library directory from {swig_exe}; "
+                "leaving SWIG_DIR to CMake"
+            )
 
     # Add any extra CMake defines from config
     for key, value in config.get('extra-cmake-defines', {}).items():
