@@ -392,7 +392,7 @@ what did the work — the predicate fired on all 251 differences there, while on
 9 of those spans were an exact multiple. A span `1e-10` short of one spacing is
 already inside the band, because the band is never narrower than `1e-9`: at
 `sp = 1.0` the box `[0.0, 0.9999999999]` gives dim 1 from the old constructor and
-2 from the recipe. Where the span misses the band the recipe reduces to
+2 from the recipe. Where a positive span misses the band the recipe reduces to
 `int(span / sp) + 1` — over 3 000 boxes with arbitrary unrounded corners the
 predicate never fired once, and both recipes agreed with the old constructor on
 every axis. A caller who needs the old dims exactly should not recompute
