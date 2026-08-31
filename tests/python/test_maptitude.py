@@ -188,8 +188,8 @@ def test_density_scorer_rscc():
     def make_grid():
         """A 10x10x10 grid at a 1.0 A node interval, centered on (-5, -5, -5).
 
-        OESkewGrid's only constructor is the default one, so the dims, node
-        interval and midpoint go in through setters. The geometry is the one
+        No OESkewGrid constructor Python exposes takes dims, a node interval or
+        a midpoint, so those go in through setters. The geometry is the one
         the scalar seven-argument form produced from those same arguments:
         nodes run from (-9.5, -9.5, -9.5) to (-0.5, -0.5, -0.5).
         """

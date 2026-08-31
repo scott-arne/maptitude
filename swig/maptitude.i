@@ -315,6 +315,8 @@ static PyObject* _maptitude_wrap_as_oe_skew_grid(OESystem::OESkewGrid* grid) {
         PyErr_Clear();
         Py_DECREF(oe_grid);
         delete grid;
+        PyErr_SetString(PyExc_RuntimeError,
+                        "the constructed OESkewGrid has no 'this' attribute");
         return NULL;
     }
 
@@ -357,6 +359,13 @@ static PyObject* _maptitude_wrap_as_oe_skew_grid(OESystem::OESkewGrid* grid) {
         delete grid;
         PyErr_SetString(PyExc_RuntimeError, e.what());
         return NULL;
+    } catch (...) {
+        Py_DECREF(thisAttr);
+        Py_DECREF(oe_grid);
+        delete grid;
+        PyErr_SetString(PyExc_RuntimeError,
+                        "unknown C++ exception while copying the grid");
+        return NULL;
     }
 
     /* Validate the copy. operator= routes through OpenEye's geometry
@@ -382,6 +391,9 @@ static PyObject* _maptitude_wrap_as_oe_skew_grid(OESystem::OESkewGrid* grid) {
     } catch (const std::exception& e) {
         copy_ok = false;
         detail = e.what();
+    } catch (...) {
+        copy_ok = false;
+        detail = "unknown C++ exception";
     }
     if (!copy_ok) {
         char errmsg[512];
