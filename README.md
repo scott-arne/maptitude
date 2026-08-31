@@ -46,8 +46,8 @@ from maptitude import fc_density, rscc, UnitCell, parse_symops
 mol = oechem.OEGraphMol()
 oechem.OEReadMolecule(oechem.oemolistream("model.pdb"), mol)
 
-obs_grid = oegrid.OEScalarGrid()
-oegrid.OEReadGrid(obs_grid, "2fofc.map")
+obs_grid = oegrid.OESkewGrid()
+oegrid.OEReadGrid("2fofc.map", obs_grid)
 
 # Score the fit
 result = rscc(mol, obs_grid, 2.0)

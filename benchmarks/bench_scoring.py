@@ -56,12 +56,13 @@ def _run_dataset(label: str, mol, obs_grid, resolution, cell_dims=None,
         mpt_fc = mpt.fc_density(
             mol, obs_grid, resolution, cell, k_sol=0.35, symops=symops)
     else:
-        # EM — use simple pseudo-cell from grid dimensions
-        sp = obs_grid.GetSpacing()
+        # EM — use simple pseudo-cell from grid dimensions. Each edge is the
+        # extent of its own axis, so each takes that axis's node interval.
+        gp = mpt.get_grid_params(obs_grid)
         pseudo_cell = (
-            obs_grid.GetXDim() * sp,
-            obs_grid.GetYDim() * sp,
-            obs_grid.GetZDim() * sp,
+            gp.x_dim * gp.x_spacing,
+            gp.y_dim * gp.y_spacing,
+            gp.z_dim * gp.z_spacing,
         )
         bms_fc = bms_create.fc_density(
             mol, obs_grid, resolution, pseudo_cell, k_sol=0.0)

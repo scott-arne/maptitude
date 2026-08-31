@@ -12,8 +12,8 @@ Example usage::
     # Load structure and map
     mol = oechem.OEGraphMol()
     oechem.OEReadMolecule(oechem.oemolistream("model.pdb"), mol)
-    obs_grid = oegrid.OEScalarGrid()
-    oegrid.OEReadGrid(obs_grid, "2fofc.map")
+    obs_grid = oegrid.OESkewGrid()
+    oegrid.OEReadGrid("2fofc.map", obs_grid)
 
     # Define crystal form
     cell = UnitCell(50.0, 60.0, 70.0, 90.0, 90.0, 90.0)
@@ -576,6 +576,7 @@ from .maptitude import (
     CoverageOptions,
     DensityScoreResult,
     GridParams,
+    UnitCellParams,
     MapOp_ADD,
     MapOp_SUBTRACT,
     MapOp_MIN,
@@ -599,6 +600,9 @@ from .maptitude import (
 
     # Grid utility functions
     get_grid_params,
+    get_unit_cell,
+    grid_contains,
+    same_grid_geometry,
     interpolate_density,
     interpolate_density_batch,
     interpolate_density_periodic,
@@ -671,6 +675,7 @@ __all__ = [
     "RadialSampling",
     "DensityScoreResult",
     "GridParams",
+    "UnitCellParams",
     "MapOp",
     # Classes
     "DensityCalculator",
@@ -682,6 +687,9 @@ __all__ = [
     "coverage",
     # Grid utilities
     "get_grid_params",
+    "get_unit_cell",
+    "grid_contains",
+    "same_grid_geometry",
     "interpolate_density",
     "interpolate_density_batch",
     "interpolate_density_periodic",

@@ -185,18 +185,33 @@ def test_density_scorer_rscc():
     coords = oechem.OEFloatArray([0.0, 0.0, 0.0])
     mol.SetCoords(atom, coords)
 
+    def make_grid():
+        """A 10x10x10 grid at a 1.0 A node interval, centered on (-5, -5, -5).
+
+        OESkewGrid's only constructor is the default one, so the dims, node
+        interval and midpoint go in through setters. The geometry is the one
+        the scalar seven-argument form produced from those same arguments:
+        nodes run from (-9.5, -9.5, -9.5) to (-0.5, -0.5, -0.5).
+        """
+        grid = oegrid.OESkewGrid()
+        assert grid.SetDim(10, 10, 10)
+        assert grid.SetUnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0, 10, 10, 10)
+        assert grid.SetMid(-5.0, -5.0, -5.0)
+        return grid
+
     # Create observed and calculated grids
-    obs_grid = oegrid.OEScalarGrid(10, 10, 10, -5.0, -5.0, -5.0, 1.0)
-    calc_grid = oegrid.OEScalarGrid(10, 10, 10, -5.0, -5.0, -5.0, 1.0)
+    obs_grid = make_grid()
+    calc_grid = make_grid()
 
     # Fill both grids with a Gaussian centered at the atom
     import math
+    values = oechem.OEFloatArray(obs_grid.GetSize())
     for i in range(obs_grid.GetSize()):
         fx, fy, fz = obs_grid.ElementToSpatialCoord(i)
         r2 = fx**2 + fy**2 + fz**2
-        val = math.exp(-r2 / 2.0)
-        obs_grid[i] = val
-        calc_grid[i] = val
+        values[i] = math.exp(-r2 / 2.0)
+    assert obs_grid.SetValues(values, obs_grid.GetSize())
+    assert calc_grid.SetValues(values, calc_grid.GetSize())
 
     result = rscc(mol, obs_grid, 2.0, calc_grid=calc_grid)
     assert hasattr(result, "overall")

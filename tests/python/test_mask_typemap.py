@@ -14,17 +14,36 @@ oechem = pytest.importorskip("openeye.oechem")
 oegrid = pytest.importorskip("openeye.oegrid")
 
 
+def _make_grid(dim: int, spacing: float):
+    """Build a cubic grid centred on the origin.
+
+    OESkewGrid has no extents-box constructor, so the dims and midpoint such a
+    box derived are set explicitly.
+    """
+    grid = oegrid.OESkewGrid()
+    assert grid.SetDim(dim, dim, dim)
+    edge = dim * spacing
+    assert grid.SetUnitCell(edge, edge, edge, 90.0, 90.0, 90.0, dim, dim, dim)
+    assert grid.SetMid(0.0, 0.0, 0.0)
+    return grid
+
+
+def _make_uniform_grid():
+    """A 17x17x17 grid at a 0.5 A node interval, every node 1.0."""
+    grid = _make_grid(17, 0.5)
+    ones = oechem.OEFloatArray(grid.GetSize())
+    for i in range(grid.GetSize()):
+        ones[i] = 1.0
+    assert grid.SetValues(ones, grid.GetSize())
+    return grid
+
+
 @pytest.fixture()
 def mol_and_grids():
     mol = oechem.OEGraphMol()
     atom = mol.NewAtom(6)
     mol.SetCoords(atom, (0.0, 0.0, 0.0))
-    obs = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.5)
-    calc = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.5)
-    for i in range(obs.GetSize()):
-        obs.SetValue(i, 1.0)
-        calc.SetValue(i, 1.0)
-    return mol, obs, calc
+    return mol, _make_uniform_grid(), _make_uniform_grid()
 
 
 @pytest.mark.parametrize("bad_mask", ["not a predicate", 42, [1, 2, 3], {"a": 1}, object()])
@@ -39,12 +58,7 @@ def test_wrong_typed_builtin_mask_raises_rather_than_crashing(mol_and_grids, bad
     "factory",
     [
         pytest.param(lambda: oechem.OEGraphMol(), id="OEGraphMol"),
-        pytest.param(
-            lambda: oegrid.OEScalarGrid(
-                oechem.OEDoubleArray([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0]), 1.0
-            ),
-            id="OEScalarGrid",
-        ),
+        pytest.param(lambda: _make_grid(3, 1.0), id="OESkewGrid"),
         pytest.param(lambda: oechem.OEFloatArray([0.0, 0.0, 0.0]), id="OEFloatArray"),
         pytest.param(lambda: oechem.OEIsHeavy, id="OEIsHeavy-class-not-instance"),
     ],
@@ -103,12 +117,7 @@ def two_atom_mol_and_grids():
     oxygen = mol.NewAtom(8)
     mol.SetCoords(carbon, (0.0, 0.0, 0.0))
     mol.SetCoords(oxygen, (1.5, 0.0, 0.0))
-    obs = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.5)
-    calc = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.5)
-    for i in range(obs.GetSize()):
-        obs.SetValue(i, 1.0)
-        calc.SetValue(i, 1.0)
-    return mol, obs, calc
+    return mol, _make_uniform_grid(), _make_uniform_grid()
 
 
 def test_mask_is_actually_used(two_atom_mol_and_grids) -> None:

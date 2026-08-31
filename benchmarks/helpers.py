@@ -5,6 +5,7 @@ import re
 import struct
 import time
 
+import maptitude
 from openeye import oechem, oegrid
 
 # ---------------------------------------------------------------------------
@@ -79,21 +80,26 @@ def load_mrc_grid(mrc_path: pathlib.Path):
     """Load an MRC grid and fix the origin from header bytes 196-207.
 
     :param mrc_path: Path to the MRC file.
-    :returns: OEScalarGrid with corrected origin.
+    :returns: OESkewGrid with corrected origin.
     """
     with open(mrc_path, "rb") as f:
         header = f.read(1024)
     origin_x, origin_y, origin_z = struct.unpack_from("3f", header, 196)
 
-    grid = oegrid.OEScalarGrid()
+    grid = oegrid.OESkewGrid()
     ifs = oechem.oeifstream(str(mrc_path))
     oegrid.OEReadGrid(ifs, grid, oegrid.OEGridFileType_CCP4)
     ifs.close()
 
-    sp = grid.GetSpacing()
-    grid.SetXMid(origin_x + (grid.GetXDim() - 1) * sp / 2.0)
-    grid.SetYMid(origin_y + (grid.GetYDim() - 1) * sp / 2.0)
-    grid.SetZMid(origin_z + (grid.GetZDim() - 1) * sp / 2.0)
+    # The header origin is the first node on each axis, so each midpoint is half
+    # a span along that axis's own node interval. GetSpacing() would hand back
+    # the smallest of the three for all of them.
+    gp = maptitude.get_grid_params(grid)
+    grid.SetMid(
+        origin_x + (gp.x_dim - 1) * gp.x_spacing / 2.0,
+        origin_y + (gp.y_dim - 1) * gp.y_spacing / 2.0,
+        origin_z + (gp.z_dim - 1) * gp.z_spacing / 2.0,
+    )
     return grid
 
 
@@ -167,7 +173,7 @@ def load_ccp4_grid(ccp4_path: pathlib.Path):
             raw = f.read(nsymbt)
         symops_text = extract_ccp4_symops(raw)
 
-    grid = oegrid.OEScalarGrid()
+    grid = oegrid.OESkewGrid()
     ifs = oechem.oeifstream(str(ccp4_path))
     oegrid.OEReadGrid(ifs, grid, oegrid.OEGridFileType_CCP4)
     ifs.close()
@@ -180,14 +186,14 @@ def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
 
     The molecule is modified in-place (coordinates shifted).
 
-    :param grid: Input OEScalarGrid (one unit cell).
+    :param grid: Input OESkewGrid (one unit cell).
     :param mol: Molecule to shift.
     :param cell: Tuple (a, b, c) of cell dimensions.
     :param padding: Padding in Angstroms around the molecule.
     :returns: Original or padded grid covering the molecule.
     """
     a, b, c = cell
-    sp = grid.GetSpacing()
+    gp = maptitude.get_grid_params(grid)
     coords = oechem.OEFloatArray(3)
 
     # Compute heavy-atom centroid
@@ -200,9 +206,9 @@ def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
     cx /= n; cy /= n; cz /= n
 
     # Shift centroid to grid centre using integer unit-cell vectors
-    gxm = grid.GetXMin() + (grid.GetXDim() - 1) * sp / 2.0
-    gym = grid.GetYMin() + (grid.GetYDim() - 1) * sp / 2.0
-    gzm = grid.GetZMin() + (grid.GetZDim() - 1) * sp / 2.0
+    gxm = grid.GetXMid()
+    gym = grid.GetYMid()
+    gzm = grid.GetZMid()
     sx = round((gxm - cx) / a) * a if a > 0 else 0.0
     sy = round((gym - cy) / b) * b if b > 0 else 0.0
     sz = round((gzm - cz) / c) * c if c > 0 else 0.0
@@ -221,25 +227,41 @@ def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
         ys.append(float(coords[1]))
         zs.append(float(coords[2]))
 
-    gxmin, gymin, gzmin = grid.GetXMin(), grid.GetYMin(), grid.GetZMin()
-    gxmax = gxmin + (grid.GetXDim() - 1) * sp
-    gymax = gymin + (grid.GetYDim() - 1) * sp
-    gzmax = gzmin + (grid.GetZDim() - 1) * sp
+    # The interpolatable domain is the node span, so the padding test asks
+    # whether the atoms fit inside the nodes rather than inside a bounding box.
+    gxmin, gymin, gzmin = gp.x_origin, gp.y_origin, gp.z_origin
+    gxmax = gxmin + (gp.x_dim - 1) * gp.x_spacing
+    gymax = gymin + (gp.y_dim - 1) * gp.y_spacing
+    gzmax = gzmin + (gp.z_dim - 1) * gp.z_spacing
 
     if (min(xs) - padding < gxmin or max(xs) + padding > gxmax
             or min(ys) - padding < gymin or max(ys) + padding > gymax
             or min(zs) - padding < gzmin or max(zs) + padding > gzmax):
-        minmax = oechem.OEDoubleArray([
+        minmax = [
             min(xs) - padding, min(ys) - padding, min(zs) - padding,
-            max(xs) + padding, max(ys) + padding, max(zs) + padding])
-        padded = oegrid.OEScalarGrid(minmax, sp)
+            max(xs) + padding, max(ys) + padding, max(zs) + padding]
+        # OESkewGrid has no extents-box constructor, so derive the dims and the
+        # midpoint that box implied and set them explicitly, keeping each axis
+        # on its own node interval.
+        sp = (gp.x_spacing, gp.y_spacing, gp.z_spacing)
+        dim = [int((minmax[i + 3] - minmax[i]) / sp[i]) + 1 for i in range(3)]
+        mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
+        padded = oegrid.OESkewGrid()
+        # Checked, not assumed: a rejected setter leaves the node coordinates
+        # NaN, and the fill below would then quietly return an all-default grid.
+        assert padded.SetDim(*dim)
+        assert padded.SetUnitCell(dim[0] * sp[0], dim[1] * sp[1], dim[2] * sp[2],
+                                  90.0, 90.0, 90.0, *dim)
+        assert padded.SetMid(*mid)
+
+        values = oechem.OEFloatArray(padded.GetSize())
         for i in range(padded.GetSize()):
             x, y, z = padded.ElementToSpatialCoord(i)
             wx = gxmin + ((x - gxmin) % a)
             wy = gymin + ((y - gymin) % b)
             wz = gzmin + ((z - gzmin) % c)
-            padded.SetValue(i, float(
-                oechem.OEFloatGridLinearInterpolate(grid, wx, wy, wz, 0.0)))
+            values[i] = maptitude.interpolate_density(grid, wx, wy, wz, 0.0)
+        padded.SetValues(values, padded.GetSize())
         return padded
     return grid
 

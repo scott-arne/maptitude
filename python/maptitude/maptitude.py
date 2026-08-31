@@ -1063,6 +1063,15 @@ _maptitude.UnitCellParams_swigregister(UnitCellParams)
 def get_grid_params(grid):
     return _maptitude.get_grid_params(grid)
 
+def get_unit_cell(grid):
+    return _maptitude.get_unit_cell(grid)
+
+def grid_contains(gp, x, y, z):
+    return _maptitude.grid_contains(gp, x, y, z)
+
+def same_grid_geometry(lhs, rhs, tol=1e-6):
+    return _maptitude.same_grid_geometry(lhs, rhs, tol)
+
 def interpolate_density(grid, x, y, z, default_value=0.0):
     return _maptitude.interpolate_density(grid, x, y, z, default_value)
 
@@ -1338,7 +1347,7 @@ def fc_density(obj, obs_grid, resolution, cell, mask=None,
     """Compute model electron density via Fourier synthesis.
 
     :param obj: Input molecule (OEMolBase or OEDesignUnit).
-    :param obs_grid: Observed electron density grid (OEScalarGrid).
+    :param obs_grid: Observed electron density grid (OESkewGrid).
     :param resolution: Resolution limit in Angstroms.
     :param cell: UnitCell parameters.
     :param mask: Optional atom predicate to restrict contributing atoms.
@@ -1353,7 +1362,7 @@ def fc_density(obj, obs_grid, resolution, cell, mask=None,
         the resolution range and even a 0.5 A dataset has far fewer independent
         shells, while a value near ``UINT_MAX`` sizes the shell-edge table into
         tens of gigabytes and at ``UINT_MAX`` itself wraps it to zero.
-    :returns: OEScalarGrid with computed model density.
+    :returns: OESkewGrid with computed model density.
     :raises TypeError: If ``symops`` is neither a string nor an iterable of
         SymOp or operator strings.
     :raises SymOpError: If an operator string cannot be parsed.
@@ -1566,7 +1575,7 @@ def combine_maps(lhs, rhs, op):
     :param lhs: Left-hand side grid.
     :param rhs: Right-hand side grid.
     :param op: MapOp enum value (ADD, SUBTRACT, MIN, MAX).
-    :returns: New OEScalarGrid with combined values.
+    :returns: New OESkewGrid with combined values.
     """
     return _cpp_combine_maps(lhs, rhs, op)
 
@@ -1576,7 +1585,7 @@ def diff_to_calc(obs_grid, diff_grid):
 
     :param obs_grid: Observed density map (2mFo-DFc).
     :param diff_grid: Difference density map (mFo-DFc).
-    :returns: New OEScalarGrid with calculated density.
+    :returns: New OESkewGrid with calculated density.
     """
     return _cpp_diff_to_calc(obs_grid, diff_grid)
 

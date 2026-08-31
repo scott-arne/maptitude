@@ -142,9 +142,10 @@ def _wrap_and_pad_grid(grid, mol, cell, padding: float = 3.0):
     The molecule is modified in-place (coordinates shifted).
     """
     from openeye import oechem, oegrid
+    from maptitude import get_grid_params, interpolate_density
 
     a, b, c = cell
-    sp = grid.GetSpacing()
+    gp = get_grid_params(grid)
     coords = oechem.OEFloatArray(3)
 
     # Compute heavy-atom centroid
@@ -160,9 +161,9 @@ def _wrap_and_pad_grid(grid, mol, cell, padding: float = 3.0):
     cz /= n
 
     # Shift centroid to grid centre using integer unit-cell vectors
-    grid_xmid = grid.GetXMin() + (grid.GetXDim() - 1) * sp / 2.0
-    grid_ymid = grid.GetYMin() + (grid.GetYDim() - 1) * sp / 2.0
-    grid_zmid = grid.GetZMin() + (grid.GetZDim() - 1) * sp / 2.0
+    grid_xmid = grid.GetXMid()
+    grid_ymid = grid.GetYMid()
+    grid_zmid = grid.GetZMid()
 
     shift_x = round((grid_xmid - cx) / a) * a if a > 0 else 0.0
     shift_y = round((grid_ymid - cy) / b) * b if b > 0 else 0.0
@@ -186,12 +187,14 @@ def _wrap_and_pad_grid(grid, mol, cell, padding: float = 3.0):
         ys.append(float(coords[1]))
         zs.append(float(coords[2]))
 
-    grid_xmin = grid.GetXMin()
-    grid_ymin = grid.GetYMin()
-    grid_zmin = grid.GetZMin()
-    grid_xmax = grid_xmin + (grid.GetXDim() - 1) * sp
-    grid_ymax = grid_ymin + (grid.GetYDim() - 1) * sp
-    grid_zmax = grid_zmin + (grid.GetZDim() - 1) * sp
+    # The interpolatable domain is the node span, not the bounding box, so the
+    # padding test asks whether the atoms fit inside the nodes.
+    grid_xmin = gp.x_origin
+    grid_ymin = gp.y_origin
+    grid_zmin = gp.z_origin
+    grid_xmax = grid_xmin + (gp.x_dim - 1) * gp.x_spacing
+    grid_ymax = grid_ymin + (gp.y_dim - 1) * gp.y_spacing
+    grid_zmax = grid_zmin + (gp.z_dim - 1) * gp.z_spacing
 
     needs_pad = (
         min(xs) - padding < grid_xmin
@@ -212,18 +215,30 @@ def _wrap_and_pad_grid(grid, mol, cell, padding: float = 3.0):
             max(xs) + padding, max(ys) + padding, max(zs) + padding,
         ]
     )
-    padded = oegrid.OEScalarGrid(minmax, sp)
-    orig_xmin = grid.GetXMin()
-    orig_ymin = grid.GetYMin()
-    orig_zmin = grid.GetZMin()
+    # OESkewGrid has no extents-box constructor, so derive the dims and midpoint
+    # that box implied and set them explicitly, keeping each axis on its own
+    # node interval.
+    sp = (gp.x_spacing, gp.y_spacing, gp.z_spacing)
+    dim = [int((minmax[i + 3] - minmax[i]) / sp[i]) + 1 for i in range(3)]
+    mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
+    padded = oegrid.OESkewGrid()
+    assert padded.SetDim(*dim)
+    assert padded.SetUnitCell(
+        dim[0] * sp[0], dim[1] * sp[1], dim[2] * sp[2], 90.0, 90.0, 90.0, *dim
+    )
+    assert padded.SetMid(*mid)
+
+    orig_xmin = gp.x_origin
+    orig_ymin = gp.y_origin
+    orig_zmin = gp.z_origin
+    values = oechem.OEFloatArray(padded.GetSize())
     for i in range(padded.GetSize()):
         x, y, z = padded.ElementToSpatialCoord(i)
         wx = orig_xmin + ((x - orig_xmin) % a)
         wy = orig_ymin + ((y - orig_ymin) % b)
         wz = orig_zmin + ((z - orig_zmin) % c)
-        padded.SetValue(
-            i, float(oechem.OEFloatGridLinearInterpolate(grid, wx, wy, wz, 0.0))
-        )
+        values[i] = interpolate_density(grid, wx, wy, wz, 0.0)
+    assert padded.SetValues(values, padded.GetSize())
     return padded
 
 
@@ -299,11 +314,13 @@ class TestQScoreMapqComparison:
 
     def test_grid_covers_structure(self):
         from openeye import oechem
+        from maptitude import get_grid_params, grid_contains
 
+        gp = get_grid_params(self.grid)
         coords = oechem.OEFloatArray(3)
         for atom in self.mol.GetAtoms():
             self.mol.GetCoords(atom, coords)
-            assert self.grid.IsInGrid(coords[0], coords[1], coords[2]), (
+            assert grid_contains(gp, coords[0], coords[1], coords[2]), (
                 f"Atom {atom.GetIdx()} at ({coords[0]:.1f}, {coords[1]:.1f}, "
                 f"{coords[2]:.1f}) is outside grid bounds"
             )
@@ -527,14 +544,16 @@ class TestRSCCRSRBenchmark:
     def test_grid_covers_all_atoms(self):
         """All heavy atoms should be inside the grid for each structure."""
         from openeye import oechem
+        from maptitude import get_grid_params, grid_contains
 
         coords = oechem.OEFloatArray(3)
         for pdb in ["1d26", "3q9g", "340d"]:
             mol = self.mols[pdb]
             grid = self.grids[pdb]
+            gp = get_grid_params(grid)
             for atom in mol.GetAtoms(oechem.OEIsHeavy()):
                 mol.GetCoords(atom, coords)
-                assert grid.IsInGrid(coords[0], coords[1], coords[2]), (
+                assert grid_contains(gp, coords[0], coords[1], coords[2]), (
                     f"{pdb}: atom {atom.GetIdx()} at "
                     f"({coords[0]:.1f},{coords[1]:.1f},{coords[2]:.1f}) "
                     f"is outside grid"

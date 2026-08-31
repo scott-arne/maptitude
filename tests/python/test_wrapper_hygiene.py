@@ -14,17 +14,34 @@ import pytest
 oechem = pytest.importorskip("openeye.oechem")
 oegrid = pytest.importorskip("openeye.oegrid")
 
+# Dims and midpoint of the grid the extents box [-4, -4, -4, 4, 4, 4] at a 0.5 A
+# node interval used to produce. OESkewGrid has no extents-box constructor, so
+# the geometry that box derived is set explicitly.
+_DIM = 17
+_SPACING = 0.5
+
+
+def _make_grid():
+    grid = oegrid.OESkewGrid()
+    assert grid.SetDim(_DIM, _DIM, _DIM)
+    edge = _DIM * _SPACING
+    assert grid.SetUnitCell(edge, edge, edge, 90.0, 90.0, 90.0, _DIM, _DIM, _DIM)
+    assert grid.SetMid(0.0, 0.0, 0.0)
+    return grid
+
 
 @pytest.fixture()
 def scoring_inputs():
     mol = oechem.OEGraphMol()
     atom = mol.NewAtom(6)
     mol.SetCoords(atom, (0.0, 0.0, 0.0))
-    obs = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.5)
-    calc = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.5)
+    obs = _make_grid()
+    calc = _make_grid()
+    ones = oechem.OEFloatArray(obs.GetSize())
     for i in range(obs.GetSize()):
-        obs.SetValue(i, 1.0)
-        calc.SetValue(i, 1.0)
+        ones[i] = 1.0
+    assert obs.SetValues(ones, obs.GetSize())
+    assert calc.SetValues(ones, calc.GetSize())
     return mol, obs, calc
 
 
@@ -81,10 +98,12 @@ def sigma_discriminating_inputs():
     mol = oechem.OEGraphMol()
     atom = mol.NewAtom(6)
     mol.SetCoords(atom, (0.0, 0.0, 0.0))
-    obs = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.5)
+    obs = _make_grid()
+    slab = oechem.OEFloatArray(obs.GetSize())
     for i in range(obs.GetSize()):
         x, _, _ = obs.ElementToSpatialCoord(i)
-        obs.SetValue(i, 1.0 if abs(x) <= 1.0 + 1e-9 else 0.0)
+        slab[i] = 1.0 if abs(x) <= 1.0 + 1e-9 else 0.0
+    assert obs.SetValues(slab, obs.GetSize())
     return mol, obs
 
 
@@ -205,7 +224,9 @@ def fc_inputs(scoring_inputs):
 
 
 def _grid_values(grid):
-    return [grid.GetValue(i) for i in range(grid.GetSize())]
+    # GetValues hands back a copy, so read it once rather than per node.
+    values = grid.GetValues()
+    return [values[i] for i in range(grid.GetSize())]
 
 
 def test_fc_density_accepts_a_list_of_operator_strings(fc_inputs) -> None:
@@ -250,16 +271,17 @@ def test_wrap_and_pad_grid_never_returns_none(scoring_inputs) -> None:
     run. Pinning the contract here is what makes that documentation checkable.
     """
     mol, obs, _ = scoring_inputs
-    # The cell must be the extent the grid samples, so derive it from the grid: the
-    # fixture's node count depends on how OpenEye's extents-box constructor rounds
-    # and hard-coding a number guesses at it. The atom is at the origin and the grid
-    # is centred there, so no padding is needed and the C++ function returns nullptr.
-    spacing = obs.GetSpacing()
+    # The cell must be the extent the grid samples, so derive each edge from that
+    # axis's own node interval rather than from one figure for the whole grid:
+    # wrap_and_pad_grid checks each edge against its axis independently. The atom
+    # is at the origin and the grid is centred there, so no padding is needed and
+    # the C++ function returns nullptr.
+    gp = maptitude.get_grid_params(obs)
     padded = maptitude.wrap_and_pad_grid(
         mol=mol,
         grid=obs,
-        cell_a=obs.GetXDim() * spacing,
-        cell_b=obs.GetYDim() * spacing,
-        cell_c=obs.GetZDim() * spacing,
+        cell_a=gp.x_dim * gp.x_spacing,
+        cell_b=gp.y_dim * gp.y_spacing,
+        cell_c=gp.z_dim * gp.z_spacing,
     )
     assert padded is obs

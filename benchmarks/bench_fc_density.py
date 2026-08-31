@@ -20,7 +20,9 @@ from helpers import (
 
 def _grid_to_array(grid):
     """Extract grid values as a 1-D numpy array."""
-    return np.array([grid.GetValue(i) for i in range(grid.GetSize())])
+    # GetValues hands back a copy, so read it once rather than per node.
+    values = grid.GetValues()
+    return np.array([values[i] for i in range(grid.GetSize())])
 
 
 def _pearson(a, b):

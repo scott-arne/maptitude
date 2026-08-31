@@ -75,6 +75,20 @@ def test_concrete_exceptions_are_distinct_classes() -> None:
     assert len(classes) == len(EXCEPTION_NAMES)
 
 
+def _make_grid(oegrid):
+    """A 17x17x17 grid at a 0.5 A node interval, centred on the origin.
+
+    Takes the module as an argument because openeye is imported per-test here:
+    only the raise-site tests below need it, and the rest of the file must still
+    run without it.
+    """
+    grid = oegrid.OESkewGrid()
+    assert grid.SetDim(17, 17, 17)
+    assert grid.SetUnitCell(8.5, 8.5, 8.5, 90.0, 90.0, 90.0, 17, 17, 17)
+    assert grid.SetMid(0.0, 0.0, 0.0)
+    return grid
+
+
 def test_structure_error_is_raised_with_its_own_type() -> None:
     """A molecule with no scorable atoms is a StructureError, not a GridError.
 
@@ -84,7 +98,7 @@ def test_structure_error_is_raised_with_its_own_type() -> None:
     oechem = pytest.importorskip("openeye.oechem")
     oegrid = pytest.importorskip("openeye.oegrid")
 
-    grid = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.5)
+    grid = _make_grid(oegrid)
 
     with pytest.raises(maptitude.StructureError) as excinfo:
         maptitude.rscc(oechem.OEGraphMol(), grid, 2.0, calc_grid=grid)
@@ -100,7 +114,7 @@ def test_grid_error_is_raised_with_its_own_type() -> None:
     mol = oechem.OEGraphMol()
     atom = mol.NewAtom(6)
     mol.SetCoords(atom, (0.0, 0.0, 0.0))
-    grid = oegrid.OEScalarGrid(oechem.OEDoubleArray([-4.0, -4.0, -4.0, 4.0, 4.0, 4.0]), 0.5)
+    grid = _make_grid(oegrid)
 
     with pytest.raises(maptitude.GridError) as excinfo:
         maptitude.rscc(mol, grid, 2.0)

@@ -145,7 +145,6 @@ namespace OEPlatform {
 }
 
 namespace OESystem {
-    class OEScalarGrid;
     class OESkewGrid;
     class OERecord;
     class OEMolRecord;
@@ -282,15 +281,15 @@ DEFINE_OE_TYPE_CHECKER(oeinteractionhintcontainer, "openeye.oechem", "OEInteract
 DEFINE_OE_TYPE_CHECKER(oeunaryatompred, "openeye.oechem", "OEUnaryAtomPred")
 
 // ---- Grid (openeye.oegrid) ----
-DEFINE_OE_TYPE_CHECKER(oescalargrid, "openeye.oegrid", "OEScalarGrid")
+DEFINE_OE_TYPE_CHECKER(oeskewgrid, "openeye.oegrid", "OESkewGrid")
 
 // ---- Docking (openeye.oedocking) ----
 DEFINE_OE_TYPE_CHECKER(oereceptor,   "openeye.oedocking", "OEReceptor")
 
 #undef DEFINE_OE_TYPE_CHECKER
 
-// ---- OEScalarGrid return-type helper (copy-assign into Python object) ----
-static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
+/* ---- OESkewGrid return-type helper (copy-assign into Python object) ---- */
+static PyObject* _maptitude_wrap_as_oe_skew_grid(OESystem::OESkewGrid* grid) {
     if (!grid) {
         Py_RETURN_NONE;
     }
@@ -299,7 +298,7 @@ static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
         delete grid;
         return NULL;
     }
-    PyObject* grid_cls = PyObject_GetAttrString(oegrid_mod, "OEScalarGrid");
+    PyObject* grid_cls = PyObject_GetAttrString(oegrid_mod, "OESkewGrid");
     Py_DECREF(oegrid_mod);
     if (!grid_cls) {
         delete grid;
@@ -318,32 +317,33 @@ static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
         delete grid;
         return NULL;
     }
-    /* Copy the value into the Python-side grid rather than swapping pointers.
-       The grid object under `thisAttr` was allocated inside OpenEye's shared
-       library; deleting it here would run this module's operator delete on
-       another runtime's allocation, and pointing it at our grid would then
-       have OpenEye's destructor free our memory. The grid object must be
-       released by the allocator that made it.
 
-       Assignment, not an element loop: `oe_grid` is default-constructed by
-       PyObject_CallNoArgs above, so it starts as a 1x1x1 grid; an element
-       loop would copy exactly one value. operator= resizes the destination
-       and copies dimensions, spacing, midpoints, title, and data together. */
+    /* Copy the value into the Python-side grid rather than swapping pointers.
+       The grid under `thisAttr` was allocated inside OpenEye's shared library;
+       deleting it here would run this module's operator delete on another
+       runtime's allocation, and pointing it at our grid would then have
+       OpenEye's destructor free our memory. Each allocation is released by the
+       allocator that made it.
+
+       Assignment, not an element loop: `oe_grid` is default-constructed above,
+       so it starts 1x1x1; an element loop would copy exactly one value.
+       operator= resizes the destination and copies dimensions, the unit cell,
+       the space group, midpoints, title and data together.
+
+       The out typemap is emitted outside SWIG's generated try/catch, so an
+       exception here would reach CPython unhandled and abort the interpreter.
+       operator= can throw std::bad_alloc during reallocation. */
     _SwigPyObjectCompat* swig_this = (_SwigPyObjectCompat*)thisAttr;
-    OESystem::OEScalarGrid* dest =
-        reinterpret_cast<OESystem::OEScalarGrid*>(swig_this->ptr);
+    OESystem::OESkewGrid* dest =
+        reinterpret_cast<OESystem::OESkewGrid*>(swig_this->ptr);
     if (dest == NULL) {
         Py_DECREF(thisAttr);
         Py_DECREF(oe_grid);
         delete grid;
         PyErr_SetString(PyExc_RuntimeError,
-                        "failed to access the wrapped OEScalarGrid");
+                        "failed to access the wrapped OESkewGrid");
         return NULL;
     }
-
-    /* The out typemap is emitted outside SWIG's generated try/catch, so an
-       exception here would reach CPython unhandled and abort the interpreter.
-       operator= can throw std::bad_alloc during reallocation. */
     try {
         *dest = *grid;
     } catch (const std::bad_alloc&) {
@@ -359,20 +359,38 @@ static PyObject* _maptitude_wrap_as_oe_grid(OESystem::OEScalarGrid* grid) {
         return NULL;
     }
 
-    /* Validate that the copy succeeded. operator= routes through OpenEye's
-       geometry setters, which reject values they cannot represent (e.g.,
-       spacing=0.0, spacing=inf) by returning false rather than throwing, and
-       operator= ignores that return value. When that happens the destination
-       silently retains its default 1x1x1 geometry, and returning it would hand
-       a plausible-looking but wrong grid to the caller. Detect and reject that
-       rather than allowing silent corruption. */
-    if (!OESystem::OEGridSameGeometry(*dest, *grid)) {
-        char errmsg[256];
+    /* Validate the copy. operator= routes through OpenEye's geometry
+       setters, which reject values they cannot represent by returning false
+       rather than throwing, and operator= ignores that return. The destination
+       then silently keeps its default 1x1x1 geometry.
+
+       same_grid_geometry cannot answer "different" for that 1x1x1 destination
+       -- it throws GridError, because a one-node axis has no derivable node
+       interval. So the comparison runs under a catch: on the failure this
+       block exists to detect, the throw is the detection, and any other
+       exception it raises is equally a reason not to hand the grid back. */
+    bool copy_ok = false;
+    std::string detail;
+    try {
+        copy_ok = Maptitude::same_grid_geometry(*dest, *grid) &&
+                  dest->HasUnitCell() == grid->HasUnitCell() &&
+                  dest->HasSpaceGroup() == grid->HasSpaceGroup() &&
+                  dest->GetSize() == grid->GetSize();
+        if (copy_ok && dest->HasSpaceGroup()) {
+            copy_ok = dest->GetSpaceGroup() == grid->GetSpaceGroup();
+        }
+    } catch (const std::exception& e) {
+        copy_ok = false;
+        detail = e.what();
+    }
+    if (!copy_ok) {
+        char errmsg[512];
         std::snprintf(errmsg, sizeof(errmsg),
-                      "Grid geometry copy failed: source is %ux%ux%u spacing=%.3f, "
-                      "destination is %ux%ux%u spacing=%.3f",
-                      grid->GetXDim(), grid->GetYDim(), grid->GetZDim(), grid->GetSpacing(),
-                      dest->GetXDim(), dest->GetYDim(), dest->GetZDim(), dest->GetSpacing());
+                      "Grid geometry copy failed: source is %ux%ux%u size=%u, "
+                      "destination is %ux%ux%u size=%u%s%s",
+                      grid->GetXDim(), grid->GetYDim(), grid->GetZDim(), grid->GetSize(),
+                      dest->GetXDim(), dest->GetYDim(), dest->GetZDim(), dest->GetSize(),
+                      detail.empty() ? "" : "; ", detail.c_str());
         Py_DECREF(thisAttr);
         Py_DECREF(oe_grid);
         delete grid;
@@ -524,12 +542,12 @@ OE_CROSS_RUNTIME_REF_TYPEMAPS(OEBio::OEInteractionHint,          _maptitude_is_o
 OE_CROSS_RUNTIME_REF_TYPEMAPS(OEBio::OEInteractionHintContainer, _maptitude_is_oeinteractionhintcontainer, "Expected OEInteractionHintContainer object.")
 
 // ---- Grid (OESystem) ----
-OE_CROSS_RUNTIME_REF_TYPEMAPS(OESystem::OEScalarGrid, _maptitude_is_oescalargrid, "Expected OEScalarGrid-derived object.")
-OE_CROSS_RUNTIME_NULLABLE_PTR_TYPEMAPS(OESystem::OEScalarGrid, _maptitude_is_oescalargrid, "Expected OEScalarGrid or None.")
+OE_CROSS_RUNTIME_REF_TYPEMAPS(OESystem::OESkewGrid, _maptitude_is_oeskewgrid, "Expected OESkewGrid-derived object.")
+OE_CROSS_RUNTIME_NULLABLE_PTR_TYPEMAPS(OESystem::OESkewGrid, _maptitude_is_oeskewgrid, "Expected OESkewGrid or None.")
 
-// OEScalarGrid return-type typemap (wraps C++ grid as native openeye.oegrid object)
-%typemap(out) OESystem::OEScalarGrid* {
-    $result = _maptitude_wrap_as_oe_grid($1);
+// OESkewGrid return-type typemap (wraps C++ grid as native openeye.oegrid object)
+%typemap(out) OESystem::OESkewGrid* {
+    $result = _maptitude_wrap_as_oe_skew_grid($1);
     if (!$result) SWIG_fail;
 }
 
@@ -783,25 +801,30 @@ struct UnitCellParams {
 // ============================================================================
 // Grid utility functions
 // ============================================================================
-GridParams get_grid_params(const OESystem::OEScalarGrid& grid);
-double interpolate_density(const OESystem::OEScalarGrid& grid,
+GridParams get_grid_params(const OESystem::OESkewGrid& grid);
+UnitCellParams get_unit_cell(const OESystem::OESkewGrid& grid);
+bool grid_contains(const GridParams& gp, double x, double y, double z);
+bool same_grid_geometry(const OESystem::OESkewGrid& lhs,
+                        const OESystem::OESkewGrid& rhs,
+                        double tol = 1e-6);
+double interpolate_density(const OESystem::OESkewGrid& grid,
                           double x, double y, double z,
                           double default_value = 0.0);
 std::vector<double> interpolate_density_batch(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
     double default_value = 0.0);
 std::vector<unsigned int> get_atom_grid_points(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double x, double y, double z, double radius);
 double interpolate_density_periodic(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double x, double y, double z,
     double cell_a, double cell_b, double cell_c,
     double default_value = 0.0);
 std::vector<double> interpolate_density_periodic_batch(
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const std::vector<double>& points,
     size_t num_points,
     double cell_a, double cell_b, double cell_c,
@@ -834,9 +857,9 @@ public:
     DensityCalculator(const UnitCell& cell, const std::vector<SymOp>& symops);
     ~DensityCalculator();
 
-    OESystem::OEScalarGrid* Calculate(
+    OESystem::OESkewGrid* Calculate(
         OEChem::OEMolBase& mol,
-        const OESystem::OEScalarGrid& obs_grid,
+        const OESystem::OESkewGrid& obs_grid,
         double resolution,
         const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
         double k_sol = 0.35,
@@ -850,7 +873,7 @@ public:
 // ============================================================================
 DensityScoreResult rscc(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
     const OESystem::OESkewGrid* calc_grid = nullptr,
@@ -858,7 +881,7 @@ DensityScoreResult rscc(
 
 DensityScoreResult rsr(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
     const OESystem::OESkewGrid* calc_grid = nullptr,
@@ -866,20 +889,20 @@ DensityScoreResult rsr(
 
 DensityScoreResult qscore(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
     const QScoreOptions& options = QScoreOptions());
 
 DensityScoreResult ediam(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr);
 
 DensityScoreResult coverage(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
     const CoverageOptions& options = CoverageOptions());
 
@@ -887,15 +910,15 @@ DensityScoreResult coverage(
 // Grid operations
 // ============================================================================
 void scale_map(OESystem::OESkewGrid& grid, double factor);
-OESystem::OEScalarGrid* combine_maps(
-    const OESystem::OEScalarGrid& lhs,
-    const OESystem::OEScalarGrid& rhs,
+OESystem::OESkewGrid* combine_maps(
+    const OESystem::OESkewGrid& lhs,
+    const OESystem::OESkewGrid& rhs,
     MapOp op);
-OESystem::OEScalarGrid* diff_to_calc(
-    const OESystem::OEScalarGrid& obs_grid,
-    const OESystem::OEScalarGrid& diff_grid);
-OESystem::OEScalarGrid* wrap_and_pad_grid(
-    const OESystem::OEScalarGrid& grid,
+OESystem::OESkewGrid* diff_to_calc(
+    const OESystem::OESkewGrid& obs_grid,
+    const OESystem::OESkewGrid& diff_grid);
+OESystem::OESkewGrid* wrap_and_pad_grid(
+    const OESystem::OESkewGrid& grid,
     OEChem::OEMolBase& mol,
     double cell_a, double cell_b, double cell_c,
     double padding = 3.0);
@@ -1108,7 +1131,7 @@ def fc_density(obj, obs_grid, resolution, cell, mask=None,
     """Compute model electron density via Fourier synthesis.
 
     :param obj: Input molecule (OEMolBase or OEDesignUnit).
-    :param obs_grid: Observed electron density grid (OEScalarGrid).
+    :param obs_grid: Observed electron density grid (OESkewGrid).
     :param resolution: Resolution limit in Angstroms.
     :param cell: UnitCell parameters.
     :param mask: Optional atom predicate to restrict contributing atoms.
@@ -1123,7 +1146,7 @@ def fc_density(obj, obs_grid, resolution, cell, mask=None,
         the resolution range and even a 0.5 A dataset has far fewer independent
         shells, while a value near ``UINT_MAX`` sizes the shell-edge table into
         tens of gigabytes and at ``UINT_MAX`` itself wraps it to zero.
-    :returns: OEScalarGrid with computed model density.
+    :returns: OESkewGrid with computed model density.
     :raises TypeError: If ``symops`` is neither a string nor an iterable of
         SymOp or operator strings.
     :raises SymOpError: If an operator string cannot be parsed.
@@ -1336,7 +1359,7 @@ def combine_maps(lhs, rhs, op):
     :param lhs: Left-hand side grid.
     :param rhs: Right-hand side grid.
     :param op: MapOp enum value (ADD, SUBTRACT, MIN, MAX).
-    :returns: New OEScalarGrid with combined values.
+    :returns: New OESkewGrid with combined values.
     """
     return _cpp_combine_maps(lhs, rhs, op)
 
@@ -1346,7 +1369,7 @@ def diff_to_calc(obs_grid, diff_grid):
 
     :param obs_grid: Observed density map (2mFo-DFc).
     :param diff_grid: Difference density map (mFo-DFc).
-    :returns: New OEScalarGrid with calculated density.
+    :returns: New OESkewGrid with calculated density.
     """
     return _cpp_diff_to_calc(obs_grid, diff_grid)
 
