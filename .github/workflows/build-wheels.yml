@@ -209,7 +209,7 @@ jobs:
 
       - name: Test wheel
         run: |
-          /opt/venv/bin/pip install pytest numpy
+          /opt/venv/bin/pip install pytest numpy "gemmi>=0.7.5"
           /opt/venv/bin/pip install dist/maptitude-*.whl
           /opt/venv/bin/pytest tests/python/ -v -s
 
@@ -379,7 +379,7 @@ jobs:
 
       - name: Test wheel
         run: |
-          pip install pytest numpy
+          pip install pytest numpy "gemmi>=0.7.5"
           pip install dist/maptitude-*.whl
           pytest tests/python/ -v -s
 
@@ -569,7 +569,7 @@ jobs:
 
       - name: Test wheel
         run: |
-          pip install pytest numpy
+          pip install pytest numpy "gemmi>=0.7.5"
           pip install dist/maptitude-*.whl
           pytest tests/python/ -v -s
 
