@@ -483,6 +483,17 @@ def build_wheel(project_dir, python_exe, openeye_root, openeye_info, config,
                 f"Could not read the SWIG library directory from {swig_exe}; "
                 "leaving SWIG_DIR to CMake"
             )
+    else:
+        # Not an error: a system-wide SWIG on PATH is a working configuration,
+        # and the executable/library mismatch the pinning exists to prevent
+        # cannot arise there, because FindSWIG derives the library from the
+        # executable it found. What is worth saying is that nothing is pinned,
+        # so the build's SWIG version is whatever CMake happens to discover.
+        print_step(
+            f"No SWIG executable beside the interpreter in {py_dir}; leaving "
+            "both SWIG_EXECUTABLE and SWIG_DIR to CMake, which will build "
+            "against whichever SWIG it discovers"
+        )
 
     # Add any extra CMake defines from config
     for key, value in config.get('extra-cmake-defines', {}).items():
