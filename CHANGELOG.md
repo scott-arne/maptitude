@@ -247,9 +247,13 @@ moved** — so it is not a rename.
 
 **Index and coordinate maps.** `GridIdxToElement`, `GridIdxToSpatialCoord`,
 `SpatialCoordToElement`, `SpatialCoordToGridIdx`, `GetXIdx`, `GetXInc` and their
-`GetY`/`GetZ` counterparts are gone. Derive the mapping from
-`get_grid_params(grid)`, whose per-axis origin, dim and spacing give node
-positions directly, and use the linearization above.
+`GetY`/`GetZ` counterparts are gone, and so are the bare coordinate accessors
+`GetX`, `GetY` and `GetZ`. Those three are named separately because they are the
+inverse call, not a counterpart: `GetX(ix)` takes a node index and returns its
+coordinate, where `GetXIdx(x)` takes a coordinate and returns a node index.
+Derive the whole mapping from `get_grid_params(grid)`, whose per-axis origin, dim
+and spacing give node positions directly — node `ix` sits at
+`x_origin + ix * x_spacing` — and use the linearization above.
 
 **Box geometry.** The `GetXMin`/`GetXMax` family, `SetXDim`, `SetXMid` and
 `IsXMidSet`, with their `Y` and `Z` counterparts, are gone. The node span
@@ -284,8 +288,16 @@ rather than from the box. An assertion comparing rebuilt node coordinates agains
 old ones needs a tolerance, not `==`.
 
 **Writing a constructed grid.** A grid built by that recipe needs two more lines
-before `OEWriteGrid`, or the file it writes has its origin one node interval too
-high on each axis — and `OEWriteGrid` returns `True` either way:
+before `OEWriteGrid`, or the file it writes is wrong — and `OEWriteGrid` returns
+`True` either way. Measured on seven recipe-built geometries, reading the origin
+out of the raw CCP4 header rather than through a reader, every unfixed write was
+wrong, in one of three ways: five of the seven re-expand the map by one node per
+axis; one keeps the right node count but misplaces the origin; and the one
+anisotropic grid is resampled onto a single uniform interval, losing its per-axis
+geometry. That last is the worst of the three for this release's audience — a
+21x20x11 grid spaced `(0.5, 0.5, 0.25)` was written as 41x39x11 nodes at a uniform
+0.25 A, the finest of its three spacings, growing the stored map from 4 620 values
+to 17 589.
 
 ```python
 assert g.SetUnitCell(2 * nx * sx, 2 * ny * sy, 2 * nz * sz, 90.0, 90.0, 90.0,
@@ -293,13 +305,33 @@ assert g.SetUnitCell(2 * nx * sx, 2 * ny * sy, 2 * nz * sz, 90.0, 90.0, 90.0,
 assert g.SetSpaceGroup(1)                      # P1
 ```
 
-Setting a space group makes the writer emit the exact node index instead of
-`node0 / spacing + 1`; doubling the cell and its division count together keeps
-the reader from re-expanding the map by one node per axis, and leaves the grid in
-memory unchanged. This is an OpenEye write-path behaviour that the carrier switch
-exposes, not a maptitude API change. A grid that came from `OEReadGrid` does not
-need either line, so code that reads, scores and discards is unaffected; code
-that builds a grid and writes it is.
+The two lines restore the **dimensions** on all seven geometries, and the per-axis
+spacings on the anisotropic one; on all seven they leave the grid in memory
+unchanged — same dims, per-axis spacings, node origin and midpoint. They restore
+the **origin** exactly on 17 of the 21 axes measured, and those 17 are exactly the
+axes where `origin_i / spacing_i` is a whole number. CCP4 stores the origin as the
+integer node index `NxSTART`, and OpenEye left the float `ORIGIN` field at zero in
+all fourteen writes, so an axis whose node origin falls half way between two
+multiples of its spacing cannot be written exactly: 20³ at 0.5 A centred on 0 has
+an in-memory node origin of `-4.75` and reads back at `(-5.0, -5.0, -4.5)` with
+both lines applied — half a node interval off, and not with the same sign on every
+axis.
+
+Where the origin lands *without* the two lines depends on the geometry, so the
+figure below is given for the one this repository actually writes.
+`tests/data/make_test_map.py` builds 21³ at 0.5 A centred on 0 — odd dimension,
+origin-centred, the phase's only real write-path exemplar — and there the unfixed
+file is exactly one node interval high on every axis: the node origin is `-5.0`,
+the exact node index is `-10`, and the unfixed header carries `-9` where the fixed
+header carries `-10`. That `+ 1` is specific to this exemplar and is not the
+general rule; on four of the seven geometries the unfixed writer already emitted
+the exact index and the origin came out right, and it was the node count that was
+wrong instead.
+
+This is an OpenEye write-path behaviour that the carrier switch exposes, not a
+maptitude API change. A grid that came from `OEReadGrid` does not need either
+line, so code that reads, scores and discards is unaffected; code that builds a
+grid and writes it is.
 
 **The break that is not a vanished method.** `GetSpacing()` still exists on
 `OESkewGrid` and still returns a single scalar, where there are now three
@@ -369,7 +401,11 @@ value there; the size of the move is the float-to-double residual of item 3. The
 four `SHELLS4` pins come from a fixture that differs from the single-shell
 `FC_ORTHORHOMBIC` case in one argument, `n_scale_shells` 4 against 1, and the
 per-shell branch is the only place that samples the observed map from the FFT
-origin item 6 moved; the single-shell pins beside it did not move.
+origin item 6 moved; the single-shell pins beside it did not move. Item 3 fires
+in that same loop — this release also swapped `interpolate_density` for
+`interpolate_density_at` there — but at the roughly 1e-7 relative scale given
+above it is more than four orders below the smallest of these four moves, so the
+attribution column stays at 6.
 
 | pin | from | to | relative change | correction |
 |---|---|---|---|---|
