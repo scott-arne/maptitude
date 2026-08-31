@@ -255,11 +255,80 @@ Derive the whole mapping from `get_grid_params(grid)`, whose per-axis origin, di
 and spacing give node positions directly — node `ix` sits at
 `x_origin + ix * x_spacing` — and use the linearization above.
 
+The coordinate-to-index direction needs its own recipe, and the binning is the
+part that catches people out:
+
+```python
+gp = maptitude.get_grid_params(grid)
+
+def x_idx(x):
+    # Half-spacing bins centred on nodes, matching the removed GetXIdx.
+    raw = math.floor((x - gp.x_origin) / gp.x_spacing + 0.5)
+    return min(max(raw, 0), gp.x_dim - 1)
+```
+
+`round()` is the wrong reach. On the geometry this was measured over — an
+`OEScalarGrid` built from the extents box `[-1.5, 1.5]` at spacing 1.0, which
+OpenEye expanded to four nodes at -1.5, -0.5, 0.5 and 1.5 — the clamped `floor`
+above reproduced `GetXIdx` on all 20 coordinates probed, and on the 14 of those
+`SpatialCoordToGridIdx` answered for it returned that same binning applied per
+axis, `SpatialCoordToElement` its linearization. Substituting
+`round((x - gp.x_origin) / gp.x_spacing)` for the `floor` disagreed on two of
+the 20, at exactly `x = -1.0` and `x = 1.0`, because Python rounds half to even
+where OpenEye takes the upper bin. It is a silent one-voxel shift, and it does
+not announce itself by striking every half-way coordinate: on a 10-node 1.0 A
+grid probed at all nine coordinates half way between adjacent nodes, `round`
+missed the five whose lower node index is even and matched the four whose lower
+index is odd.
+
+The two calls differ out of range, and only one of the two behaviours has a
+drop-in. `GetXIdx` clamped — on that grid it returned `0` for `x = -3.0` and `3`
+for `x = 3.0` — which is what the `min`/`max` above reproduces.
+`SpatialCoordToGridIdx` instead raised `IndexError: spatial coordinate out of
+range` outside the old half-spacing box, accepting `-2.0` and rejecting `2.0`.
+No maptitude predicate reproduces that domain: `grid_contains(gp, x, y, z)`
+tests the node span rather than the box and is therefore narrower — on that grid
+it is `True` at `-1.5` and `1.5` and `False` at `-1.75`, where
+`SpatialCoordToGridIdx` still answered `(0, 2, 2)`. Code that needs the old
+domain has to widen the node span by half a spacing per face itself.
+`grid_fractional_index`, which computes the unclamped fractional index, is C++
+only and is not on the Python surface.
+
 **Box geometry.** The `GetXMin`/`GetXMax` family, `SetXDim`, `SetXMid` and
-`IsXMidSet`, with their `Y` and `Z` counterparts, are gone. The node span
-`[origin_i, origin_i + (n_i - 1) * spacing_i]` from `get_grid_params` replaces
-the box, and it is not the same region: the old box lay half a node interval
-outside the first and last nodes on each face.
+`IsXMidSet`, with their `Y` and `Z` counterparts, are gone. For reading, the node
+span `[origin_i, origin_i + (n_i - 1) * spacing_i]` from `get_grid_params`
+replaces the box, and it is not the same region: the old box lay half a node
+interval outside the first and last nodes on each face.
+
+That span does not migrate the setters. `OESkewGrid` has no per-axis mutator, so
+code that changed one axis reads the other two back and passes all three:
+
+```python
+gp = maptitude.get_grid_params(g)
+
+# SetXMid(mx) becomes: recompute the two midpoints you are keeping.
+mid = [gp.x_origin + (gp.x_dim - 1) * gp.x_spacing / 2.0,
+       gp.y_origin + (gp.y_dim - 1) * gp.y_spacing / 2.0,
+       gp.z_origin + (gp.z_dim - 1) * gp.z_spacing / 2.0]
+assert g.SetMid(mx, mid[1], mid[2])
+
+# SetXDim(nx) becomes: pass the other two dims, then rebuild the cell.
+assert g.SetDim(nx, gp.y_dim, gp.z_dim)
+assert g.SetUnitCell(nx * gp.x_spacing, gp.y_dim * gp.y_spacing,
+                     gp.z_dim * gp.z_spacing, 90.0, 90.0, 90.0,
+                     nx, gp.y_dim, gp.z_dim)
+```
+
+That second `SetUnitCell` is not optional and nothing will remind you. `SetDim`
+leaves the unit cell at its old edges while `get_grid_params` reports the new
+geometry and stays self-consistent, so the grid still reads plausibly and fails
+only where the cell is used. Measured on a 4x6x8 grid spaced
+`(1.0, 0.5, 0.25)`, `SetDim(7, 6, 8)` alone left `get_unit_cell` reporting
+`a = 4.0` against a sampled extent of 7.0, and `interpolate_density_periodic`
+raised `CellError: ... got 4 A against 7 A (7 nodes at 1 A) ...`; reapplying
+`SetUnitCell` as above cleared it and the call returned. `SetMid` on its own does
+not need that second call: on the same grid it left all three dims and spacings
+and the cell itself untouched, moving only the origin.
 
 **Construction.** Both `OEScalarGrid` constructors are gone — the extents-box
 form `OEScalarGrid(OEDoubleArray, spacing)` and the seven-argument
@@ -338,9 +407,16 @@ grid and writes it is.
 spacings. Measured on three constructed grids whose smallest node interval was on
 x, on y and on z in turn, it returned the smallest of the three in every case —
 so it is right on an isotropic map and **wrong and silent** on an anisotropic
-one. This is the only item in this section that fails without raising. Downstream
-code reading a spacing off a grid bound for maptitude must derive three, from
-`get_grid_params(grid).x_spacing` and its siblings.
+one. Two items in this section fail without raising, and this is one; the other
+is the unfixed write path above, where `OEWriteGrid` returns `True` over a wrong
+file, so a migrator who verifies writes by checking that return value gets a
+false pass. Everywhere else in this section the break announces itself: the
+removed methods are absent from `OESkewGrid`, and an `OEScalarGrid` handed to a
+maptitude function raises `TypeError` at the boundary. Where a replacement's
+semantics differ from what it replaces, as under **Containment** and **Box
+geometry**, the item says so. Downstream code reading a spacing off a grid bound
+for maptitude must derive three, from `get_grid_params(grid).x_spacing` and its
+siblings.
 
 ### Why recorded values moved
 
@@ -359,9 +435,15 @@ numbered here so the pin table below can cite them.
 3. **Interpolation is maptitude's own trilinear kernel, with the node span closed
    on the far face.** `interpolate_density` returns a blend at `f == n - 1` where
    OpenEye returned the caller's default. The blend also runs in `double` where
-   the OpenEye call took `float` coordinates and returned a `float`, so every
-   interpolated value moves at roughly 1e-7 relative — including on an isotropic
-   map.
+   the OpenEye call took `float` coordinates and returned a `float`, a
+   float-precision residual that does not need an anisotropic map to appear.
+   Measured over all 216 `GUARD_SAMPLES` in
+   `tests/cpp/test_interpolation.cpp`, on the synthetic 4x4x4 polynomial field
+   those samples are defined against: 188 moved and 28 came back bit-identical
+   to OpenEye's `float`. The largest residual is `6.9227e-07` taken relative to
+   `max(1, abs(expected))`, the denominator that test uses, and `9.4116e-06`
+   taken as an absolute difference. That field is not a crystallographic map;
+   no equivalent sweep on one is recorded here.
 4. **The Q-score radial step** is taken from the smallest of the three node
    intervals rather than from one scalar spacing.
 5. **The calculated-density FFT sampling counts** are derived per axis, as
@@ -395,17 +477,28 @@ numbered here so the pin table below can cite them.
    the bug fix recorded under **Fixed** above. Unpinned, like items 7 and 8.
 
 **The pins that moved.** Six values in `tests/cpp/pin_values.h` changed, and no
-others. The two Q-score pins are read on `tests/data/test_map.ccp4`, which is
-exactly isotropic at 0.5 A on all three axes, so items 1, 4 and 5 cannot move a
-value there; the size of the move is the float-to-double residual of item 3. The
-four `SHELLS4` pins come from a fixture that differs from the single-shell
+others. The two Q-score pins are read on the in-memory fixture
+`generate_pins.cpp` builds as `ObsGrid()` —
+`MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 6.0, 0.5)`, so 25 nodes per axis running
+-6.0 to 6.0, exactly isotropic at 0.5 A, centred on the origin — and the
+consuming tests at `tests/cpp/test_metric_characterization.cpp:182` and `:190`
+call that same builder. That exact isotropy is why items 1, 4 and 5 cannot move
+a value there; the size of the move is the float-to-double residual of item 3.
+The four `SHELLS4` pins come from a fixture that differs from the single-shell
 `FC_ORTHORHOMBIC` case in one argument, `n_scale_shells` 4 against 1, and the
 per-shell branch is the only place that samples the observed map from the FFT
 origin item 6 moved; the single-shell pins beside it did not move. Item 3 fires
 in that same loop — this release also swapped `interpolate_density` for
-`interpolate_density_at` there — but at the roughly 1e-7 relative scale given
-above it is more than four orders below the smallest of these four moves, so the
-attribution column stays at 6.
+`interpolate_density_at` there — but it is a float-to-double residual where item
+6 is a half-spacing geometric move. The smallest of these four,
+`FC_ORTHORHOMBIC_SHELLS4_SUM` at `+0.0031862` relative, is 4 602.5 times the
+largest residual the guard sweep under item 3 found, 3.66 orders, and 251.5
+times that sweep's worst case against the plain `abs(expected)` denominator,
+`1.267e-05`, which is 2.40 orders. That sweep ran on the synthetic guard field
+and not on this fixture, so what it fixes is the scale a float-to-double
+narrowing works at, not a bound on this loop. A 0.32% move sits 2.40 to 3.66
+orders past that scale depending on the convention, so the attribution column
+stays at 6.
 
 | pin | from | to | relative change | correction |
 |---|---|---|---|---|
