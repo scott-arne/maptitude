@@ -144,3 +144,85 @@ def test_combine_maps_rejects_infinite_cell_edge() -> None:
     grid_b = _make_degenerate_grid(float("inf"), 2.0)
     with pytest.raises(maptitude.GridError):
         maptitude.combine_maps(grid_a, grid_b, maptitude.MapOp.ADD)
+
+
+def _make_anisotropic_grid(value: float = 1.0):
+    """Build a grid with all three axes distinct in both dim and spacing.
+
+    Uses dims (4, 5, 6) and spacing (0.5, 1.0, 2.0), giving edges (2.0, 5.0, 12.0).
+    An x/y spacing or dim swap is immediately visible through get_grid_params.
+    """
+    grid = oegrid.OESkewGrid()
+    assert grid.SetDim(4, 5, 6)
+    assert grid.SetUnitCell(2.0, 5.0, 12.0, 90.0, 90.0, 90.0, 4, 5, 6)
+    assert grid.SetMid(0.0, 0.0, 0.0)
+    gp = maptitude.get_grid_params(grid)
+    assert gp.x_dim == 4
+    assert gp.y_dim == 5
+    assert gp.z_dim == 6
+    assert gp.x_spacing == pytest.approx(0.5)
+    assert gp.y_spacing == pytest.approx(1.0)
+    assert gp.z_spacing == pytest.approx(2.0)
+    return _fill(grid, value)
+
+
+def test_diff_to_calc_preserves_anisotropic_geometry() -> None:
+    """diff_to_calc must preserve per-axis dims and spacings in order.
+
+    This test would fail if x and y dims or spacings were transposed by the
+    out typemap, because the fixture has all three axes distinct.
+    """
+    obs = _make_anisotropic_grid(2.0)
+    diff = _make_anisotropic_grid(1.0)
+    calc = maptitude.diff_to_calc(obs, diff)
+    assert calc is not None
+    gp = maptitude.get_grid_params(calc)
+    assert gp.x_dim == 4
+    assert gp.y_dim == 5
+    assert gp.z_dim == 6
+    assert gp.x_spacing == pytest.approx(0.5)
+    assert gp.y_spacing == pytest.approx(1.0)
+    assert gp.z_spacing == pytest.approx(2.0)
+    assert calc.GetValues()[0] == pytest.approx(0.0)
+
+
+def test_scale_map_preserves_anisotropic_geometry() -> None:
+    """scale_map must preserve per-axis dims and spacings after in-place mutation.
+
+    This test would fail if x and y dims or spacings were transposed by the
+    non-const in typemap, because the fixture has all three axes distinct.
+    """
+    grid = _make_anisotropic_grid(2.0)
+    maptitude.scale_map(grid, 3.0)
+    gp = maptitude.get_grid_params(grid)
+    assert gp.x_dim == 4
+    assert gp.y_dim == 5
+    assert gp.z_dim == 6
+    assert gp.x_spacing == pytest.approx(0.5)
+    assert gp.y_spacing == pytest.approx(1.0)
+    assert gp.z_spacing == pytest.approx(2.0)
+    assert grid.GetValues()[0] == pytest.approx(6.0)
+
+
+def test_wrap_and_pad_grid_padding_branch_preserves_anisotropic_geometry() -> None:
+    """wrap_and_pad_grid must preserve per-axis dims and spacings when padding.
+
+    Places an atom far outside the grid extent to force the padding branch.
+    The test would fail if x and y dims or spacings were transposed by the
+    out typemap, because the fixture has all three axes distinct.
+
+    The discriminating assertion is 'padded is not obs', which proves the
+    padding branch was taken. Without it, the test would pass on the nullptr
+    branch (which returns the original grid) and prove nothing about the
+    returned-grid path.
+    """
+    grid = _make_anisotropic_grid(1.0)
+    mol = oechem.OEGraphMol()
+    atom = mol.NewAtom(6)
+    mol.SetCoords(atom, oechem.OEFloatArray([50.0, 50.0, 50.0]))
+    padded = maptitude.wrap_and_pad_grid(grid, mol, 2.0, 5.0, 12.0, padding=3.0)
+    assert padded is not grid
+    gp = maptitude.get_grid_params(padded)
+    assert gp.x_spacing == pytest.approx(0.5)
+    assert gp.y_spacing == pytest.approx(1.0)
+    assert gp.z_spacing == pytest.approx(2.0)

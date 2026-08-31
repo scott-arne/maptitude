@@ -310,6 +310,19 @@ static PyObject* _maptitude_wrap_as_oe_skew_grid(OESystem::OESkewGrid* grid) {
         delete grid;
         return NULL;
     }
+    /* Validate the constructed object's type before extracting its pointer.
+       Restores the documented symmetry with the in-direction typemaps, which
+       all check the type. This catches a wrong-typed object constructed from a
+       rebound OESkewGrid name, but not a poisoned type cache (if the very
+       first use happens after the rebind) or a correct-typed object whose
+       'this' attribute has been reassigned. */
+    if (!_maptitude_is_oeskewgrid(oe_grid)) {
+        Py_DECREF(oe_grid);
+        delete grid;
+        PyErr_SetString(PyExc_TypeError,
+                        "constructed object is not an OESkewGrid");
+        return NULL;
+    }
     PyObject* thisAttr = PyObject_GetAttrString(oe_grid, "this");
     if (!thisAttr) {
         PyErr_Clear();
