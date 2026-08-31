@@ -400,14 +400,25 @@ them from the box at all: the old grid is still in hand during migration, and
 `GetXDim()`, `GetYDim()` and `GetZDim()` read the true dims straight off it.
 
 Rebuilding through the recipe, `get_grid_params` reported back exactly the dims
-passed to `SetDim` on all 600 rebuilds measured. Midpoints agree closely rather
-than exactly: the rebuilt midpoint equalled the old grid's on 271 of those 600 and
-agreed to within 8e-06 on all 600. Node *coordinates* likewise agree only to float
-precision — over the 428 rebuilds whose dims matched the old constructor's, node
-origins differed by up to 3.1e-06. Both carriers round coordinates to 32-bit float,
-and `OESkewGrid` derives node positions through the cell matrix rather than from
-the box. An assertion comparing rebuilt node coordinates against old ones needs a
-tolerance, not `==`.
+passed to `SetDim` on all 600 rebuilds measured, and the two carriers' midpoints
+matched exactly on all 600 — `GetXMid()`, `GetYMid()` and `GetZMid()` returned
+identical values on every one.
+
+What costs precision is recomputing that midpoint instead of reading it.
+Deriving it as `x_origin + (x_dim - 1) * x_spacing / 2` from `get_grid_params`
+reproduced the old grid's value on only 271 of those same 600, drifting up to
+7.7e-06. The spacing `get_grid_params` reports is re-derived from the cell
+rather than the value handed to the recipe — on one 36-node axis at a nominal
+0.35, `z_spacing` came back as `0.3500004359654018` — and `(dim - 1) / 2`
+multiplies that gap straight into a derived midpoint; on that axis alone
+17.5 × 4.4e-07 is 7.6e-06. Read the midpoint off the grid.
+
+Node *coordinates* differ even when they are read rather than derived. Over the
+428 rebuilds whose dims matched the old constructor's — grids whose midpoints
+and dims were therefore identical — `ElementToSpatialCoord(0)` returned a
+different origin on 178 of them, by up to 2.1e-06. Both carriers round
+coordinates to 32-bit float. An assertion comparing rebuilt node coordinates
+against old ones needs a tolerance, not `==`.
 
 **Writing a constructed grid.** A grid built by that recipe needs two more lines
 before `OEWriteGrid`, or the file it writes is wrong — and `OEWriteGrid` returns
