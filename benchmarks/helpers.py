@@ -92,8 +92,9 @@ def load_mrc_grid(mrc_path: pathlib.Path):
     ifs.close()
 
     # The header origin is the first node on each axis, so each midpoint is half
-    # a span along that axis's own node interval. GetSpacing() would hand back
-    # the smallest of the three for all of them.
+    # a span along that axis's own node interval, which is why the per-axis
+    # get_grid_params spacings are used below. OpenEye's single scalar spacing
+    # accessor would hand back the smallest of the three for all of them.
     gp = maptitude.get_grid_params(grid)
     grid.SetMid(
         origin_x + (gp.x_dim - 1) * gp.x_spacing / 2.0,
