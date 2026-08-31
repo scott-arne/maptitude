@@ -374,20 +374,28 @@ This is not exact everywhere. The old constructor's dim follows the floating-poi
 value of `minmax[i + 3] - minmax[i]` rather than the span written in the source, so
 where the box sits reaches the dim through the rounding of that subtraction: at a
 spacing of 0.05 the box `[0.0, 0.05]` gave dim 2 while `[2.5, 2.55]` gave dim 1,
-because
-`2.55 - 2.5` is `0.04999999999999982`. Across 2 430 boxes at nine placements, two
-that produced the same float span at the same spacing never disagreed, so placement
-reaches the dim only through that rounding.
+because `2.55 - 2.5` is `0.04999999999999982`. Across 2 430 boxes at nine
+placements, two that produced the same float span at the same spacing never
+disagreed, so placement reaches the dim only through that rounding.
 
 Over 10 560 boxes at twelve spacings and ten placements — 31 680 axes — the recipe
 was exact on all 960 boxes whose three lower corners were `0.0`, and differed from
 the old constructor on 888 axes. **Every one of those 888 was one node too many,
 never one too few**: across that set the recipe never dropped a boundary plane, and
 where it differed it left a redundant one — the opposite of the `int(span / sp) + 1`
-failure above. Every such difference needs a box edge sitting a whole number of
-spacings from its opposite edge, which is the condition the snap tests for; on
-3 000 boxes with arbitrary unrounded corners, both recipes and the old constructor
-agreed on every axis. A caller who needs the old dims exactly should not recompute
+failure above. A difference needs the snap's own condition to fire, and that
+condition is a tolerance band rather than exact divisibility: it fires when the
+span lands within `1e-9 * max(1, abs(span))` of the nearest integer multiple of
+the spacing. Landing inside the band is not the same as sitting a whole number of
+spacings from the opposite edge, and on a separate 9 600-box sweep the band is
+what did the work — the predicate fired on all 251 differences there, while only
+9 of those spans were an exact multiple. A span `1e-10` short of one spacing is
+already inside the band, because the band is never narrower than `1e-9`: at
+`sp = 1.0` the box `[0.0, 0.9999999999]` gives dim 1 from the old constructor and
+2 from the recipe. Where the span misses the band the recipe reduces to
+`int(span / sp) + 1` — over 3 000 boxes with arbitrary unrounded corners the
+predicate never fired once, and both recipes agreed with the old constructor on
+every axis. A caller who needs the old dims exactly should not recompute
 them from the box at all: the old grid is still in hand during migration, and
 `GetXDim()`, `GetYDim()` and `GetZDim()` read the true dims straight off it.
 
