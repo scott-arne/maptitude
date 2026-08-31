@@ -1,5 +1,6 @@
 """Shared utilities for maptitude vs bms-bio benchmarks."""
 
+import math
 import pathlib
 import re
 import struct
@@ -182,6 +183,31 @@ def load_ccp4_grid(ccp4_path: pathlib.Path):
     return grid, (a, b, c), symops_text
 
 
+# Mirrors PAD_INTERVAL_COUNT_TOL in include/maptitude/GridOps.h.
+_PAD_INTERVAL_COUNT_TOL = 1e-6
+
+
+def _pad_dim(extent, spacing):
+    """Node count covering *extent* at *spacing*, sized as the C++ path sizes it.
+
+    The interval count rounds up, because the node span is what the padding has
+    to cover: truncating it leaves part of the requested extent outside the
+    grid. The spacing is measured off float node coordinates, so an extent that
+    is an exact multiple of it divides to 10.000000000000002 and a bare ceil
+    would buy a spurious node; a ratio that close to a whole count is taken as
+    that count, and only a genuine remainder rounds up.
+
+    :param extent: Length the padded axis must cover (Angstroms).
+    :param spacing: Node interval on that axis (Angstroms).
+    :returns: Number of nodes, one more than the interval count.
+    """
+    intervals = extent / spacing
+    whole = round(intervals)
+    if abs(intervals - whole) <= _PAD_INTERVAL_COUNT_TOL * max(1.0, whole):
+        return int(whole) + 1
+    return math.ceil(intervals) + 1
+
+
 def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
     """Translate molecule into the unit cell and pad the grid if needed.
 
@@ -245,7 +271,7 @@ def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
         # midpoint that box implied and set them explicitly, keeping each axis
         # on its own node interval.
         sp = (gp.x_spacing, gp.y_spacing, gp.z_spacing)
-        dim = [int((minmax[i + 3] - minmax[i]) / sp[i]) + 1 for i in range(3)]
+        dim = [_pad_dim(minmax[i + 3] - minmax[i], sp[i]) for i in range(3)]
         mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
         padded = oegrid.OESkewGrid()
         # Checked, not assumed: these setters report failure by returning false
