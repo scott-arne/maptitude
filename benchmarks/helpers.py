@@ -247,10 +247,10 @@ def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
         dim = [int((minmax[i + 3] - minmax[i]) / sp[i]) + 1 for i in range(3)]
         mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
         padded = oegrid.OESkewGrid()
-        # Checked, not assumed: a rejected SetDim returns false and leaves the
-        # default 1x1x1 grid, and a rejected SetMid returns false and leaves the
-        # nodes where they were. Neither raises, so without these asserts the
-        # fill below would quietly return a grid with the wrong geometry.
+        # Checked, not assumed: these setters report failure by returning false
+        # rather than by raising. A rejected SetDim leaves the dims untouched;
+        # a rejected SetMid still moves the axes it did accept. Without these
+        # asserts the fill below would quietly return a grid with wrong geometry.
         assert padded.SetDim(*dim)
         assert padded.SetUnitCell(dim[0] * sp[0], dim[1] * sp[1], dim[2] * sp[2],
                                   90.0, 90.0, 90.0, *dim)
