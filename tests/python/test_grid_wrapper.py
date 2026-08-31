@@ -205,13 +205,15 @@ def test_scale_map_preserves_anisotropic_geometry() -> None:
 
 
 def test_wrap_and_pad_grid_padding_branch_preserves_anisotropic_geometry() -> None:
-    """wrap_and_pad_grid must preserve per-axis dims and spacings when padding.
+    """wrap_and_pad_grid must size each axis of the padded grid by its own spacing.
 
     Places an atom far outside the grid extent to force the padding branch.
-    The test would fail if x and y dims or spacings were transposed by the
-    out typemap, because the fixture has all three axes distinct.
+    Padding grows the grid, so the input dims are not preserved; what must hold
+    is that every axis keeps its own spacing and is resized by that spacing
+    alone. The test would fail if x and y dims or spacings were transposed by
+    the out typemap, because all three axes stay distinct in both.
 
-    The discriminating assertion is 'padded is not obs', which proves the
+    The discriminating assertion is 'padded is not grid', which proves the
     padding branch was taken. Without it, the test would pass on the nullptr
     branch (which returns the original grid) and prove nothing about the
     returned-grid path.
@@ -223,6 +225,11 @@ def test_wrap_and_pad_grid_padding_branch_preserves_anisotropic_geometry() -> No
     padded = maptitude.wrap_and_pad_grid(grid, mol, 2.0, 5.0, 12.0, padding=3.0)
     assert padded is not grid
     gp = maptitude.get_grid_params(padded)
+    # The lone atom has zero extent, so 3.0 A of padding per face spans 6.0 A on every
+    # axis; each axis divides that span by its own interval and adds the closing node.
+    assert gp.x_dim == 13
+    assert gp.y_dim == 7
+    assert gp.z_dim == 4
     assert gp.x_spacing == pytest.approx(0.5)
     assert gp.y_spacing == pytest.approx(1.0)
     assert gp.z_spacing == pytest.approx(2.0)
