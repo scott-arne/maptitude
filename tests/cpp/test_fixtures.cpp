@@ -101,9 +101,13 @@ TEST(FixturesTest, EmptyGridIsZeroFilled) {
     EXPECT_EQ(grid.GetSize(), 4913u);
     EXPECT_FLOAT_EQ(grid.GetSpacing(), 0.5f);
 
-    // The nodes, not the enclosing cell, are what every fixture consumer reads:
-    // pin the two extreme corners so a change in SetUnitCell/SetMid semantics
-    // surfaces here rather than as an unattributable drift in a metric pin.
+    // A change in SetUnitCell/SetMid semantics would move the nodes, and the
+    // node coordinates are what the metric pins read: pin the two extreme
+    // corners so such a change surfaces here rather than as an unattributable
+    // drift in a pin. The cell is not incidental either -- same_grid_geometry
+    // compares its six parameters, and generate_pins.cpp feeds fixture grids to
+    // combine_maps (src/GridOps.cpp:108) and diff_to_calc (:140), both of which
+    // call it -- so those six are pinned below as well.
     float x0, y0, z0, x1, y1, z1;
     grid.ElementToSpatialCoord(0u, x0, y0, z0);
     grid.ElementToSpatialCoord(grid.GetSize() - 1u, x1, y1, z1);
@@ -113,6 +117,17 @@ TEST(FixturesTest, EmptyGridIsZeroFilled) {
     EXPECT_NEAR(x1, 4.0f, 1e-5);
     EXPECT_NEAR(y1, 4.0f, 1e-5);
     EXPECT_NEAR(z1, 4.0f, 1e-5);
+
+    // 17 nodes at 0.5 A give an 8.5 A cell edge, one spacing more than the
+    // 8.0 A the nodes themselves span.
+    float ca, cb, cc, alpha, beta, gamma;
+    ASSERT_TRUE(grid.GetUnitCell(ca, cb, cc, alpha, beta, gamma));
+    EXPECT_NEAR(ca, 8.5f, 1e-5);
+    EXPECT_NEAR(cb, 8.5f, 1e-5);
+    EXPECT_NEAR(cc, 8.5f, 1e-5);
+    EXPECT_NEAR(alpha, 90.0f, 1e-5);
+    EXPECT_NEAR(beta, 90.0f, 1e-5);
+    EXPECT_NEAR(gamma, 90.0f, 1e-5);
 
     const float* values = grid.GetValues();
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {

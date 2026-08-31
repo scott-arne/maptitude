@@ -722,7 +722,7 @@ TEST(DensityCalculatorValidationTest, RejectsASpacingCoarserThanTheCell) {
     }
 }
 
-TEST(DensityCalculatorValidationTest, StillAcceptsASpacingThatRoundsToOnePoint) {
+TEST(DensityCalculatorValidationTest, StillAcceptsOneNodeIntervalSpanningTheCellEdge) {
     // One point per axis is the smallest usable grid; the guard rejects below it, not
     // at it. A 1.5 A cell at a 1.5 A node interval is one sample per axis.
     //

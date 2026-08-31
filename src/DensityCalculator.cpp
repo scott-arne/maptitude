@@ -495,8 +495,15 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     // The FFT grid samples the unit cell, so its counts come from the cell
     // edges and the map's per-axis intervals. Deriving them from one scalar
-    // spacing resampled two of the three axes: on 1d26 the header says
+    // spacing resampled one of the three axes: on 1d26 the header says
     // 48x48x24 and a scalar spacing gives 48x48x27.
+    //
+    // How far the map's sampling and the cell's may disagree before they are
+    // taken to describe different samplings rather than the same one recorded
+    // with rounding. On 1d26 the recorded edges and intervals agree to float
+    // precision on all three axes, which is orders of magnitude inside this.
+    constexpr double SAMPLING_AGREEMENT_TOLERANCE = 1e-3;
+
     const GridParams obs_gp = get_grid_params(obs_grid);
     const double edges[3] = {a, b, c};
     const double intervals[3] = {obs_gp.x_spacing, obs_gp.y_spacing, obs_gp.z_spacing};
@@ -506,14 +513,15 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
         counts[i] = static_cast<int>(std::round(edges[i] / intervals[i]));
         if (counts[i] < 1) continue;  // reported by the existing check below
         const double implied = edges[i] / counts[i];
-        if (std::abs(implied - intervals[i]) / intervals[i] > 1e-3) {
+        const double disagreement = std::abs(implied - intervals[i]) / intervals[i];
+        if (disagreement > SAMPLING_AGREEMENT_TOLERANCE) {
             std::ostringstream message;
             message << "Cell edge " << EDGE_NAMES[i] << " = " << edges[i]
                     << " A does not divide into the map's node interval of "
                     << intervals[i] << " A: " << counts[i] << " samples imply "
-                    << implied << " A, a relative disagreement of "
-                    << std::abs(implied - intervals[i]) / intervals[i]
-                    << " (limit 1e-3). The map and the cell describe different samplings";
+                    << implied << " A, a relative disagreement of " << disagreement
+                    << " (limit " << SAMPLING_AGREEMENT_TOLERANCE
+                    << "). The map and the cell describe different samplings";
             throw GridError(message.str());
         }
     }
@@ -521,9 +529,12 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
     const int ny = counts[1];
     const int nz = counts[2];
 
-    // A node interval at or above twice a cell edge rounds that dimension to zero,
+    // A node interval above twice a cell edge rounds that dimension to zero,
     // which both sizes the FFT allocation at zero and makes the Miller-index wrap
-    // below a division by zero -- undefined behavior, and SIGFPE on x86-64.
+    // below a division by zero -- undefined behavior, and SIGFPE on x86-64. At
+    // exactly twice the edge the ratio is 0.5 and std::round(0.5) is 1, so this
+    // branch does not fire; that case is rejected by the divisibility check
+    // above, whose relative disagreement of 0.5 is far past its tolerance.
     if (nx < 1 || ny < 1 || nz < 1) {
         const int failing = (nx < 1) ? 0 : (ny < 1) ? 1 : 2;
         std::ostringstream message;

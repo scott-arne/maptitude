@@ -7,7 +7,9 @@
 /// cross-machine flakiness when FFTW_ESTIMATE picks different codelets.
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -156,11 +158,17 @@ namespace {
 /// `SetUnitCell`, which is the property these two tests need absent.
 OESystem::OESkewGrid MakeCelllessGrid(float value) {
     OESystem::OESkewGrid grid;
-    EXPECT_TRUE(grid.SetDim(21u, 21u, 21u));
-    EXPECT_TRUE(grid.SetSpacing(0.5f));
-    EXPECT_TRUE(grid.SetMid(5.0f, 5.0f, 5.0f));
+    // The setters report failure by return value. EXPECT_* would record a
+    // failure and carry on into the loop below, which would then write through
+    // whatever GetValues() yields for a grid whose geometry was never
+    // established. ASSERT_* cannot be used instead: it expands to a bare return
+    // and this function returns a grid. So throw, as MakeEmptyGrid in
+    // fixtures.h does for the same reason.
+    if (!grid.SetDim(21u, 21u, 21u) || !grid.SetSpacing(0.5f) ||
+        !grid.SetMid(5.0f, 5.0f, 5.0f) || grid.GetValues() == nullptr) {
+        throw std::invalid_argument("MakeCelllessGrid: the skew carrier rejected the geometry");
+    }
     float* values = grid.GetValues();
-    EXPECT_NE(values, nullptr);
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
         values[i] = value;
     }
@@ -185,6 +193,25 @@ TEST(DensityCalculatorSampling, SucceedsOnAGridWithNoUnitCell) {
     DensityCalculator calc(cell, symops);
     std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
     ASSERT_NE(fc, nullptr);
+
+    // Non-null is not enough: an empty or zeroed allocation would pass it. The
+    // result is written into a grid built from the observed grid's geometry, so
+    // it carries the input's dimensions rather than the 40x50x60 FFT counts.
+    EXPECT_EQ(fc->GetXDim(), 21u);
+    EXPECT_EQ(fc->GetYDim(), 21u);
+    EXPECT_EQ(fc->GetZDim(), 21u);
+    ASSERT_EQ(fc->GetSize(), obs.GetSize());
+
+    const float* fc_values = fc->GetValues();
+    ASSERT_NE(fc_values, nullptr);
+    bool any_nonzero = false;
+    for (unsigned int i = 0; i < fc->GetSize(); ++i) {
+        ASSERT_TRUE(std::isfinite(fc_values[i])) << "non-finite density at element " << i;
+        if (fc_values[i] != 0.0f) {
+            any_nonzero = true;
+        }
+    }
+    EXPECT_TRUE(any_nonzero) << "the returned grid is entirely zero";
 }
 
 TEST(DensityCalculatorSampling, UsesTheConstructorCellNotTheGridCell) {

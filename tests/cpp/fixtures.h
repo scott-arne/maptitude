@@ -34,7 +34,16 @@ static inline OEChem::OEGraphMol MakeAtomMol(unsigned int atomic_num, double x, 
     return mol;
 }
 
-/// Build a cubic grid whose nodes span [-half_width, +half_width] on each axis.
+/// Build a cubic grid of `lround(2 * half_width / spacing) + 1` nodes per axis,
+/// the first at `-half_width` and the last at `-half_width + (n - 1) * spacing`.
+///
+/// That last node is `+half_width` only when the spacing divides `2 *
+/// half_width`. Every geometry under tests/cpp satisfies that except one,
+/// reached through `MakeGaussianGrid(..., HALF_WIDTH, c.spacing)` at
+/// test_metric_analytic.cpp:203 with `HALF_WIDTH = 4.0` and `c.spacing = 3.5`:
+/// it gives 3 nodes running -4.0 to 3.0, so the far face is never reached. That
+/// geometry is deliberate -- the test asserts that an adaptive Q-score sweep at
+/// a step this coarse raises -- so do not "fix" it here.
 ///
 /// The skew carrier has no extents-box constructor, so the geometry is set
 /// explicitly, as `MakeCubicGrid` in test_grid_ops.cpp does. The node count is
