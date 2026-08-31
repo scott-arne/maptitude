@@ -550,10 +550,13 @@ numbered here so the pin table below can cite them.
    the bounding-box edge — a half-spacing move.
 7. **`wrap_and_pad_grid`'s padding decision is tested against the node bounds**
    `[origin_i, origin_i + (n_i - 1) * spacing_i]` rather than the half-spacing
-   box. Relative to the old box each edge moves *inward* by half a spacing, so the
-   tested region shrinks by a full node interval per axis and `needs_pad` can only
-   flip `false` to `true`, never the reverse. **No case in the test suite
-   flipped.** The three tests that encode the decision as a literal assertion —
+   box. The old test anchored on `GetXMin()` — the box edge, half a spacing below
+   node 0 — and added the node-span width to it, so relative to that test both
+   edges move *up* by half a spacing: the tested region is translated by half a
+   node interval per axis and keeps its width. `needs_pad` can therefore flip in
+   either direction, `false` to `true` at the low edge and `true` to `false` at
+   the high edge. **No case in the test suite flipped.** The three tests that
+   encode the decision as a literal assertion —
    `WrapAndPadGridNoShiftNeeded` (`false` before, `false` after),
    `WrapAndPadGridCreatesPaddedGrid` (`true`, `true`) and
    `WrapAndPadReturnsNullptrOnlyWhenNoPaddingIsNeeded` (`false`, `false`) — all

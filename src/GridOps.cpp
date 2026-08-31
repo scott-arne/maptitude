@@ -299,10 +299,13 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     }
 
     // The interpolatable domain is the node span, not the bounding box, so the
-    // padding test asks whether the atoms fit inside the nodes. Relative to the
-    // old GetXMin/GetXMax box each edge moves inward by half a spacing, so the
-    // tested region shrinks by one spacing per axis and needs_pad can only flip
-    // false to true, never the reverse.
+    // padding test asks whether the atoms fit inside the nodes. The old test
+    // anchored on GetXMin() -- the box edge, half a spacing below node 0 -- and
+    // added the node-span width to it, so relative to that test both edges move
+    // up by half a spacing: the region is translated by s/2 and keeps its width.
+    // needs_pad can therefore flip in either direction, false to true at the low
+    // edge and true to false at the high edge. No case in the committed suite
+    // flips.
     const double grid_xmin = gp.x_origin;
     const double grid_ymin = gp.y_origin;
     const double grid_zmin = gp.z_origin;
