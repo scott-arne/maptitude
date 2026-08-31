@@ -22,7 +22,8 @@ TEST(FixturesTest, AtomMolIsFreshEachCall) {
 
 TEST(FixturesTest, GaussianMatchesClosedForm) {
     const double cx = 1.0, cy = -1.0, cz = 2.0, sigma = 0.6;
-    OESystem::OEScalarGrid grid = MakeGaussianGrid(cx, cy, cz, sigma, 4.0, 0.5);
+    OESystem::OESkewGrid grid = MakeGaussianGrid(cx, cy, cz, sigma, 4.0, 0.5);
+    const float* values = grid.GetValues();
 
     float peak = 0.0f;
     float peak_x = 0.0f, peak_y = 0.0f, peak_z = 0.0f;
@@ -31,10 +32,10 @@ TEST(FixturesTest, GaussianMatchesClosedForm) {
         grid.ElementToSpatialCoord(i, gx, gy, gz);
         const double dx = gx - cx, dy = gy - cy, dz = gz - cz;
         const double expected = std::exp(-(dx * dx + dy * dy + dz * dz) / (2.0 * sigma * sigma));
-        EXPECT_NEAR(grid[i], static_cast<float>(expected), 1e-5);
+        EXPECT_NEAR(values[i], static_cast<float>(expected), 1e-5);
 
-        if (grid[i] > peak) {
-            peak = grid[i];
+        if (values[i] > peak) {
+            peak = values[i];
             peak_x = gx;
             peak_y = gy;
             peak_z = gz;
@@ -48,38 +49,43 @@ TEST(FixturesTest, GaussianMatchesClosedForm) {
 }
 
 TEST(FixturesTest, UniformGridHasZeroSpread) {
-    OESystem::OEScalarGrid grid = MakeUniformGrid(2.5f, 4.0, 0.5);
+    OESystem::OESkewGrid grid = MakeUniformGrid(2.5f, 4.0, 0.5);
+    const float* values = grid.GetValues();
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        EXPECT_FLOAT_EQ(grid[i], 2.5f);
+        EXPECT_FLOAT_EQ(values[i], 2.5f);
     }
 }
 
 TEST(FixturesTest, RampGridHasNoDuplicateValues) {
-    OESystem::OEScalarGrid grid = MakeRampGrid(2.0, 1.0);
+    OESystem::OESkewGrid grid = MakeRampGrid(2.0, 1.0);
+    const float* values = grid.GetValues();
     std::set<float> seen;
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        EXPECT_TRUE(seen.insert(grid[i]).second) << "duplicate value at element " << i;
+        EXPECT_TRUE(seen.insert(values[i]).second) << "duplicate value at element " << i;
     }
 }
 
 TEST(FixturesTest, NegatedPairIsExactlyOpposite) {
     auto pair = MakeNegatedPair(MakeRampGrid(2.0, 1.0));
     ASSERT_EQ(pair.first.GetSize(), pair.second.GetSize());
+    const float* first_values = pair.first.GetValues();
+    const float* second_values = pair.second.GetValues();
     for (unsigned int i = 0; i < pair.first.GetSize(); ++i) {
-        EXPECT_FLOAT_EQ(pair.first[i], -pair.second[i]);
+        EXPECT_FLOAT_EQ(first_values[i], -second_values[i]);
     }
 }
 
 TEST(FixturesTest, RampGridAcceptsLargestValidGeometry) {
-    OESystem::OEScalarGrid grid = MakeRampGrid(4.5, 1.0);
+    OESystem::OESkewGrid grid = MakeRampGrid(4.5, 1.0);
     EXPECT_EQ(grid.GetXDim(), 10u);
     EXPECT_EQ(grid.GetYDim(), 10u);
     EXPECT_EQ(grid.GetZDim(), 10u);
     EXPECT_EQ(grid.GetSize(), 1000u);
 
+    const float* values = grid.GetValues();
     std::set<float> seen;
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        EXPECT_TRUE(seen.insert(grid[i]).second) << "duplicate value at element " << i;
+        EXPECT_TRUE(seen.insert(values[i]).second) << "duplicate value at element " << i;
     }
 }
 
@@ -88,15 +94,29 @@ TEST(FixturesTest, RampGridRejectsOversizedGeometry) {
 }
 
 TEST(FixturesTest, EmptyGridIsZeroFilled) {
-    OESystem::OEScalarGrid grid = MakeEmptyGrid(4.0, 0.5);
+    OESystem::OESkewGrid grid = MakeEmptyGrid(4.0, 0.5);
     EXPECT_EQ(grid.GetXDim(), 17u);
     EXPECT_EQ(grid.GetYDim(), 17u);
     EXPECT_EQ(grid.GetZDim(), 17u);
     EXPECT_EQ(grid.GetSize(), 4913u);
     EXPECT_FLOAT_EQ(grid.GetSpacing(), 0.5f);
 
+    // The nodes, not the enclosing cell, are what every fixture consumer reads:
+    // pin the two extreme corners so a change in SetUnitCell/SetMid semantics
+    // surfaces here rather than as an unattributable drift in a metric pin.
+    float x0, y0, z0, x1, y1, z1;
+    grid.ElementToSpatialCoord(0u, x0, y0, z0);
+    grid.ElementToSpatialCoord(grid.GetSize() - 1u, x1, y1, z1);
+    EXPECT_NEAR(x0, -4.0f, 1e-5);
+    EXPECT_NEAR(y0, -4.0f, 1e-5);
+    EXPECT_NEAR(z0, -4.0f, 1e-5);
+    EXPECT_NEAR(x1, 4.0f, 1e-5);
+    EXPECT_NEAR(y1, 4.0f, 1e-5);
+    EXPECT_NEAR(z1, 4.0f, 1e-5);
+
+    const float* values = grid.GetValues();
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        EXPECT_FLOAT_EQ(grid[i], 0.0f);
+        EXPECT_FLOAT_EQ(values[i], 0.0f);
     }
 }
 

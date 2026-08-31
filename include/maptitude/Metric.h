@@ -22,7 +22,7 @@ class OEAtomBase;
 }
 
 namespace OESystem {
-class OEScalarGrid;
+class OESkewGrid;
 }
 
 namespace OESystem {
@@ -46,10 +46,10 @@ namespace Maptitude {
  */
 DensityScoreResult rscc(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
-    const OESystem::OEScalarGrid* calc_grid = nullptr,
+    const OESystem::OESkewGrid* calc_grid = nullptr,
     const RsccOptions& options = RsccOptions());
 
 /**
@@ -67,10 +67,10 @@ DensityScoreResult rscc(
  */
 DensityScoreResult rsr(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
-    const OESystem::OEScalarGrid* calc_grid = nullptr,
+    const OESystem::OESkewGrid* calc_grid = nullptr,
     const RsrOptions& options = RsrOptions());
 
 /**
@@ -88,7 +88,7 @@ DensityScoreResult rsr(
  */
 DensityScoreResult qscore(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
     const QScoreOptions& options = QScoreOptions());
@@ -107,7 +107,7 @@ DensityScoreResult qscore(
  */
 DensityScoreResult ediam(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr);
 
@@ -125,7 +125,7 @@ DensityScoreResult ediam(
  */
 DensityScoreResult coverage(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
     const CoverageOptions& options = CoverageOptions());
 

@@ -82,7 +82,7 @@ TEST(GridIoTest, ReadsCommittedCcp4Map) {
 }
 
 TEST(GridIoTest, ScoresAgainstAMapReadFromDisk) {
-    OESystem::OEScalarGrid grid;
+    OESystem::OESkewGrid grid;
     ASSERT_TRUE(OESystem::OEReadGrid(TestMapPath(), grid));
 
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);

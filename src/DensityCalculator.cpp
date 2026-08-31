@@ -217,9 +217,10 @@ static std::vector<double> BuildSolventMask(
 static void InterpolateUCToGrid(
     const double* rho_3d, const int nx, const int ny, const int nz,
     const double a, const double b, const double c,
-    const OESystem::OEScalarGrid& out_template,
-    OESystem::OEScalarGrid& out_grid) {
+    const OESystem::OESkewGrid& out_template,
+    OESystem::OESkewGrid& out_grid) {
     const GridParams gp = get_grid_params(out_template);
+    float* out_values = out_grid.GetValues();
 
     for (unsigned int iz = 0; iz < gp.z_dim; ++iz) {
         const double z = gp.z_origin + iz * gp.z_spacing;
@@ -265,7 +266,7 @@ static void InterpolateUCToGrid(
 
                 const unsigned int elem = iz * gp.x_dim * gp.y_dim +
                                     iy * gp.x_dim + ix;
-                out_grid[elem] = static_cast<float>(val);
+                out_values[elem] = static_cast<float>(val);
             }
         }
     }
@@ -327,9 +328,9 @@ FftwPlanPtr MakePlan3d(int n0, int n1, int n2, fftw_complex* in, fftw_complex* o
 
 // ==== Main Calculate method ====
 
-OESystem::OEScalarGrid* DensityCalculator::Calculate(
+OESystem::OESkewGrid* DensityCalculator::Calculate(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& obs_grid,
+    const OESystem::OESkewGrid& obs_grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     double k_sol,
@@ -352,7 +353,6 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     const UnitCell& cell = pimpl_->cell;
     const auto& symops = pimpl_->symops;
     const double a = cell.a, b = cell.b, c = cell.c;
-    const double sp = obs_grid.GetSpacing();
 
     // ----------------------------------------------------------------
     // Step 1: Prepare structure - extract atom data
@@ -493,20 +493,43 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     // Step 6: Scatter Fc into 3D FFT array
     // ----------------------------------------------------------------
-    const int nx = static_cast<int>(std::round(a / sp));
-    const int ny = static_cast<int>(std::round(b / sp));
-    const int nz = static_cast<int>(std::round(c / sp));
+    // The FFT grid samples the unit cell, so its counts come from the cell
+    // edges and the map's per-axis intervals. Deriving them from one scalar
+    // spacing resampled two of the three axes: on 1d26 the header says
+    // 48x48x24 and a scalar spacing gives 48x48x27.
+    const GridParams obs_gp = get_grid_params(obs_grid);
+    const double edges[3] = {a, b, c};
+    const double intervals[3] = {obs_gp.x_spacing, obs_gp.y_spacing, obs_gp.z_spacing};
+    const char* const EDGE_NAMES[3] = {"a", "b", "c"};
+    int counts[3];
+    for (int i = 0; i < 3; ++i) {
+        counts[i] = static_cast<int>(std::round(edges[i] / intervals[i]));
+        if (counts[i] < 1) continue;  // reported by the existing check below
+        const double implied = edges[i] / counts[i];
+        if (std::abs(implied - intervals[i]) / intervals[i] > 1e-3) {
+            std::ostringstream message;
+            message << "Cell edge " << EDGE_NAMES[i] << " = " << edges[i]
+                    << " A does not divide into the map's node interval of "
+                    << intervals[i] << " A: " << counts[i] << " samples imply "
+                    << implied << " A, a relative disagreement of "
+                    << std::abs(implied - intervals[i]) / intervals[i]
+                    << " (limit 1e-3). The map and the cell describe different samplings";
+            throw GridError(message.str());
+        }
+    }
+    const int nx = counts[0];
+    const int ny = counts[1];
+    const int nz = counts[2];
 
-    // A spacing at or above twice a cell edge rounds that dimension to zero, which
-    // both sizes the FFT allocation at zero and makes the Miller-index wrap below a
-    // division by zero -- undefined behavior, and SIGFPE on x86-64.
+    // A node interval at or above twice a cell edge rounds that dimension to zero,
+    // which both sizes the FFT allocation at zero and makes the Miller-index wrap
+    // below a division by zero -- undefined behavior, and SIGFPE on x86-64.
     if (nx < 1 || ny < 1 || nz < 1) {
-        const double edge = (nx < 1) ? a : (ny < 1) ? b : c;
-        const char* axis = (nx < 1) ? "a" : (ny < 1) ? "b" : "c";
-        const int dim = (nx < 1) ? nx : (ny < 1) ? ny : nz;
+        const int failing = (nx < 1) ? 0 : (ny < 1) ? 1 : 2;
         std::ostringstream message;
-        message << "Grid spacing " << sp << " A is too coarse for cell edge " << axis << " = "
-                << edge << " A: the FFT grid would be " << dim
+        message << "Node interval " << intervals[failing] << " A is too coarse for cell edge "
+                << EDGE_NAMES[failing] << " = " << edges[failing]
+                << " A: the FFT grid would be " << counts[failing]
                 << " points along that axis. Use a spacing below half the shortest cell edge";
         throw GridError(message.str());
     }
@@ -671,17 +694,18 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         }
         fftw_complex* Fobs_3d = Fobs_3d_owner.get();
 
+        const float* obs_values = obs_grid.GetValues();
         for (int i = 0; i < nx; ++i) {
-            const double x = obs_grid.GetXMin() + (static_cast<double>(i) / nx) * a;
+            const double x = obs_gp.x_origin + (static_cast<double>(i) / nx) * a;
             for (int j = 0; j < ny; ++j) {
-                const double y = obs_grid.GetYMin() +
+                const double y = obs_gp.y_origin +
                                  (static_cast<double>(j) / ny) * b;
                 for (int k = 0; k < nz; ++k) {
-                    const double z = obs_grid.GetZMin() +
+                    const double z = obs_gp.z_origin +
                                      (static_cast<double>(k) / nz) * c;
                     const size_t flat = i * ny * nz + j * nz + k;
-                    obs_in[flat][0] = interpolate_density(
-                        obs_grid, x, y, z, 0.0);
+                    obs_in[flat][0] =
+                        interpolate_density_at(obs_gp, obs_values, x, y, z, 0.0);
                     obs_in[flat][1] = 0.0;
                 }
             }
@@ -801,7 +825,7 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     // Step 10: Trilinear interpolation onto output grid
     // ----------------------------------------------------------------
-    auto* calc_grid = new OESystem::OEScalarGrid(obs_grid);
+    auto* calc_grid = new OESystem::OESkewGrid(obs_grid);
     InterpolateUCToGrid(rho_3d.data(), nx, ny, nz, a, b, c,
                         obs_grid, *calc_grid);
 
@@ -811,6 +835,10 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
     float scale_coords[3];
     double sum_obs_calc = 0.0, sum_calc2 = 0.0;
 
+    const GridParams calc_gp = get_grid_params(*calc_grid);
+    const float* obs_values = obs_grid.GetValues();
+    const float* calc_values = calc_grid->GetValues();
+
     for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(); atom; ++atom) {
         if (atom->GetAtomicNum() == 1) continue;
         if (mask && !(*mask)(*atom)) continue;
@@ -818,11 +846,9 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
         mol.GetCoords(&(*atom), scale_coords);
         const float fx = scale_coords[0], fy = scale_coords[1], fz = scale_coords[2];
 
-        if (obs_grid.IsInGrid(fx, fy, fz)) {
-            const double obs_val = OESystem::OEFloatGridLinearInterpolate(
-                obs_grid, fx, fy, fz, 0.0f);
-            const double calc_val = OESystem::OEFloatGridLinearInterpolate(
-                *calc_grid, fx, fy, fz, 0.0f);
+        if (grid_contains(obs_gp, fx, fy, fz)) {
+            const double obs_val = interpolate_density_at(obs_gp, obs_values, fx, fy, fz, 0.0);
+            const double calc_val = interpolate_density_at(calc_gp, calc_values, fx, fy, fz, 0.0);
             sum_obs_calc += obs_val * calc_val;
             sum_calc2 += calc_val * calc_val;
         }
@@ -830,9 +856,10 @@ OESystem::OEScalarGrid* DensityCalculator::Calculate(
 
     if (sum_calc2 > 0.0) {
         const double k_scale = sum_obs_calc / sum_calc2;
+        float* out = calc_grid->GetValues();
         const unsigned int grid_sz = calc_grid->GetSize();
         for (unsigned int i = 0; i < grid_sz; ++i) {
-            (*calc_grid)[i] = static_cast<float>((*calc_grid)[i] * k_scale);
+            out[i] = static_cast<float>(out[i] * k_scale);
         }
     }
 

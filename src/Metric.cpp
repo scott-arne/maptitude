@@ -149,23 +149,25 @@ static void RequireUsableSweep(RadialSampling mode, double step, double max_r,
 
 // ---- OE-aware wrappers around detail helpers ----
 
-static MapStats compute_map_stats(const OESystem::OEScalarGrid& grid) {
+static MapStats compute_map_stats(const OESystem::OESkewGrid& grid) {
     const unsigned int size = grid.GetSize();
     if (size == 0) return {};
+    const float* raw = grid.GetValues();
     std::vector<double> values(size);
     for (unsigned int i = 0; i < size; ++i) {
-        values[i] = grid[i];
+        values[i] = raw[i];
     }
     return detail::compute_map_stats(values);
 }
 
-static void get_map_normalization(const OESystem::OEScalarGrid& grid,
+static void get_map_normalization(const OESystem::OESkewGrid& grid,
                                   double& A, double& B) {
     const unsigned int size = grid.GetSize();
     if (size == 0) { A = 1.0; B = 0.0; return; }
+    const float* raw = grid.GetValues();
     std::vector<double> values(size);
     for (unsigned int i = 0; i < size; ++i) {
-        values[i] = grid[i];
+        values[i] = raw[i];
     }
     detail::get_map_normalization(values.data(), values.size(), A, B);
 }
@@ -293,10 +295,10 @@ static double rsr_atom_radius(const RsrOptions& options, const OEChem::OEAtomBas
 
 DensityScoreResult rscc(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
-    const OESystem::OEScalarGrid* calc_grid,
+    const OESystem::OESkewGrid* calc_grid,
     const RsccOptions& options) {
     require_usable_resolution(resolution);
     if (options.GetAtomRadiusMethod() == AtomRadius::ADAPTIVE) {
@@ -315,12 +317,9 @@ DensityScoreResult rscc(
         throw GridError("calc_grid is required (auto-generation not yet supported)");
     }
 
-    // One carrier conversion for the whole call. get_atom_grid_points takes an
-    // OESkewGrid and OESkewGrid(const OEScalarGrid&) is not explicit, so calling it
-    // with `grid` deep-copies every voxel on every atom -- ~0.8 ms per copy on a
-    // 192^3 map. Task 4 moves this signature onto the skew carrier and the local
-    // goes away with it.
-    const OESystem::OESkewGrid skew_grid(grid);
+    const GridParams gp = get_grid_params(grid);
+    const float* obs_values = grid.GetValues();
+    const float* calc_values = calc_grid->GetValues();
 
     DensityScoreResult result;
     std::vector<double> all_obs, all_calc;
@@ -332,9 +331,7 @@ DensityScoreResult rscc(
             double x, y, z;
             GetAtomCoords(mol, *atom, x, y, z);
 
-            if (!grid.IsInGrid(static_cast<float>(x),
-                               static_cast<float>(y),
-                               static_cast<float>(z))) {
+            if (!grid_contains(gp, x, y, z)) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
                 continue;
@@ -342,7 +339,7 @@ DensityScoreResult rscc(
 
             const double radius = rscc_atom_radius(options, *atom, resolution);
 
-            auto pts = get_atom_grid_points(skew_grid, x, y, z, radius);
+            auto pts = get_atom_grid_points(grid, x, y, z, radius);
             if (pts.empty()) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
@@ -354,8 +351,8 @@ DensityScoreResult rscc(
             calc_vals.reserve(pts.size());
 
             for (unsigned int idx : pts) {
-                obs_vals.push_back(grid[idx]);
-                calc_vals.push_back((*calc_grid)[idx]);
+                obs_vals.push_back(obs_values[idx]);
+                calc_vals.push_back(calc_values[idx]);
             }
 
             // Per-atom RSCC
@@ -391,10 +388,10 @@ DensityScoreResult rscc(
 
 DensityScoreResult rsr(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
-    const OESystem::OEScalarGrid* calc_grid,
+    const OESystem::OESkewGrid* calc_grid,
     const RsrOptions& options) {
     require_usable_resolution(resolution);
     PrepareStructure(mol);
@@ -408,9 +405,9 @@ DensityScoreResult rsr(
         throw GridError("calc_grid is required (auto-generation not yet supported)");
     }
 
-    // One carrier conversion for the whole call; see the note in rscc. Task 4
-    // moves get_atom_grid_points's caller onto the skew carrier and this goes away.
-    const OESystem::OESkewGrid skew_grid(grid);
+    const GridParams gp = get_grid_params(grid);
+    const float* obs_values = grid.GetValues();
+    const float* calc_values = calc_grid->GetValues();
 
     DensityScoreResult result;
     std::vector<double> all_obs, all_calc;
@@ -422,9 +419,7 @@ DensityScoreResult rsr(
             double x, y, z;
             GetAtomCoords(mol, *atom, x, y, z);
 
-            if (!grid.IsInGrid(static_cast<float>(x),
-                               static_cast<float>(y),
-                               static_cast<float>(z))) {
+            if (!grid_contains(gp, x, y, z)) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
                 continue;
@@ -432,7 +427,7 @@ DensityScoreResult rsr(
 
             const double radius = rsr_atom_radius(options, *atom, resolution);
 
-            auto pts = get_atom_grid_points(skew_grid, x, y, z, radius);
+            auto pts = get_atom_grid_points(grid, x, y, z, radius);
             if (pts.empty()) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
@@ -444,8 +439,8 @@ DensityScoreResult rsr(
             calc_vals.reserve(pts.size());
 
             for (unsigned int idx : pts) {
-                obs_vals.push_back(grid[idx]);
-                calc_vals.push_back((*calc_grid)[idx]);
+                obs_vals.push_back(obs_values[idx]);
+                calc_vals.push_back(calc_values[idx]);
             }
 
             // Per-atom RSR: sum|obs-calc| / sum|obs+calc|
@@ -520,16 +515,16 @@ DensityScoreResult rsr(
 /// radius fails the radius check whatever the step is. Neither supports a conclusion about
 /// the step, so a molecule of nothing but those still returns per-atom NaN.
 static void RequireSomeAtomCanSweep(
-    const OEChem::OEMolBase& mol, const OESystem::OEScalarGrid& grid,
+    const OEChem::OEMolBase& mol, const OESystem::OESkewGrid& grid,
     const std::map<Residue, std::vector<const OEChem::OEAtomBase*>>& residue_atoms, double step,
     unsigned int num_points) {
+    const GridParams gp = get_grid_params(grid);
     std::string first_failure;
     for (const auto& [res, atoms] : residue_atoms) {
         for (const auto* atom : atoms) {
             double x, y, z;
             GetAtomCoords(mol, *atom, x, y, z);
-            if (!grid.IsInGrid(static_cast<float>(x), static_cast<float>(y),
-                               static_cast<float>(z))) {
+            if (!grid_contains(gp, x, y, z)) {
                 continue;
             }
             const double max_r = atom->GetRadius() * 2.0;
@@ -555,7 +550,7 @@ static void RequireSomeAtomCanSweep(
 
 DensityScoreResult qscore(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const QScoreOptions& options) {
@@ -584,7 +579,10 @@ DensityScoreResult qscore(
     }
 
     constexpr int MIN_SHELLS = 7;
-    const double grid_spacing = grid.GetSpacing();
+    const GridParams gp = get_grid_params(grid);
+    // The finest sampled direction sets the shell interval: a step taken from a
+    // coarser axis would skip nodes along the fine one.
+    const double grid_spacing = std::min({gp.x_spacing, gp.y_spacing, gp.z_spacing});
 
     // Reject every failure the call is responsible for here, before any per-atom work.
     // FIXED's whole sweep qualifies, and the two precompute loops below would otherwise
@@ -633,11 +631,7 @@ DensityScoreResult qscore(
         }
     }
 
-    // One carrier conversion for the whole call; see the note in rscc. qscore is
-    // the worst of the five: it interpolates once per sample point, tens of points
-    // per shell and several shells per atom. Task 4 moves interpolate_density's
-    // caller onto the skew carrier and this goes away.
-    const OESystem::OESkewGrid skew_grid(grid);
+    const float* values = grid.GetValues();
 
     DensityScoreResult result;
     std::vector<double> all_q;
@@ -649,9 +643,7 @@ DensityScoreResult qscore(
             double x, y, z;
             GetAtomCoords(mol, *atom, x, y, z);
 
-            if (!grid.IsInGrid(static_cast<float>(x),
-                               static_cast<float>(y),
-                               static_cast<float>(z))) {
+            if (!grid_contains(gp, x, y, z)) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
                 continue;
@@ -671,8 +663,7 @@ DensityScoreResult qscore(
                 step = options.GetRadialStep();
                 max_r = options.GetMaxRadius();
             } else {
-                step = std::min(static_cast<double>(grid_spacing),
-                                resolution / MIN_SHELLS);
+                step = std::min(grid_spacing, resolution / MIN_SHELLS);
                 max_r = atom->GetRadius() * 2.0;
                 // The adaptive radius comes from the atom, so an unusable sweep is a fact
                 // about this atom and not about the request. Score it NaN and carry on, the
@@ -795,8 +786,8 @@ DensityScoreResult qscore(
             std::vector<double> map_vals;
             std::vector<double> map_refs;
             for (size_t i = 0; i < sample_x.size(); ++i) {
-                const double val = interpolate_density(
-                    skew_grid, sample_x[i], sample_y[i], sample_z[i],
+                const double val = interpolate_density_at(
+                    gp, values, sample_x[i], sample_y[i], sample_z[i],
                     std::numeric_limits<double>::quiet_NaN());
                 if (!std::isnan(val)) {
                     map_vals.push_back(val);
@@ -842,7 +833,7 @@ DensityScoreResult qscore(
 
 DensityScoreResult ediam(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask) {
     require_usable_resolution(resolution);
@@ -855,9 +846,8 @@ DensityScoreResult ediam(
 
     const double rho_expected = 1.5 / (resolution * resolution);
 
-    // One carrier conversion for the whole call; see the note in rscc. Task 4
-    // moves interpolate_density's caller onto the skew carrier and this goes away.
-    const OESystem::OESkewGrid skew_grid(grid);
+    const GridParams gp = get_grid_params(grid);
+    const float* values = grid.GetValues();
 
     DensityScoreResult result;
     std::vector<double> all_scores;
@@ -869,9 +859,7 @@ DensityScoreResult ediam(
             double x, y, z;
             GetAtomCoords(mol, *atom, x, y, z);
 
-            if (!grid.IsInGrid(static_cast<float>(x),
-                               static_cast<float>(y),
-                               static_cast<float>(z))) {
+            if (!grid_contains(gp, x, y, z)) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
                 continue;
@@ -879,7 +867,7 @@ DensityScoreResult ediam(
 
             // Sample at atom center
             std::vector<double> sigmoid_vals;
-            const double rho = interpolate_density(skew_grid, x, y, z,
+            const double rho = interpolate_density_at(gp, values, x, y, z,
                                                   std::numeric_limits<double>::quiet_NaN());
             if (!std::isnan(rho) && rho_expected > 0.0) {
                 sigmoid_vals.push_back(ediam_sigmoid(rho / rho_expected));
@@ -897,7 +885,7 @@ DensityScoreResult ediam(
                 const double my = (y + ny) / 2.0;
                 const double mz = (z + nz) / 2.0;
 
-                const double mid_rho = interpolate_density(skew_grid, mx, my, mz,
+                const double mid_rho = interpolate_density_at(gp, values, mx, my, mz,
                     std::numeric_limits<double>::quiet_NaN());
                 if (!std::isnan(mid_rho) && rho_expected > 0.0) {
                     sigmoid_vals.push_back(
@@ -942,7 +930,7 @@ DensityScoreResult ediam(
 
 DensityScoreResult coverage(
     OEChem::OEMolBase& mol,
-    const OESystem::OEScalarGrid& grid,
+    const OESystem::OESkewGrid& grid,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const CoverageOptions& options) {
     PrepareStructure(mol);
@@ -955,9 +943,8 @@ DensityScoreResult coverage(
     const MapStats stats = compute_map_stats(grid);
     const double threshold = stats.mean + sigma * stats.stddev;
 
-    // One carrier conversion for the whole call; see the note in rscc. Task 4
-    // moves interpolate_density's caller onto the skew carrier and this goes away.
-    const OESystem::OESkewGrid skew_grid(grid);
+    const GridParams gp = get_grid_params(grid);
+    const float* values = grid.GetValues();
 
     DensityScoreResult result;
     std::vector<double> all_scores;
@@ -969,15 +956,13 @@ DensityScoreResult coverage(
             double x, y, z;
             GetAtomCoords(mol, *atom, x, y, z);
 
-            if (!grid.IsInGrid(static_cast<float>(x),
-                               static_cast<float>(y),
-                               static_cast<float>(z))) {
+            if (!grid_contains(gp, x, y, z)) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();
                 continue;
             }
 
-            const double rho = interpolate_density(skew_grid, x, y, z);
+            const double rho = interpolate_density_at(gp, values, x, y, z);
             if (std::isnan(rho)) {
                 result.by_atom[atom->GetIdx()] =
                     std::numeric_limits<double>::quiet_NaN();

@@ -23,7 +23,7 @@ class OEAtomBase;
 }
 
 namespace OESystem {
-class OEScalarGrid;
+class OESkewGrid;
 }
 
 namespace OESystem {
@@ -104,7 +104,7 @@ std::vector<MillerIndex> GenerateMillerIndices(double a, double b, double c, dou
  * auto symops = SymOp::ParseAll("x,y,z\n-x,y+1/2,-z+1/2");
  *
  * DensityCalculator calc(cell, symops);
- * OESystem::OEScalarGrid* result = calc.Calculate(
+ * OESystem::OESkewGrid* result = calc.Calculate(
  *     mol, obs_grid, 2.0);  // 2.0 A resolution
  * @endcode
  */
@@ -142,11 +142,11 @@ public:
      * @param include_h Include hydrogen atoms (default: false).
      * @param n_scale_shells Number of per-shell scaling bins, in
      *        [1, MAX_SCALE_SHELLS] (default: 1).
-     * @return New OEScalarGrid with computed density. Caller owns the pointer.
+     * @return New OESkewGrid with computed density. Caller owns the pointer.
      */
-    OESystem::OEScalarGrid* Calculate(
+    OESystem::OESkewGrid* Calculate(
         OEChem::OEMolBase& mol,
-        const OESystem::OEScalarGrid& obs_grid,
+        const OESystem::OESkewGrid& obs_grid,
         double resolution,
         const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
         double k_sol = 0.35,

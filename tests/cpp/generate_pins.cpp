@@ -38,11 +38,11 @@ void Emit(std::ostream& os, const std::string& name, double value) {
     os << "constexpr double " << name << " = " << std::setprecision(17) << value << ";\n";
 }
 
-OESystem::OEScalarGrid ObsGrid() {
+OESystem::OESkewGrid ObsGrid() {
     return MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
 }
 
-OESystem::OEScalarGrid CalcGrid() {
+OESystem::OESkewGrid CalcGrid() {
     return MakeGaussianGrid(0.25, -0.1, 0.15, 1.1, HALF_WIDTH, SPACING);
 }
 
@@ -64,8 +64,8 @@ OEChem::OEGraphMol MakeTwoCarbonMol() {
 }
 
 void EmitMetricPins(std::ostream& os) {
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
 
     {
         OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
@@ -211,14 +211,14 @@ void EmitFcPins(std::ostream& os) {
 
     OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
     DensityCalculator calc(ortho, symops);
-    OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
-    std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
+    OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
+    std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
     EmitGridSummary(os, "FC_ORTHORHOMBIC", *fc);
 
     // Orthorhombic with n_scale_shells = 4, to cover the per-shell FFT scaling branch.
     OEChem::OEGraphMol mol3 = MakeAtomMol(6, 5.0, 5.0, 5.0);
     DensityCalculator calc3(ortho, symops);
-    std::unique_ptr<OESystem::OEScalarGrid> fc3(
+    std::unique_ptr<OESystem::OESkewGrid> fc3(
         calc3.Calculate(mol3, obs, RESOLUTION, nullptr, 0.35, 46.0, false, 4));
     EmitGridSummary(os, "FC_ORTHORHOMBIC_SHELLS4", *fc3);
 
@@ -232,8 +232,8 @@ void EmitFcPins(std::ostream& os) {
     // leaves it in place as the surviving permutation guard.
     OEChem::OEGraphMol mol4 = MakeAtomMol(6, 5.0, 2.0, -1.0);
     DensityCalculator calc4(ortho, symops);
-    OESystem::OEScalarGrid obs4 = MakeGaussianGrid(5.0, 2.0, -1.0, 1.0, HALF_WIDTH, SPACING);
-    std::unique_ptr<OESystem::OEScalarGrid> fc4(calc4.Calculate(mol4, obs4, RESOLUTION));
+    OESystem::OESkewGrid obs4 = MakeGaussianGrid(5.0, 2.0, -1.0, 1.0, HALF_WIDTH, SPACING);
+    std::unique_ptr<OESystem::OESkewGrid> fc4(calc4.Calculate(mol4, obs4, RESOLUTION));
     EmitGridSummary(os, "FC_ORTHORHOMBIC_ASYM", *fc4);
 }
 

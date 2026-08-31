@@ -23,7 +23,7 @@ constexpr double RESOLUTION = 2.0;
 
 TEST(MetricAnalyticTest, RsccOfMapWithItselfIsOne) {
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    OESystem::OEScalarGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
+    OESystem::OESkewGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
     DensityScoreResult result = rscc(mol, grid, RESOLUTION, nullptr, &grid);
     EXPECT_NEAR(result.overall, 1.0, 1e-9);
 }
@@ -36,16 +36,17 @@ TEST(MetricAnalyticTest, RsccOfExactNegationIsMinusOne) {
 }
 
 TEST(MetricAnalyticTest, RsccIsInvariantUnderPositiveAffineRescaling) {
-    OESystem::OEScalarGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
-    OESystem::OEScalarGrid calc = MakeGaussianGrid(0.3, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
+    OESystem::OESkewGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
+    OESystem::OESkewGrid calc = MakeGaussianGrid(0.3, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
 
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
     const double baseline = rscc(mol, grid, RESOLUTION, nullptr, &calc).overall;
 
     // rho -> 3*rho + 7 must not move a correlation coefficient.
-    OESystem::OEScalarGrid rescaled(grid);
+    OESystem::OESkewGrid rescaled(grid);
+    float* rescaled_values = rescaled.GetValues();
     for (unsigned int i = 0; i < rescaled.GetSize(); ++i) {
-        rescaled[i] = 3.0f * rescaled[i] + 7.0f;
+        rescaled_values[i] = 3.0f * rescaled_values[i] + 7.0f;
     }
     OEChem::OEGraphMol mol2 = MakeAtomMol(6, 0.0, 0.0, 0.0);
     const double rescaled_score = rscc(mol2, rescaled, RESOLUTION, nullptr, &calc).overall;
@@ -60,14 +61,14 @@ TEST(MetricAnalyticTest, RsccIsInvariantUnderPositiveAffineRescaling) {
 
 TEST(MetricAnalyticTest, RsrOfIdenticalMapsIsZero) {
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    OESystem::OEScalarGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
+    OESystem::OESkewGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
     DensityScoreResult result = rsr(mol, grid, RESOLUTION, nullptr, &grid);
     EXPECT_NEAR(result.overall, 0.0, 1e-9);
 }
 
 TEST(MetricAnalyticTest, RsrIsSymmetricInItsTwoMaps) {
-    OESystem::OEScalarGrid a = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
-    OESystem::OEScalarGrid b = MakeGaussianGrid(0.5, 0.0, 0.0, 1.2, HALF_WIDTH, SPACING);
+    OESystem::OESkewGrid a = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
+    OESystem::OESkewGrid b = MakeGaussianGrid(0.5, 0.0, 0.0, 1.2, HALF_WIDTH, SPACING);
 
     OEChem::OEGraphMol mol_ab = MakeAtomMol(6, 0.0, 0.0, 0.0);
     OEChem::OEGraphMol mol_ba = MakeAtomMol(6, 0.0, 0.0, 0.0);
@@ -84,13 +85,13 @@ TEST(MetricAnalyticTest, CoverageOnUniformMapIsOne) {
     // the scoring comparison is >=. Every sampled point is a hit. This is a
     // property of the definition, not a bug: do not "fix" it to 0.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    OESystem::OEScalarGrid grid = MakeUniformGrid(1.0f, HALF_WIDTH, SPACING);
+    OESystem::OESkewGrid grid = MakeUniformGrid(1.0f, HALF_WIDTH, SPACING);
     DensityScoreResult result = coverage(mol, grid);
     EXPECT_NEAR(result.overall, 1.0, 1e-12);
 }
 
 TEST(MetricAnalyticTest, CoverageIsMonotonicNonIncreasingInSigma) {
-    OESystem::OEScalarGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, 1.5, HALF_WIDTH, SPACING);
+    OESystem::OESkewGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, 1.5, HALF_WIDTH, SPACING);
 
     std::vector<double> scores;
     double previous = 1.0;
@@ -115,7 +116,7 @@ TEST(MetricAnalyticTest, CoverageIsMonotonicNonIncreasingInSigma) {
 
 TEST(MetricAnalyticTest, QScoreIsNearOneForTheReferenceGaussian) {
     QScoreOptions options;
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 
@@ -129,7 +130,7 @@ TEST(MetricAnalyticTest, QScoreIsNearOneForTheReferenceGaussian) {
 TEST(MetricAnalyticTest, EdiamIsMonotonicNonDecreasingInUniformLevel) {
     double previous = -1e30;
     for (float level : {0.1f, 0.5f, 1.0f, 2.0f}) {
-        OESystem::OEScalarGrid grid = MakeUniformGrid(level, HALF_WIDTH, SPACING);
+        OESystem::OESkewGrid grid = MakeUniformGrid(level, HALF_WIDTH, SPACING);
         OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
         const double score = ediam(mol, grid, RESOLUTION).overall;
         EXPECT_GE(score, previous - 1e-12) << "EDIAm fell when the level rose to " << level;
@@ -148,7 +149,7 @@ TEST(MetricAnalyticTest, QScoreRejectsAnAdaptiveSweepWithAnUnusableStep) {
     // advances. Before this guard existed the call hung instead of returning.
     QScoreOptions options;
     options.SetRadialSampling(RadialSampling::ADAPTIVE);
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 
@@ -164,7 +165,7 @@ TEST(MetricAnalyticTest, QScoreAdaptiveFailsOnlyTheAtomWithNoRadius) {
     // failure now scopes to the atom, matching how an out-of-grid atom is handled.
     QScoreOptions options;
     options.SetRadialSampling(RadialSampling::ADAPTIVE);
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
 
     // OEAssignBondiVdWRadii leaves an atomic number of zero at radius 0.0.
@@ -199,7 +200,7 @@ TEST(MetricAnalyticTest, QScoreRejectsAnAdaptiveStepNoAtomCanSweep) {
     for (const Case& c : {Case{30.0, 4.0}, Case{25.0, 3.5}}) {
         QScoreOptions options;
         options.SetRadialSampling(RadialSampling::ADAPTIVE);
-        OESystem::OEScalarGrid grid =
+        OESystem::OESkewGrid grid =
             MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, c.spacing);
         OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 
@@ -214,7 +215,7 @@ TEST(MetricAnalyticTest, QScoreStillAcceptsAnAdaptiveSweepAtWorkingSpacing) {
     // that is pin_values.h's job -- only that it is a real score rather than NaN.
     QScoreOptions options;
     options.SetRadialSampling(RadialSampling::ADAPTIVE);
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 
@@ -236,7 +237,7 @@ TEST(MetricAnalyticTest, QScoreAdaptiveFailsOnlyTheAtomTooSmallForTheStep) {
     // produces no shell, while the 1.7 A atom's spans 3.4 A and sweeps normally.
     QScoreOptions options;
     options.SetRadialSampling(RadialSampling::ADAPTIVE);
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
 
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
@@ -263,7 +264,7 @@ TEST(MetricAnalyticTest, QScoreRejectsAFixedSweepWithNoShells) {
     QScoreOptions options;
     options.SetRadialStep(1.0);
     options.SetMaxRadius(0.1);
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 
@@ -277,7 +278,7 @@ TEST(MetricAnalyticTest, QScoreRejectsAFixedSweepWithTooManyShells) {
     // own setter, so only the consumption-point check can catch the combination.
     QScoreOptions options;
     options.SetRadialStep(MIN_RADIAL_STEP);
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 
@@ -293,7 +294,7 @@ TEST(MetricAnalyticTest, QScoreRejectsASweepWhoseShellPointProductIsUnbounded) {
     options.SetRadialStep(MIN_RADIAL_STEP);
     options.SetMaxRadius(0.5);
     options.SetNumPoints(MAX_NUM_POINTS);
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 
@@ -323,7 +324,7 @@ TEST(MetricAnalyticTest, QScoreStillAcceptsAMidBandSampleCount) {
     QScoreOptions options;
     options.SetRadialStep(0.01);
     options.SetMaxRadius(2.0);
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 
@@ -334,7 +335,7 @@ TEST(MetricAnalyticTest, QScoreStillAcceptsTheDefaultSweep) {
     // The guard must not narrow the working configuration. This is the neutrality
     // half of the two tests above.
     QScoreOptions options;
-    OESystem::OEScalarGrid grid =
+    OESystem::OESkewGrid grid =
         MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), HALF_WIDTH, SPACING);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
 

@@ -537,8 +537,8 @@ TEST(EnumSetterValidationTest, ARejectedAtomRadiusLeavesScoringOnTheDeclaredMode
     // bit-identical to a pristine object's and no atom scores NaN. The same sequence
     // returned overall = 1.0 with every by_atom entry NaN before the setter validated.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
-    const OESystem::OEScalarGrid calc = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OESkewGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OESkewGrid calc = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
 
     RsccOptions pristine;
     const DensityScoreResult reference = rscc(mol, obs, 2.0, nullptr, &calc, pristine);
@@ -589,7 +589,7 @@ TEST(EnumSetterValidationTest, ARejectedRadialSamplingLeavesTheFixedSweepGuarded
     EXPECT_THROW(options.SetRadialSampling(static_cast<RadialSampling>(42)),
                  std::invalid_argument);
 
-    OESystem::OEScalarGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), 3.0, 0.5);
+    OESystem::OESkewGrid grid = MakeGaussianGrid(0.0, 0.0, 0.0, options.GetSigma(), 3.0, 0.5);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
     EXPECT_THROW(qscore(mol, grid, 2.0, nullptr, options), GridError);
 }
@@ -634,8 +634,8 @@ TEST(ResolutionValidationTest, EveryEntryPointRejectsNonFiniteResolution) {
     const double pos_inf = std::numeric_limits<double>::infinity();
 
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
-    const OESystem::OEScalarGrid calc = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OESkewGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OESkewGrid calc = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
 
     for (double bad : {nan_value, pos_inf, -pos_inf, 0.0, -1.0}) {
         EXPECT_THROW(rscc(mol, obs, bad, nullptr, &calc), GridError) << "resolution " << bad;
@@ -653,8 +653,8 @@ TEST(ResolutionValidationTest, StillAcceptsAFinitePositiveResolution) {
     // The accepting half: one shared guard must not narrow what the five entry
     // points take.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
-    const OESystem::OEScalarGrid calc = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OESkewGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OESkewGrid calc = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
 
     EXPECT_NO_THROW(rscc(mol, obs, 2.0, nullptr, &calc));
     EXPECT_NO_THROW(rsr(mol, obs, 2.0, nullptr, &calc));
@@ -673,7 +673,7 @@ TEST(DensityCalculatorValidationTest, RejectsAnUnboundedScaleShellCount) {
     // shell-edge vector is empty, and `i <= UINT_MAX` never ends -- a non-terminating
     // loop writing past the end of an empty vector on every iteration.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
-    const OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 3.0, 1.0);
+    const OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 3.0, 1.0);
     DensityCalculator density(UnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0),
                               SymOp::ParseAll("x,y,z"));
 
@@ -690,7 +690,7 @@ TEST(DensityCalculatorValidationTest, StillAcceptsScaleShellCountsUpToTheLimit) 
     // The accepting half of the bound. MAX_SCALE_SHELLS itself must work, or the
     // guard has narrowed the usable range rather than closing the wrap.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
-    const OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 3.0, 1.0);
+    const OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 3.0, 1.0);
     DensityCalculator density(UnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0),
                               SymOp::ParseAll("x,y,z"));
 
@@ -709,7 +709,7 @@ TEST(DensityCalculatorValidationTest, RejectsASpacingCoarserThanTheCell) {
     // geometry still reaches FFTW and dies there with "FFTW planning failed", so a
     // bare EXPECT_THROW(GridError) passes on arm64 whether the guard exists or not.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 5.0, 5.0);
+    const OESystem::OESkewGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 5.0, 5.0);
     DensityCalculator density(UnitCell(2.0, 2.0, 2.0, 90.0, 90.0, 90.0),
                               SymOp::ParseAll("x,y,z"));
 
@@ -724,10 +724,15 @@ TEST(DensityCalculatorValidationTest, RejectsASpacingCoarserThanTheCell) {
 
 TEST(DensityCalculatorValidationTest, StillAcceptsASpacingThatRoundsToOnePoint) {
     // One point per axis is the smallest usable grid; the guard rejects below it, not
-    // at it. cell 2 A at 1.5 A spacing rounds to 1.
+    // at it. A 1.5 A cell at a 1.5 A node interval is one sample per axis.
+    //
+    // The cell was 2 A here while the count came from round(edge / spacing), which
+    // reached 1 from a 33% disagreement between the map's sampling and the cell's.
+    // The per-axis derivation checks that agreement rather than rounding past it, so
+    // the count of one now has to be an exact count of one.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 4.5, 1.5);
-    DensityCalculator density(UnitCell(2.0, 2.0, 2.0, 90.0, 90.0, 90.0),
+    const OESystem::OESkewGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 4.5, 1.5);
+    DensityCalculator density(UnitCell(1.5, 1.5, 1.5, 90.0, 90.0, 90.0),
                               SymOp::ParseAll("x,y,z"));
 
     EXPECT_NO_THROW(delete density.Calculate(mol, obs, 2.0));
@@ -743,7 +748,7 @@ TEST(DensityCalculatorValidationTest, RejectsAResolutionThatExplodesTheMillerBox
     // Assert on the message, not just the type: several other GridError sites sit on
     // this path, and a bare EXPECT_THROW could not tell the box bound from any of them.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
+    const OESystem::OESkewGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 3.0, 0.5);
     DensityCalculator density(UnitCell(2.0, 2.0, 2.0, 90.0, 90.0, 90.0),
                               SymOp::ParseAll("x,y,z"));
 
@@ -778,7 +783,7 @@ TEST(DensityCalculatorValidationTest, StillAcceptsRealCrystallographicMillerBoxe
     // And one cell small enough to run all the way through, so the guard is shown to
     // pass real work rather than merely to hold a large number.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
-    const OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 3.0, 1.0);
+    const OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 3.0, 1.0);
     DensityCalculator density(UnitCell(10.0, 10.0, 10.0, 90.0, 90.0, 90.0),
                               SymOp::ParseAll("x,y,z"));
     EXPECT_NO_THROW(delete density.Calculate(mol, obs, 0.8));

@@ -29,11 +29,11 @@ constexpr double SPACING = 0.5;
 constexpr double RESOLUTION = 2.0;
 constexpr double PIN_RELATIVE_TOLERANCE = 1e-12;
 
-OESystem::OEScalarGrid ObsGrid() {
+OESystem::OESkewGrid ObsGrid() {
     return MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, HALF_WIDTH, SPACING);
 }
 
-OESystem::OEScalarGrid CalcGrid() {
+OESystem::OESkewGrid CalcGrid() {
     return MakeGaussianGrid(0.25, -0.1, 0.15, 1.1, HALF_WIDTH, SPACING);
 }
 
@@ -67,8 +67,8 @@ void ExpectPinned(double actual, double pinned) {
 
 TEST(MetricCharacterizationTest, RsccCarbonBinned) {
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     ExpectPinned(rscc(mol, obs, RESOLUTION, nullptr, &calc).overall, MaptitudePins::RSCC_CARBON_BINNED);
 }
 
@@ -77,8 +77,8 @@ TEST(MetricCharacterizationTest, RsccCarbonFixed) {
     options.SetAtomRadiusMethod(AtomRadius::FIXED);
     options.SetFixedAtomRadius(1.5);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     ExpectPinned(rscc(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
                  MaptitudePins::RSCC_CARBON_FIXED);
 }
@@ -91,16 +91,16 @@ TEST(MetricCharacterizationTest, RsccCarbonScaled) {
     options.SetAtomRadiusMethod(AtomRadius::SCALED);
     options.SetAtomRadiusScaling(1.5);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     ExpectPinned(rscc(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
                  MaptitudePins::RSCC_CARBON_SCALED);
 }
 
 TEST(MetricCharacterizationTest, RsccOxygenOffset) {
     OEChem::OEGraphMol mol = MakeAtomMol(8, 0.3, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     ExpectPinned(rscc(mol, obs, RESOLUTION, nullptr, &calc).overall, MaptitudePins::RSCC_OXYGEN_OFFSET);
 }
 
@@ -113,8 +113,8 @@ TEST(MetricCharacterizationTest, RsccAdaptiveRadiusIsRejected) {
     RsccOptions options;
     options.SetAtomRadiusMethod(AtomRadius::ADAPTIVE);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     EXPECT_THROW(rscc(mol, obs, RESOLUTION, nullptr, &calc, options), std::invalid_argument);
     // The accepting side, so that widening the rejection back over the three
     // supported models would fail here rather than pass quietly.
@@ -128,8 +128,8 @@ TEST(MetricCharacterizationTest, RsrCarbonBinned) {
     RsrOptions options;
     options.SetAtomRadiusMethod(AtomRadius::BINNED);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     ExpectPinned(rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall, MaptitudePins::RSR_CARBON_BINNED);
 }
 
@@ -137,8 +137,8 @@ TEST(MetricCharacterizationTest, RsrCarbonAdaptive) {
     RsrOptions options;
     options.SetAtomRadiusMethod(AtomRadius::ADAPTIVE);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     ExpectPinned(rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
                  MaptitudePins::RSR_CARBON_ADAPTIVE);
 }
@@ -149,8 +149,8 @@ TEST(MetricCharacterizationTest, RsrCarbonDefault) {
     // changing the default moves this pin while leaving the explicit one alone.
     RsrOptions options;
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     ExpectPinned(rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
                  MaptitudePins::RSR_CARBON_DEFAULT);
 }
@@ -160,8 +160,8 @@ TEST(MetricCharacterizationTest, RsrCarbonFixed) {
     options.SetAtomRadiusMethod(AtomRadius::FIXED);
     options.SetFixedAtomRadius(1.5);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     ExpectPinned(rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
                  MaptitudePins::RSR_CARBON_FIXED);
 }
@@ -171,8 +171,8 @@ TEST(MetricCharacterizationTest, RsrCarbonScaled) {
     options.SetAtomRadiusMethod(AtomRadius::SCALED);
     options.SetAtomRadiusScaling(1.5);
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
-    const OESystem::OEScalarGrid obs = ObsGrid();
-    const OESystem::OEScalarGrid calc = CalcGrid();
+    const OESystem::OESkewGrid obs = ObsGrid();
+    const OESystem::OESkewGrid calc = CalcGrid();
     ExpectPinned(rsr(mol, obs, RESOLUTION, nullptr, &calc, options).overall,
                  MaptitudePins::RSR_CARBON_SCALED);
 }

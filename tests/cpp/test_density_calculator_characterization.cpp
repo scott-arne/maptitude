@@ -27,10 +27,10 @@ TEST(DensityCalculatorCharacterizationTest, OrthorhombicP1) {
     UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
     OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
-    OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
+    OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
 
     DensityCalculator calc(cell, symops);
-    std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
+    std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
     ASSERT_NE(fc, nullptr);
 
     const GridSummary s = Summarize(*fc);
@@ -55,10 +55,10 @@ TEST(DensityCalculatorCharacterizationTest, OrthorhombicShells4) {
     UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
     OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
-    OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
+    OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
 
     DensityCalculator calc(cell, symops);
-    std::unique_ptr<OESystem::OEScalarGrid> fc(
+    std::unique_ptr<OESystem::OESkewGrid> fc(
         calc.Calculate(mol, obs, 2.0, nullptr, 0.35, 46.0, false, 4));
     ASSERT_NE(fc, nullptr);
 
@@ -80,10 +80,10 @@ TEST(DensityCalculatorCharacterizationTest, OrthorhombicAsym) {
     UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
     OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 2.0, -1.0);
-    OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 2.0, -1.0, 1.0, 6.0, 0.5);
+    OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 2.0, -1.0, 1.0, 6.0, 0.5);
 
     DensityCalculator calc(cell, symops);
-    std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
+    std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
     ASSERT_NE(fc, nullptr);
 
     const GridSummary s = Summarize(*fc);
@@ -106,7 +106,7 @@ TEST(DensityCalculatorCharacterizationTest, ThrowingPathDoesNotDestabilizeThePro
     UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
     OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
-    OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
+    OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
 
     DensityCalculator calc(cell, symops);
     for (int i = 0; i < 50; ++i) {
@@ -114,7 +114,7 @@ TEST(DensityCalculatorCharacterizationTest, ThrowingPathDoesNotDestabilizeThePro
     }
 
     // The pipeline must still work afterwards.
-    std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
+    std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
     ASSERT_NE(fc, nullptr);
     ExpectPinned(Summarize(*fc).sum, MaptitudePins::FC_ORTHORHOMBIC_SUM);
 }
@@ -134,9 +134,9 @@ TEST(DensityCalculatorCharacterizationTest, ConcurrentCalculateIsSafe) {
     for (int t = 0; t < 4; ++t) {
         threads.emplace_back([&, t]() {
             OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
-            OESystem::OEScalarGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
+            OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
             DensityCalculator calc(cell, symops);
-            std::unique_ptr<OESystem::OEScalarGrid> fc(calc.Calculate(mol, obs, 2.0));
+            std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
             sums[t] = Summarize(*fc).sum;
         });
     }
@@ -147,4 +147,77 @@ TEST(DensityCalculatorCharacterizationTest, ConcurrentCalculateIsSafe) {
     for (double sum : sums) {
         ExpectPinned(sum, MaptitudePins::FC_ORTHORHOMBIC_SUM);
     }
+}
+
+namespace {
+
+/// Build a 21x21x21 grid spanning [0, 10] on each axis, with no unit cell of
+/// its own. Deliberately not a `fixtures.h` helper: those all call
+/// `SetUnitCell`, which is the property these two tests need absent.
+OESystem::OESkewGrid MakeCelllessGrid(float value) {
+    OESystem::OESkewGrid grid;
+    EXPECT_TRUE(grid.SetDim(21u, 21u, 21u));
+    EXPECT_TRUE(grid.SetSpacing(0.5f));
+    EXPECT_TRUE(grid.SetMid(5.0f, 5.0f, 5.0f));
+    float* values = grid.GetValues();
+    EXPECT_NE(values, nullptr);
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+        values[i] = value;
+    }
+    return grid;
+}
+
+}  // namespace
+
+TEST(DensityCalculatorSampling, SucceedsOnAGridWithNoUnitCell) {
+    // The FFT counts come from the constructor's cell and the map's node
+    // intervals, not from the grid's own cell, so a grid carrying no cell is
+    // not an error. The 0.5 A interval divides all three edges exactly
+    // (20/0.5 = 40, 25/0.5 = 50, 30/0.5 = 60), so the divisibility guard
+    // Step 7(b) added passes.
+    OESystem::OESkewGrid obs = MakeCelllessGrid(1.0f);
+    ASSERT_FALSE(obs.HasUnitCell());
+
+    UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+
+    DensityCalculator calc(cell, symops);
+    std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
+    ASSERT_NE(fc, nullptr);
+}
+
+TEST(DensityCalculatorSampling, UsesTheConstructorCellNotTheGridCell) {
+    // Two grids with identical node geometry, one carrying a unit cell that
+    // disagrees with the calculator's (10.5 A cubic against 20x25x30), must
+    // produce identical output -- the grid's own cell is never read.
+    //
+    // Measured: layering SetUnitCell(10.5, 10.5, 10.5, 90, 90, 90, 21, 21, 21)
+    // onto this grid leaves every ElementToSpatialCoord result bit-identical,
+    // so the only difference between the two inputs is HasUnitCell().
+    OESystem::OESkewGrid without_cell = MakeCelllessGrid(1.0f);
+    OESystem::OESkewGrid with_wrong_cell = MakeCelllessGrid(1.0f);
+    ASSERT_TRUE(with_wrong_cell.SetUnitCell(10.5f, 10.5f, 10.5f,
+                                            90.0f, 90.0f, 90.0f,
+                                            21u, 21u, 21u));
+    ASSERT_FALSE(without_cell.HasUnitCell());
+    ASSERT_TRUE(with_wrong_cell.HasUnitCell());
+
+    UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+
+    DensityCalculator calc(cell, symops);
+    std::unique_ptr<OESystem::OESkewGrid> a(calc.Calculate(mol, without_cell, 2.0));
+    std::unique_ptr<OESystem::OESkewGrid> b(calc.Calculate(mol, with_wrong_cell, 2.0));
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+
+    const GridSummary sa = Summarize(*a);
+    const GridSummary sb = Summarize(*b);
+    EXPECT_DOUBLE_EQ(sa.sum, sb.sum);
+    EXPECT_DOUBLE_EQ(sa.sum_sq, sb.sum_sq);
+    EXPECT_DOUBLE_EQ(sa.min, sb.min);
+    EXPECT_DOUBLE_EQ(sa.max, sb.max);
+    EXPECT_DOUBLE_EQ(sa.index_moment, sb.index_moment);
 }

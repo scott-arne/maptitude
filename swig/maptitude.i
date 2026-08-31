@@ -853,7 +853,7 @@ DensityScoreResult rscc(
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
-    const OESystem::OEScalarGrid* calc_grid = nullptr,
+    const OESystem::OESkewGrid* calc_grid = nullptr,
     const RsccOptions& options = RsccOptions());
 
 DensityScoreResult rsr(
@@ -861,7 +861,7 @@ DensityScoreResult rsr(
     const OESystem::OEScalarGrid& grid,
     double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask = nullptr,
-    const OESystem::OEScalarGrid* calc_grid = nullptr,
+    const OESystem::OESkewGrid* calc_grid = nullptr,
     const RsrOptions& options = RsrOptions());
 
 DensityScoreResult qscore(

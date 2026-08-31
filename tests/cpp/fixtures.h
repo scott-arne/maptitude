@@ -34,31 +34,55 @@ static inline OEChem::OEGraphMol MakeAtomMol(unsigned int atomic_num, double x, 
     return mol;
 }
 
-/// Build a cubic grid spanning [-half_width, +half_width] on each axis.
-static inline OESystem::OEScalarGrid MakeEmptyGrid(double half_width, double spacing) {
-    double minmax[6] = {-half_width, -half_width, -half_width, half_width, half_width, half_width};
-    return OESystem::OEScalarGrid(minmax, spacing);
+/// Build a cubic grid whose nodes span [-half_width, +half_width] on each axis.
+///
+/// The skew carrier has no extents-box constructor, so the geometry is set
+/// explicitly, as `MakeCubicGrid` in test_grid_ops.cpp does. The node count is
+/// the interval count plus one, and SetMid takes the grid centre rather than a
+/// corner; for a span symmetric about the origin that centre is the origin.
+/// SetDim must precede any GetValues() call: the value array does not exist
+/// until the dimensions are known.
+static inline OESystem::OESkewGrid MakeEmptyGrid(double half_width, double spacing) {
+    const unsigned int n =
+        static_cast<unsigned int>(std::lround(2.0 * half_width / spacing)) + 1u;
+    OESystem::OESkewGrid grid;
+    const float edge = static_cast<float>(n * spacing);
+    const float mid = static_cast<float>(-half_width + (n - 1) * spacing / 2.0);
+    // A silently rejected geometry call would leave a grid that still reads
+    // plausibly but sits somewhere else, which would move every pin at once with
+    // nothing pointing at the cause. Fail loudly instead.
+    if (!grid.SetDim(n, n, n) || !grid.SetUnitCell(edge, edge, edge, 90.0f, 90.0f, 90.0f, n, n, n) ||
+        !grid.SetMid(mid, mid, mid)) {
+        throw std::invalid_argument("MakeEmptyGrid: the skew carrier rejected the geometry");
+    }
+    // The extents-box constructor this replaced returned a zeroed grid, and
+    // MakeEmptyGrid's callers rely on that; do not depend on SetDim's allocation
+    // happening to zero.
+    std::fill_n(grid.GetValues(), grid.GetSize(), 0.0f);
+    return grid;
 }
 
 /// Build a grid holding an isotropic Gaussian centred at (cx, cy, cz), peak 1.0.
-static inline OESystem::OEScalarGrid MakeGaussianGrid(double cx, double cy, double cz, double sigma,
-                                                      double half_width, double spacing) {
-    OESystem::OEScalarGrid grid = MakeEmptyGrid(half_width, spacing);
+static inline OESystem::OESkewGrid MakeGaussianGrid(double cx, double cy, double cz, double sigma,
+                                                    double half_width, double spacing) {
+    OESystem::OESkewGrid grid = MakeEmptyGrid(half_width, spacing);
     const double two_sigma_sq = 2.0 * sigma * sigma;
+    float* values = grid.GetValues();
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
         float gx, gy, gz;
         grid.ElementToSpatialCoord(i, gx, gy, gz);
         const double dx = gx - cx, dy = gy - cy, dz = gz - cz;
-        grid[i] = static_cast<float>(std::exp(-(dx * dx + dy * dy + dz * dz) / two_sigma_sq));
+        values[i] = static_cast<float>(std::exp(-(dx * dx + dy * dy + dz * dz) / two_sigma_sq));
     }
     return grid;
 }
 
 /// Build a grid where every element holds the same value.
-static inline OESystem::OEScalarGrid MakeUniformGrid(float value, double half_width, double spacing) {
-    OESystem::OEScalarGrid grid = MakeEmptyGrid(half_width, spacing);
+static inline OESystem::OESkewGrid MakeUniformGrid(float value, double half_width, double spacing) {
+    OESystem::OESkewGrid grid = MakeEmptyGrid(half_width, spacing);
+    float* values = grid.GetValues();
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
-        grid[i] = value;
+        values[i] = value;
     }
     return grid;
 }
@@ -72,30 +96,32 @@ static inline OESystem::OEScalarGrid MakeUniformGrid(float value, double half_wi
 /// values and are rejected with `std::invalid_argument`. Example: (4.0, 0.5)
 /// produces 17 points per axis and would yield 1777 distinct values across 4913
 /// elements, so it is rejected rather than silently returned.
-static inline OESystem::OEScalarGrid MakeRampGrid(double half_width, double spacing) {
-    OESystem::OEScalarGrid grid = MakeEmptyGrid(half_width, spacing);
+static inline OESystem::OESkewGrid MakeRampGrid(double half_width, double spacing) {
+    OESystem::OESkewGrid grid = MakeEmptyGrid(half_width, spacing);
     const unsigned int max_dim = std::max({grid.GetXDim(), grid.GetYDim(), grid.GetZDim()});
     if (max_dim > 10) {
         throw std::invalid_argument(
             "MakeRampGrid: the decade weights only separate ten points per axis; "
             "this geometry produces more, so values would collide");
     }
+    float* values = grid.GetValues();
     for (unsigned int i = 0; i < grid.GetSize(); ++i) {
         float gx, gy, gz;
         grid.ElementToSpatialCoord(i, gx, gy, gz);
-        grid[i] = gx + 10.0f * gy + 100.0f * gz;
+        values[i] = gx + 10.0f * gy + 100.0f * gz;
     }
     return grid;
 }
 
 /// Return (grid, -grid). Used to assert that RSCC of exact anticorrelation is -1.
-static inline std::pair<OESystem::OEScalarGrid, OESystem::OEScalarGrid>
-MakeNegatedPair(const OESystem::OEScalarGrid& grid) {
-    OESystem::OEScalarGrid negated(grid);
+static inline std::pair<OESystem::OESkewGrid, OESystem::OESkewGrid>
+MakeNegatedPair(const OESystem::OESkewGrid& grid) {
+    OESystem::OESkewGrid negated(grid);
+    float* values = negated.GetValues();
     for (unsigned int i = 0; i < negated.GetSize(); ++i) {
-        negated[i] = -negated[i];
+        values[i] = -values[i];
     }
-    return {OESystem::OEScalarGrid(grid), negated};
+    return {OESystem::OESkewGrid(grid), negated};
 }
 
 }  // namespace MaptitudeTest
