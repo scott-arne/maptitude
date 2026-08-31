@@ -187,7 +187,7 @@ def load_ccp4_grid(ccp4_path: pathlib.Path):
 _PAD_INTERVAL_COUNT_TOL = 1e-6
 
 
-def _pad_dim(extent, spacing):
+def pad_dim(extent, spacing):
     """Node count covering *extent* at *spacing*, sized as the C++ path sizes it.
 
     The interval count rounds up, because the node span is what the padding has
@@ -271,7 +271,7 @@ def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
         # midpoint that box implied and set them explicitly, keeping each axis
         # on its own node interval.
         sp = (gp.x_spacing, gp.y_spacing, gp.z_spacing)
-        dim = [_pad_dim(minmax[i + 3] - minmax[i], sp[i]) for i in range(3)]
+        dim = [pad_dim(minmax[i + 3] - minmax[i], sp[i]) for i in range(3)]
         mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
         padded = oegrid.OESkewGrid()
         # Checked, not assumed: these setters report failure by returning false
