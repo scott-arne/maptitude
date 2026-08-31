@@ -10,11 +10,13 @@
 #include <cmath>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include "maptitude/DensityCalculator.h"
 #include "maptitude/Error.h"
+#include "maptitude/Grid.h"
 #include "maptitude/SymOp.h"
 #include "maptitude/UnitCell.h"
 
@@ -175,6 +177,27 @@ OESystem::OESkewGrid MakeCelllessGrid(float value) {
     return grid;
 }
 
+/// Build a 2x2x2 grid at one scalar node interval, with no unit cell of its own.
+///
+/// Two nodes per axis is the least `get_grid_params` will derive an interval from -- one
+/// node on an axis raises, asserted by GridParamsDerivation.RejectsAnAxisWithASingleNode in
+/// test_input_validation.cpp -- and it keeps the grid itself tiny while the FFT grid the
+/// interval asks for is not: the counts come from the constructor's cell divided by this
+/// interval, so the interval alone sets how large a request reaches the sampling bounds.
+OESystem::OESkewGrid MakeScalarIntervalGrid(float spacing) {
+    OESystem::OESkewGrid grid;
+    // Throws rather than asserting, for the reason given in MakeCelllessGrid above.
+    if (!grid.SetDim(2u, 2u, 2u) || !grid.SetSpacing(spacing) ||
+        !grid.SetMid(0.0f, 0.0f, 0.0f) || grid.GetValues() == nullptr) {
+        throw std::invalid_argument("MakeScalarIntervalGrid: the skew carrier rejected the geometry");
+    }
+    float* values = grid.GetValues();
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+        values[i] = 1.0f;
+    }
+    return grid;
+}
+
 }  // namespace
 
 TEST(DensityCalculatorSampling, SucceedsOnAGridWithNoUnitCell) {
@@ -247,4 +270,136 @@ TEST(DensityCalculatorSampling, UsesTheConstructorCellNotTheGridCell) {
     EXPECT_DOUBLE_EQ(sa.min, sb.min);
     EXPECT_DOUBLE_EQ(sa.max, sb.max);
     EXPECT_DOUBLE_EQ(sa.index_moment, sb.index_moment);
+}
+
+TEST(DensityCalculatorSampling, RejectsAnAxisWhoseSampleCountIsOverTheLimit) {
+    // A node interval of 1e-9 A is accepted by every check upstream of the FFT counts:
+    // get_grid_params requires only that a derived interval be finite and positive, and
+    // validate_cell only that a cell edge be. Against a 20 A edge the quotient is 2e10,
+    // which is past INT_MAX, so the cast that used to narrow it straight to int was
+    // undefined behavior. The bound has to be applied to the quotient in double first.
+    OESystem::OESkewGrid obs = MakeScalarIntervalGrid(1e-9f);
+    UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+
+    DensityCalculator calc(cell, symops);
+    try {
+        std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
+        FAIL() << "a 1e-9 A node interval asks for 2e10 samples along cell edge a";
+    } catch (const GridError& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("Cell edge a"), std::string::npos) << message;
+        EXPECT_NE(message.find("MAX_FFT_GRID_POINTS"), std::string::npos) << message;
+    }
+}
+
+TEST(DensityCalculatorSampling, RejectsAnFftGridWhoseThreeCountsMultiplyOverTheLimit) {
+    // 0.02 A against 20 x 25 x 30 A gives 1000, 1250 and 1500 samples. Each is five orders
+    // of magnitude inside the per-axis bound, so only the product -- 1.875e9 -- is over it.
+    // That product is what the scatter loop indexes with, in int arithmetic, so leaving it
+    // to the per-axis check alone would let the three counts pass and the index overflow.
+    OESystem::OESkewGrid obs = MakeScalarIntervalGrid(0.02f);
+    UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 5.0, 5.0, 5.0);
+
+    DensityCalculator calc(cell, symops);
+    try {
+        std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
+        FAIL() << "1000 x 1250 x 1500 samples is over the FFT grid bound";
+    } catch (const GridError& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("1000 x 1250 x 1500"), std::string::npos) << message;
+        EXPECT_NE(message.find("MAX_FFT_GRID_POINTS"), std::string::npos) << message;
+    }
+}
+
+namespace {
+
+// 24 x 16 x 12 nodes over a 12 A cubic cell samples at 0.5, 0.75 and 1.0 A. Every other
+// grid in this file carries one node interval on all three axes, so the two tests below are
+// the only ones where reading the map's sampling per axis can differ from reading it as a
+// single scalar.
+constexpr double ANISOTROPIC_EDGE = 12.0;
+constexpr unsigned int ANISOTROPIC_NX = 24u;
+constexpr unsigned int ANISOTROPIC_NY = 16u;
+constexpr unsigned int ANISOTROPIC_NZ = 12u;
+
+OESystem::OESkewGrid MakeAnisotropicObsGrid() {
+    return MakeAnisotropicGaussianGrid(0.0, 0.0, 0.0, 1.0, ANISOTROPIC_EDGE,
+                                       ANISOTROPIC_NX, ANISOTROPIC_NY, ANISOTROPIC_NZ);
+}
+
+}  // namespace
+
+TEST(DensityCalculatorAnisotropicSampling, KeepsTheMapsPerAxisNodeIntervals) {
+    // The result is written into a copy of the observed grid, so a regression that
+    // resampled it onto one scalar spacing would surface here as three equal intervals.
+    // The constructor's cell divides each of them exactly -- 12/0.5 = 24, 12/0.75 = 16,
+    // 12/1.0 = 12 -- so the sampling-agreement check passes on all three axes and the call
+    // reaches the end of the pipeline.
+    OESystem::OESkewGrid obs = MakeAnisotropicObsGrid();
+    const GridParams obs_gp = get_grid_params(obs);
+    ASSERT_DOUBLE_EQ(obs_gp.x_spacing, 0.5);
+    ASSERT_DOUBLE_EQ(obs_gp.y_spacing, 0.75);
+    ASSERT_DOUBLE_EQ(obs_gp.z_spacing, 1.0);
+
+    UnitCell cell(ANISOTROPIC_EDGE, ANISOTROPIC_EDGE, ANISOTROPIC_EDGE, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    DensityCalculator calc(cell, symops);
+    std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
+    ASSERT_NE(fc, nullptr);
+
+    EXPECT_EQ(fc->GetXDim(), ANISOTROPIC_NX);
+    EXPECT_EQ(fc->GetYDim(), ANISOTROPIC_NY);
+    EXPECT_EQ(fc->GetZDim(), ANISOTROPIC_NZ);
+
+    const GridParams fc_gp = get_grid_params(*fc);
+    EXPECT_DOUBLE_EQ(fc_gp.x_spacing, 0.5);
+    EXPECT_DOUBLE_EQ(fc_gp.y_spacing, 0.75);
+    EXPECT_DOUBLE_EQ(fc_gp.z_spacing, 1.0);
+
+    // Geometry alone would also be satisfied by a zeroed allocation.
+    const float* fc_values = fc->GetValues();
+    ASSERT_NE(fc_values, nullptr);
+    bool any_nonzero = false;
+    for (unsigned int i = 0; i < fc->GetSize(); ++i) {
+        ASSERT_TRUE(std::isfinite(fc_values[i])) << "non-finite density at element " << i;
+        if (fc_values[i] != 0.0f) {
+            any_nonzero = true;
+        }
+    }
+    EXPECT_TRUE(any_nonzero) << "the returned grid is entirely zero";
+}
+
+TEST(DensityCalculatorAnisotropicSampling, NamesTheOneAxisWhoseCellEdgeTheMapDoesNotDivide) {
+    // Calculate reads the constructor's cell and never the grid's own, established by
+    // DensityCalculatorSampling.UsesTheConstructorCellNotTheGridCell above. That makes the
+    // cell an independent handle on the pairing: this one divides exactly against the x
+    // interval (20.5 / 0.5 = 41) and against the z interval (30 / 1.0 = 30) but not against
+    // the y interval (25 / 0.75 = 33.3), so exactly one axis fails and the message names it.
+    //
+    // The axis letter is the discriminating observable, not the throw. Collapsing the three
+    // intervals to the x interval makes all three edges divide by 0.5 and nothing throws;
+    // transposing x with y or with z moves the first failure onto edge a, because 20.5 is a
+    // multiple of 0.5 but not of 0.75 or of 1.0; transposing y with z pairs edge b with the
+    // 1.0 interval and edge c with the 0.75 one, and each of those divides its edge exactly.
+    OESystem::OESkewGrid obs = MakeAnisotropicObsGrid();
+    UnitCell cell(20.5, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+
+    DensityCalculator calc(cell, symops);
+    try {
+        std::unique_ptr<OESystem::OESkewGrid> fc(calc.Calculate(mol, obs, 2.0));
+        FAIL() << "cell edge b = 25 A does not divide into the map's 0.75 A y interval, "
+                  "so the sampling-agreement check had to reject it";
+    } catch (const GridError& error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("Cell edge b = 25 A"), std::string::npos) << message;
+        EXPECT_NE(message.find("node interval of 0.75 A"), std::string::npos) << message;
+    }
 }

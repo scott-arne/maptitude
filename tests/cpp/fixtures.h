@@ -123,6 +123,43 @@ static inline OESystem::OESkewGrid MakeRampGrid(double half_width, double spacin
     return grid;
 }
 
+/// Build a grid holding an isotropic Gaussian centred at (cx, cy, cz), peak 1.0, on a
+/// lattice whose node interval differs from axis to axis.
+///
+/// The builders above are all cubic, where one scalar spacing and each axis's own node
+/// interval are the same number, so nothing they produce can distinguish per-axis sampling
+/// from scalar sampling. This one can.
+///
+/// `SetUnitCell` takes one cubic edge and the three sample counts. For the parameter sets
+/// used under tests/cpp that makes the node interval on axis i `edge / n_i`. Rather than
+/// rest on that arithmetic, each caller checks the intervals it depends on: two read all
+/// three back through `get_grid_params` and assert them, and the third reads the interval
+/// it names out of the error message it expects.
+///
+/// The geometry is set explicitly and the setters are checked for the same reasons as in
+/// `MakeEmptyGrid` above, including throwing rather than using `ASSERT_*`.
+static inline OESystem::OESkewGrid MakeAnisotropicGaussianGrid(
+    double cx, double cy, double cz, double sigma, double edge,
+    unsigned int nx, unsigned int ny, unsigned int nz) {
+    OESystem::OESkewGrid grid;
+    const float cell_edge = static_cast<float>(edge);
+    if (!grid.SetDim(nx, ny, nz) ||
+        !grid.SetUnitCell(cell_edge, cell_edge, cell_edge, 90.0f, 90.0f, 90.0f, nx, ny, nz) ||
+        !grid.SetMid(0.0f, 0.0f, 0.0f)) {
+        throw std::invalid_argument(
+            "MakeAnisotropicGaussianGrid: the skew carrier rejected the geometry");
+    }
+    const double two_sigma_sq = 2.0 * sigma * sigma;
+    float* values = grid.GetValues();
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) {
+        float gx, gy, gz;
+        grid.ElementToSpatialCoord(i, gx, gy, gz);
+        const double dx = gx - cx, dy = gy - cy, dz = gz - cz;
+        values[i] = static_cast<float>(std::exp(-(dx * dx + dy * dy + dz * dz) / two_sigma_sq));
+    }
+    return grid;
+}
+
 /// Return (grid, -grid). Used to assert that RSCC of exact anticorrelation is -1.
 static inline std::pair<OESystem::OESkewGrid, OESystem::OESkewGrid>
 MakeNegatedPair(const OESystem::OESkewGrid& grid) {

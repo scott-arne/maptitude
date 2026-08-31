@@ -5,6 +5,7 @@
 
 #include "maptitude/CoverageOptions.h"
 #include "maptitude/Error.h"
+#include "maptitude/Grid.h"
 #include "maptitude/Metric.h"
 #include "maptitude/QScoreOptions.h"
 #include "maptitude/RsccOptions.h"
@@ -206,6 +207,44 @@ TEST(MetricAnalyticTest, QScoreRejectsAnAdaptiveStepNoAtomCanSweep) {
 
         EXPECT_THROW(qscore(mol, grid, c.resolution, nullptr, options), GridError)
             << "resolution " << c.resolution << " A at spacing " << c.spacing << " A";
+    }
+}
+
+TEST(MetricAnalyticTest, QScoreAdaptiveStepComesFromTheFinestSampledAxis) {
+    // Every other grid in this file is cubic, where the smallest node interval, the largest
+    // and any one axis's are the same number, so none of those readings is under test there.
+    //
+    // Each case here samples one axis at 4.0 A and the other two at 1.0 A, and rotates which
+    // axis is the coarse one so that no single-axis reading survives all three. Resolution 30
+    // makes the resolution term 30 / 7 = 4.29 A, above both intervals, so the spacing term is
+    // the one that binds. A 1.0 A step sweeps the carbon's 3.4 A adaptive radius in shells; a
+    // 4.0 A step exceeds that radius, produces no shells, and no atom here can rescue it, so
+    // RequireSomeAtomCanSweep raises. The call therefore succeeds only while the step comes
+    // from a finely sampled axis.
+    constexpr double COARSE_RESOLUTION = 30.0;
+    constexpr double EDGE = 12.0;
+    struct Case { unsigned int nx, ny, nz; double x_spacing, y_spacing, z_spacing; };
+    for (const Case& c : {Case{3u, 12u, 12u, 4.0, 1.0, 1.0},
+                          Case{12u, 3u, 12u, 1.0, 4.0, 1.0},
+                          Case{12u, 12u, 3u, 1.0, 1.0, 4.0}}) {
+        QScoreOptions options;
+        options.SetRadialSampling(RadialSampling::ADAPTIVE);
+        OESystem::OESkewGrid grid = MakeAnisotropicGaussianGrid(
+            0.0, 0.0, 0.0, options.GetSigma(), EDGE, c.nx, c.ny, c.nz);
+
+        const GridParams gp = get_grid_params(grid);
+        ASSERT_DOUBLE_EQ(gp.x_spacing, c.x_spacing);
+        ASSERT_DOUBLE_EQ(gp.y_spacing, c.y_spacing);
+        ASSERT_DOUBLE_EQ(gp.z_spacing, c.z_spacing);
+
+        OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
+        DensityScoreResult result;
+        ASSERT_NO_THROW(result = qscore(mol, grid, COARSE_RESOLUTION, nullptr, options))
+            << "coarse axis at " << c.x_spacing << " / " << c.y_spacing << " / "
+            << c.z_spacing << " A";
+        EXPECT_FALSE(std::isnan(result.overall))
+            << "coarse axis at " << c.x_spacing << " / " << c.y_spacing << " / "
+            << c.z_spacing << " A";
     }
 }
 

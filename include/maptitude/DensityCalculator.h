@@ -58,6 +58,32 @@ constexpr unsigned int MAX_SCALE_SHELLS = 1000;
 /// `int`.
 constexpr double MAX_MILLER_BOX_POINTS = 2e8;
 
+/// The FFT samples the unit cell at the observed map's own node intervals, so its count
+/// along axis i is `round(edge_i / interval_i)`. Neither factor caps that quotient:
+/// `validate_cell` accepts any finite positive cell edge and `get_grid_params` accepts any
+/// finite positive node interval, so an ordinary cell against a fine enough map drives the
+/// ratio past `INT_MAX`, where narrowing it to `int` is undefined behavior. The same bound
+/// is applied to the product of the three counts, because counts that each fit an `int`
+/// can still multiply past one: the scatter loop indexes the FFT array with `int`
+/// arithmetic, which overflows before the `size_t` element count does.
+///
+/// 2e8 points leaves the crystallography this pipeline is for well inside the bound: 1d26
+/// samples 48 x 48 x 24 = 55,296 points, 3.6e3x under, and reaching the bound at a 0.5 A
+/// node interval takes a cubic cell of roughly 292 A. Memory rather than time is what
+/// binds at the limit: the per-shell scaling path holds four `fftw_complex` arrays and one
+/// `double` array over the FFT grid at once, 72 bytes per point, so the bound already
+/// admits a 14.4 GB request.
+///
+/// Declared as a double for the reason MAX_MILLER_BOX_POINTS is: the check has to run in
+/// arithmetic that cannot itself overflow, so both the per-axis ratio and the product are
+/// formed and compared in double before any narrowing to `int`.
+///
+/// The two constants bound different quantities -- a Miller-index box against an FFT
+/// sampling grid -- and are independent in principle. They share a value because nothing
+/// argues for separating them, and a matched pair is easier to reason about than two
+/// arbitrary numbers.
+constexpr double MAX_FFT_GRID_POINTS = 2e8;
+
 namespace detail {
 
 /// One Miller index and the `sin^2(theta)/lambda^2` that placed it in the shell.

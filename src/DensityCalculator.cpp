@@ -511,7 +511,23 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
     const char* const EDGE_NAMES[3] = {"a", "b", "c"};
     int counts[3];
     for (int i = 0; i < 3; ++i) {
-        counts[i] = static_cast<int>(std::round(edges[i] / intervals[i]));
+        // Bound the sample count before narrowing it. The cell edge is validated only as
+        // finite and positive and the node interval only as finite and positive, so
+        // nothing caps their quotient and a cast past INT_MAX is undefined behavior. The
+        // quotient is formed in double, which saturates to infinity instead of wrapping,
+        // so the comparison holds however extreme the pair is.
+        const double samples = std::round(edges[i] / intervals[i]);
+        if (!std::isfinite(samples) || samples > MAX_FFT_GRID_POINTS) {
+            std::ostringstream message;
+            message << "Cell edge " << EDGE_NAMES[i] << " = " << edges[i]
+                    << " A at the map's node interval of " << intervals[i] << " A needs "
+                    << samples << " FFT samples along that axis, over the "
+                    << MAX_FFT_GRID_POINTS
+                    << " limit (MAX_FFT_GRID_POINTS); use a map with coarser sampling or a "
+                       "smaller cell";
+            throw GridError(message.str());
+        }
+        counts[i] = static_cast<int>(samples);
         if (counts[i] < 1) continue;  // reported by the existing check below
         const double implied = edges[i] / counts[i];
         const double disagreement = std::abs(implied - intervals[i]) / intervals[i];
@@ -543,6 +559,25 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
                 << EDGE_NAMES[failing] << " = " << edges[failing]
                 << " A: the FFT grid would be " << counts[failing]
                 << " points along that axis. Use a spacing below half the shortest cell edge";
+        throw GridError(message.str());
+    }
+
+    // Three counts that each pass the per-axis bound can still multiply past it, and the
+    // product is what indexes the FFT array: `hi * ny * nz` in the scatter loop below is
+    // int arithmetic, so it overflows before the size_t element count does. Formed in
+    // double for the same reason as the per-axis check, and evaluated after the per-axis
+    // loop rather than inside it, because the three counts are only all known once that
+    // loop has finished.
+    const double total_samples = static_cast<double>(nx) * ny * nz;
+    if (total_samples > MAX_FFT_GRID_POINTS) {
+        std::ostringstream message;
+        message << "Cell edges a = " << a << " A, b = " << b << " A and c = " << c
+                << " A at the map's node intervals of " << intervals[0] << " A, "
+                << intervals[1] << " A and " << intervals[2] << " A need an FFT grid of "
+                << nx << " x " << ny << " x " << nz << " = " << total_samples
+                << " points, over the " << MAX_FFT_GRID_POINTS
+                << " limit (MAX_FFT_GRID_POINTS); use a map with coarser sampling or a "
+                   "smaller cell";
         throw GridError(message.str());
     }
 
