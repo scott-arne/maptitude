@@ -5,11 +5,13 @@
 
 #include <oechem.h>
 #include <oegrid.h>
+#include <oesystem.h>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 using namespace Maptitude;
@@ -158,11 +160,12 @@ TEST(GridOpsTest, InterpolateDensityPeriodicBlendsAcrossTheCellBoundary) {
 }
 
 TEST(GridOpsTest, InterpolateDensityPeriodicRejectsAnIncommensurateCell) {
-    // Wrapping modulo the cell only lands on the sampled lattice when the cell is
-    // the sampled extent. A cell that is not n*s makes node n-1's periodic
-    // neighbour something other than node 0, and no wrap can recover the density
-    // that was never sampled.
-    auto grid = MakeTestGrid();  // 10 nodes at spacing 1.0, so the cell must be 10.
+    // Wrapping only lands on the sampled lattice when the cell is a whole number
+    // of node intervals, and that number is one a period could span: the node
+    // count, or one less on a grid whose closing plane duplicates its first. A
+    // cell of twelve intervals on a ten-node grid is neither of those, and no
+    // wrap can recover density that was never sampled.
+    auto grid = MakeTestGrid();  // 10 nodes at spacing 1.0, so 10 or 9 intervals.
     EXPECT_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 12.0, 10.0, 10.0), CellError);
     EXPECT_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 10.0, 12.0, 10.0), CellError);
     EXPECT_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 10.0, 10.0, 12.0), CellError);
@@ -170,6 +173,175 @@ TEST(GridOpsTest, InterpolateDensityPeriodicRejectsAnIncommensurateCell) {
     const std::vector<double> points = {2.0, 3.0, 4.0};
     EXPECT_THROW(interpolate_density_periodic_batch(grid, points, 1, 12.0, 10.0, 10.0), CellError);
     EXPECT_NO_THROW(interpolate_density_periodic_batch(grid, points, 1, 10.0, 10.0, 10.0));
+}
+
+TEST(GridOpsTest, InterpolateDensityPeriodicTakesThePeriodFromTheCellNotTheNodeCount) {
+    // Two interval counts are accepted on any grid and only one of them describes
+    // it, so the cell is what chooses between them. MakeTestGrid holds ten
+    // distinct nodes and no duplicated closing plane; a caller passing 9.0 is
+    // asserting otherwise, and the guard takes that assertion rather than
+    // inspecting the values to overrule it. Comparing the end planes would cost
+    // O(n^2) per call on the hot path, and the batch entry point would pay it for
+    // a property of the grid rather than of the batch.
+    auto grid = MakeTestGrid();  // 10 nodes at spacing 1.0, values x + 10y + 100z.
+
+    EXPECT_NO_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 10.0, 10.0, 10.0));
+    EXPECT_NO_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 9.0, 9.0, 9.0));
+
+    // One interval to either side of the pair is a lattice the grid was never
+    // sampled on, and half an interval off rounds to an accepted count and then
+    // misses it by far more than the float allowance.
+    EXPECT_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 11.0, 10.0, 10.0), CellError);
+    EXPECT_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 10.0, 8.0, 10.0), CellError);
+    EXPECT_THROW(interpolate_density_periodic(grid, 2.0, 3.0, 4.0, 10.0, 10.0, 9.5), CellError);
+
+    // The period the cell selects is the one the wrap runs on, so the two accepted
+    // cells give different answers at the same point rather than the check being
+    // cosmetic: at y = 3, z = 4 node 9 holds 439 and node 0 holds 430, and x = 9.0
+    // is node 9 under a ten-interval period and node 0's image under a nine.
+    EXPECT_NEAR(interpolate_density_periodic(grid, 9.0, 3.0, 4.0, 10.0, 10.0, 10.0),
+                439.0, 1e-4);
+    EXPECT_NEAR(interpolate_density_periodic(grid, 9.0, 3.0, 4.0, 9.0, 10.0, 10.0),
+                430.0, 1e-4);
+}
+
+// --- Periodic interpolation on grids that came off a reader ---
+//
+// These are the suite's only periodic coverage of a grid that came out of a
+// reader rather than a constructor: no other file in tests/cpp calls OEReadGrid
+// and a periodic entry point. A grid MakeCubicGrid builds holds n distinct nodes
+// and is passed a cell of n * spacing, and that pairing cannot show the closing
+// plane OpenEye's reader appends, which is why the defect these cases pin went
+// unseen.
+
+namespace {
+
+const char* const MAP_ASSETS[] = {
+    "1d26_2fofc.ccp4", "340d_2fofc.ccp4", "390_emd_30342_A_z4.mrc", "3q9g_2fofc.ccp4"};
+
+OESystem::OESkewGrid ReadMapAsset(const char* const name) {
+    OESystem::OESkewGrid grid;
+    const std::string path = std::string(MAPTITUDE_TEST_ASSET_DIR) + "/" + name;
+    EXPECT_TRUE(OESystem::OEReadGrid(path, grid)) << "failed to read " << path;
+    return grid;
+}
+
+}  // namespace
+
+TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsAMapReadGridsOwnCell) {
+    // Each of these four stores exactly its MX,MY,MZ sections at NxSTART = 0 and
+    // comes back with M + 1 nodes per axis, so the header cell each carries is
+    // (n - 1) * spacing on all three axes. Measured against the n * spacing rule
+    // this fix replaces, all four were refused their own cell.
+    for (const char* const name : MAP_ASSETS) {
+        SCOPED_TRACE(name);
+        OESystem::OESkewGrid grid = ReadMapAsset(name);
+        const GridParams gp = get_grid_params(grid);
+        const UnitCellParams uc = get_unit_cell(grid);
+
+        const double cell[3] = {uc.a, uc.b, uc.c};
+        const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
+        const double spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
+
+        // The premise. Without it an asset whose cell happened to be n * spacing
+        // would pass here on the arm the old rule already accepted, and the case
+        // would pin nothing.
+        for (int i = 0; i < 3; ++i) {
+            SCOPED_TRACE(i);
+            EXPECT_LT(std::abs(cell[i] - (n[i] - 1u) * spacing[i]), 1e-4)
+                << "this asset no longer reports the short cell";
+            EXPECT_GT(std::abs(cell[i] - n[i] * spacing[i]), 0.5 * spacing[i])
+                << "this asset's cell is now within rounding of n * spacing, which the "
+                   "old rule already accepted";
+        }
+
+        EXPECT_NO_THROW(interpolate_density_periodic(
+            grid, gp.x_origin, gp.y_origin, gp.z_origin, cell[0], cell[1], cell[2]));
+        const std::vector<double> points = {gp.x_origin, gp.y_origin, gp.z_origin};
+        EXPECT_NO_THROW(interpolate_density_periodic_batch(
+            grid, points, 1, cell[0], cell[1], cell[2]));
+    }
+}
+
+TEST(GridOpsTest, InterpolateDensityPeriodicDoesNotFlattenAMapReadGridsFinalInterval) {
+    // Correcting the guard alone would not have been enough: the period is what
+    // the wrap runs on. With a period of n_i the final interval blends node
+    // n_i - 1 into node 0, and on a grid whose closing plane duplicates plane 0
+    // those are the same values, so the interval comes back constant. Both cells
+    // are accepted on this grid, which is what makes the wrong one callable here
+    // as the control.
+    OESystem::OESkewGrid grid = ReadMapAsset("1d26_2fofc.ccp4");
+    const GridParams gp = get_grid_params(grid);
+    const UnitCellParams uc = get_unit_cell(grid);
+    const double map_cell[3] = {uc.a, uc.b, uc.c};
+    const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
+    const double spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
+    const double origin[3] = {gp.x_origin, gp.y_origin, gp.z_origin};
+    const double full_cell[3] = {
+        n[0] * spacing[0], n[1] * spacing[1], n[2] * spacing[2]};
+
+    constexpr int SAMPLES = 21;
+    for (int axis = 0; axis < 3; ++axis) {
+        SCOPED_TRACE(axis);
+        double map_lo = std::numeric_limits<double>::max();
+        double map_hi = std::numeric_limits<double>::lowest();
+        double full_lo = map_lo;
+        double full_hi = map_hi;
+
+        for (int k = 0; k < SAMPLES; ++k) {
+            const double frac = k / static_cast<double>(SAMPLES);  // [0, 1)
+            // The off-axis coordinates sit mid-interval so the sweep reads varying
+            // density rather than a node plane.
+            double pt[3] = {origin[0] + 3.5 * spacing[0],
+                            origin[1] + 4.5 * spacing[1],
+                            origin[2] + 5.5 * spacing[2]};
+
+            // Under the map's own cell the period is n - 1, so its final interval
+            // starts at node n - 2; under n * spacing the period is n and it
+            // starts at node n - 1.
+            pt[axis] = origin[axis] + (n[axis] - 2u + frac) * spacing[axis];
+            const double map_v = interpolate_density_periodic(
+                grid, pt[0], pt[1], pt[2], map_cell[0], map_cell[1], map_cell[2]);
+            map_lo = std::min(map_lo, map_v);
+            map_hi = std::max(map_hi, map_v);
+
+            pt[axis] = origin[axis] + (n[axis] - 1u + frac) * spacing[axis];
+            const double full_v = interpolate_density_periodic(
+                grid, pt[0], pt[1], pt[2], full_cell[0], full_cell[1], full_cell[2]);
+            full_lo = std::min(full_lo, full_v);
+            full_hi = std::max(full_hi, full_v);
+        }
+
+        EXPECT_GT(map_hi - map_lo, 1e-3)
+            << "the final interval under the map's own cell is flat";
+        EXPECT_LT(full_hi - full_lo, 1e-12)
+            << "the n * spacing period no longer flattens the final interval, so this "
+               "case cannot tell the two periods apart and pins nothing";
+    }
+}
+
+TEST(GridOpsTest, InterpolateDensityPeriodicRejectsAGridCoveringPartOfItsCell) {
+    // A grid can come off the reader with no period at all. test_map.ccp4 stores
+    // 21 of its cell's 42 samples at NxSTART = -10, so it covers half the cell,
+    // and its 21 A edge is 42 of the grid's 0.5 A intervals -- neither the 21
+    // nodes nor the 20 intervals the rule admits. Widening the rule to admit
+    // n - 1 must not have widened it to this.
+    OESystem::OESkewGrid grid;
+    const std::string path = std::string(MAPTITUDE_TEST_DATA_DIR) + "/test_map.ccp4";
+    ASSERT_TRUE(OESystem::OEReadGrid(path, grid)) << "failed to read " << path;
+
+    const GridParams gp = get_grid_params(grid);
+    const UnitCellParams uc = get_unit_cell(grid);
+    ASSERT_EQ(gp.x_dim, 21u);
+    ASSERT_NEAR(gp.x_spacing, 0.5, 1e-9);
+    ASSERT_NEAR(uc.a, 21.0, 1e-6);
+
+    EXPECT_THROW(interpolate_density_periodic(grid, gp.x_origin, gp.y_origin, gp.z_origin,
+                                              uc.a, uc.b, uc.c),
+                 CellError);
+    const std::vector<double> points = {gp.x_origin, gp.y_origin, gp.z_origin};
+    EXPECT_THROW(interpolate_density_periodic_batch(grid, points, 1, uc.a, uc.b, uc.c),
+                 CellError);
 }
 
 TEST(GridOpsTest, InterpolateDensityAcceptsTheNominalNodeOrigin) {

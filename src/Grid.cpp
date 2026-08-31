@@ -408,8 +408,8 @@ std::vector<double> interpolate_density_batch(
     return result;
 }
 
-void require_commensurate_cell(const GridParams& gp, const double cell_a,
-                               const double cell_b, const double cell_c) {
+CellPeriods require_commensurate_cell(const GridParams& gp, const double cell_a,
+                                      const double cell_b, const double cell_c) {
     static const char* const EDGE[3] = {"a", "b", "c"};
     static const char* const AXIS[3] = {"x", "y", "z"};
     const double given[3] = {cell_a, cell_b, cell_c};
@@ -417,23 +417,60 @@ void require_commensurate_cell(const GridParams& gp, const double cell_a,
     const double spacing[3] = {gp.x_spacing, gp.y_spacing, gp.z_spacing};
     const double origin[3] = {gp.x_origin, gp.y_origin, gp.z_origin};
 
+    unsigned int period[3] = {0u, 0u, 0u};
     for (int i = 0; i < 3; ++i) {
-        const double extent = n[i] * spacing[i];
+        const double full = n[i] * spacing[i];
+        const double closed = (n[i] - 1u) * spacing[i];
         const double tol = CELL_EXTENT_ROUNDINGS * FLOAT_HALF_ULP *
                            AxisMagnitude(origin[i], n[i], spacing[i]);
-        // Negated so a non-finite edge lands here rather than passing a
-        // comparison it cannot satisfy either way.
-        if (!(std::abs(given[i] - extent) <= tol)) {
+
+        // llround is defined only over the range its return type holds, so the
+        // ratio is bounded before it is rounded rather than after. n_i + 1 is the
+        // tightest bound that cannot reject an acceptable count, and a zero or
+        // non-finite spacing makes the ratio non-finite, which fails isfinite here
+        // rather than reaching llround. Every ratio this turns away is one no
+        // accepted period could have matched.
+        const double ratio = given[i] / spacing[i];
+        const bool ratio_roundable =
+            std::isfinite(ratio) && std::abs(ratio) <= static_cast<double>(n[i]) + 1.0;
+        const long long p = ratio_roundable ? std::llround(ratio) : 0;
+
+        // The whole condition is negated so a non-finite edge lands on the reject
+        // side rather than passing a comparison it cannot satisfy either way.
+        // p >= 1 keeps a negative or zero count out of the unsigned conversion
+        // below, and phrasing the short case as p + 1 == n_i keeps the comparison
+        // off an unsigned n_i - 1 that could wrap.
+        const bool accepted =
+            ratio_roundable && p >= 1 &&
+            (static_cast<unsigned long long>(p) == n[i] ||
+             static_cast<unsigned long long>(p) + 1u == n[i]) &&
+            std::abs(given[i] - static_cast<double>(p) * spacing[i]) <= tol;
+
+        if (!accepted) {
             std::ostringstream message;
-            message << "Periodic interpolation needs cell edge " << EDGE[i] << " to equal the "
-                       "extent the grid samples along " << AXIS[i] << ": got " << given[i]
-                    << " A against " << extent << " A (" << n[i] << " nodes at "
-                    << spacing[i] << " A), a difference of " << std::abs(given[i] - extent)
-                    << " A against a " << tol << " A allowance for float node coordinates; "
-                       "the grid does not tile that cell";
+            message << "Periodic interpolation needs cell edge " << EDGE[i]
+                    << " to be a whole number of the grid's node intervals along " << AXIS[i]
+                    << ", and that number to be either the node count or one less: got "
+                    << given[i] << " A against " << full << " A (" << n[i] << " nodes at "
+                    << spacing[i] << " A, every node distinct) or " << closed << " A ("
+                    << (n[i] - 1u)
+                    << " intervals, for a grid whose closing plane duplicates its first, "
+                       "which is what OpenEye's reader hands back for a whole-cell CCP4 or "
+                       "MRC map), to within a "
+                    << tol
+                    << " A allowance for float node coordinates. The cell is what chooses "
+                       "between those two, and this edge is neither, so the grid does not "
+                       "tile it";
             throw CellError(message.str());
         }
+        period[i] = static_cast<unsigned int>(p);
     }
+
+    CellPeriods periods;
+    periods.x_period = period[0];
+    periods.y_period = period[1];
+    periods.z_period = period[2];
+    return periods;
 }
 
 namespace {
@@ -441,8 +478,11 @@ namespace {
 /// The periodic blend, on a cell already checked commensurate.
 ///
 /// Split out so the batch entry point can check the cell once and then run this
-/// per point.
+/// per point. @p periods carries that check's result: the wrap period is a
+/// property of the caller's cell, not of the node count, so it is passed in
+/// rather than read off @p gp.
 double WrapAndBlendPeriodic(const GridParams& gp, const float* values,
+                            const CellPeriods& periods,
                             const double x, const double y, const double z,
                             const double default_value) {
     double f[3] = {0.0, 0.0, 0.0};
@@ -457,14 +497,14 @@ double WrapAndBlendPeriodic(const GridParams& gp, const float* values,
         return default_value;
     }
 
-    const unsigned int n[3] = {gp.x_dim, gp.y_dim, gp.z_dim};
+    const unsigned int p[3] = {periods.x_period, periods.y_period, periods.z_period};
     const unsigned int stride[3] = {1u, gp.x_dim, gp.x_dim * gp.y_dim};
     unsigned int lo[3], hi[3];
     double t[3];
     for (int i = 0; i < 3; ++i) {
-        // Wrapping the fractional index modulo the node count, rather than the
+        // Wrapping the fractional index modulo the interval count, rather than the
         // Cartesian coordinate modulo the cell edge, makes the reduction itself
-        // exact: fmod is exact by IEEE 754, and the period is the integer n_i.
+        // exact: fmod is exact by IEEE 754, and the period is the integer p_i.
         // The wrapped index therefore carries only the error already in f[i].
         // That error does grow with distance -- f[i] is (x - origin) / spacing, so
         // a point further out is formed from larger operands and rounds coarser --
@@ -472,15 +512,23 @@ double WrapAndBlendPeriodic(const GridParams& gp, const float* values,
         // the coordinate instead would subtract a rounded multiple of a rounded
         // cell edge, so the error would grow a second time, once per cell crossed.
         // Adding the period back for a negative remainder can round the sum up to
-        // exactly n_i, which the modulus below absorbs.
-        const double period = static_cast<double>(n[i]);
+        // exactly p_i, which the modulus below absorbs.
+        //
+        // p_i is the caller's cell in node intervals, not the node count. Using
+        // n_i where the caller passed n_i - 1 would pair node n_i - 1 with node 0,
+        // and on a grid whose closing plane duplicates its first those hold the
+        // same values, so the final interval comes back constant: measured on
+        // 1d26_2fofc.ccp4, sweeping it under the n * spacing cell gives a spread
+        // of exactly 0 on all three axes, against 0.09, 0.18 and 0.05 under the
+        // map's own cell.
+        const double period = static_cast<double>(p[i]);
         double w = std::fmod(f[i], period);
         if (w < 0.0) w += period;
 
         const double base = std::floor(w);
-        const unsigned int i0 = static_cast<unsigned int>(base) % n[i];
+        const unsigned int i0 = static_cast<unsigned int>(base) % p[i];
         lo[i] = i0 * stride[i];
-        hi[i] = ((i0 + 1u) % n[i]) * stride[i];
+        hi[i] = ((i0 + 1u) % p[i]) * stride[i];
         t[i] = std::min(std::max(w - base, 0.0), 1.0);
     }
 
@@ -494,8 +542,8 @@ double interpolate_density_periodic_at(
     const double x, const double y, const double z,
     const double cell_a, const double cell_b, const double cell_c,
     const double default_value) {
-    require_commensurate_cell(gp, cell_a, cell_b, cell_c);
-    return WrapAndBlendPeriodic(gp, values, x, y, z, default_value);
+    const CellPeriods periods = require_commensurate_cell(gp, cell_a, cell_b, cell_c);
+    return WrapAndBlendPeriodic(gp, values, periods, x, y, z, default_value);
 }
 
 double interpolate_density_periodic(
@@ -516,14 +564,15 @@ std::vector<double> interpolate_density_periodic_batch(
     const double default_value) {
     const GridParams gp = get_grid_params(grid);
     // The cell is a property of the batch, not of a point in it, so the check
-    // runs once here rather than num_points times inside the loop.
-    require_commensurate_cell(gp, cell_a, cell_b, cell_c);
+    // runs once here rather than num_points times inside the loop, and the wrap
+    // periods it derives are reused across the batch.
+    const CellPeriods periods = require_commensurate_cell(gp, cell_a, cell_b, cell_c);
 
     const float* values = grid.GetValues();
     std::vector<double> result(num_points);
     for (size_t i = 0; i < num_points; ++i) {
         result[i] = WrapAndBlendPeriodic(
-            gp, values, points[i * 3], points[i * 3 + 1], points[i * 3 + 2],
+            gp, values, periods, points[i * 3], points[i * 3 + 1], points[i * 3 + 2],
             default_value);
     }
     return result;

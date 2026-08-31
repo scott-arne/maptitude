@@ -37,6 +37,20 @@ struct GridParams {
     double z_spacing;     ///< Node interval along z (Angstroms)
 };
 
+/**
+ * @brief Per-axis wrap period, in node intervals, that a cell selects on a grid.
+ *
+ * The periodic path wraps in index space, so the period it needs is a count of
+ * node intervals rather than a Cartesian length. require_commensurate_cell
+ * derives it from the caller's cell edge and returns it here so the wrap does
+ * not have to guess it from the node count.
+ */
+struct CellPeriods {
+    unsigned int x_period;  ///< Node intervals in one period along x
+    unsigned int y_period;  ///< Node intervals in one period along y
+    unsigned int z_period;  ///< Node intervals in one period along z
+};
+
 /// Unit cell of a skew grid: a, b, c in Angstroms, alpha, beta, gamma in degrees.
 struct UnitCellParams {
     double a;      ///< Cell edge a (Angstroms)
@@ -135,13 +149,40 @@ double interpolate_density_at(const GridParams& gp, const float* values,
                               double default_value = 0.0);
 
 /**
- * @brief Throw unless the cell edges are the extents the grid samples.
+ * @brief Throw unless each cell edge is a whole number of node intervals, and
+ *        that number is the node count or one less.
  *
- * The periodic path makes node `n_i - 1` adjacent to node 0, which reproduces
- * the crystal only when one period of the map is exactly the n_i nodes the grid
- * holds. An edge that disagrees describes a different lattice, and wrapping onto
- * it would return densities from the wrong place with nothing to mark them as
- * wrong.
+ * The periodic path wraps in index space, so what it needs from the cell is an
+ * interval count: `p_i = round(cell_i / spacing_i)`. Two counts are accepted,
+ * because two grid shapes reach this library.
+ *
+ * A grid can hold `n_i` distinct nodes per period, and then node `n_i - 1`'s
+ * upper neighbour is node 0. The four whole-cell crystallographic assets in
+ * `tests/assets/mapq` are not that shape. Each stores exactly its `MX,MY,MZ`
+ * sections at `NxSTART = 0`, OpenEye's reader appends a closing plane to each,
+ * and all four come back with M + 1 nodes per axis -- so one period spans
+ * `n_i - 1` intervals. Measured on all four, that appended plane is a bit-exact
+ * copy of plane 0 on every axis: 0 differing values, out of 1225 to 7380 per
+ * plane. All four report a cell of `(n_i - 1) * spacing_i` on all three axes.
+ * The reader does not do this unconditionally, and `tests/data/test_map.ccp4`
+ * is the case that shows so: it stores 21 of its cell's 42 samples at
+ * `NxSTART = -10` and 21 nodes come back, with no period at all.
+ *
+ * **The caller's cell selects the period; this function does not divine it.**
+ * Both counts pass the arithmetic on any grid with two or more nodes per axis,
+ * and which of them describes a particular grid turns on whether its closing
+ * plane repeats its first -- a property of the values, which the geometry does
+ * not record. Passing an edge of `(n_i - 1) * spacing_i` is the caller asserting
+ * that it does, exactly as passing `n_i * spacing_i` asserts that every node is
+ * distinct. The guard's job is to reject a cell that matches no node lattice at
+ * all, and it does not read the values to decide which of the two the caller
+ * meant: comparing the end planes costs O(n^2) per call on the hot path, and the
+ * batch entry point would pay it for a property of the grid rather than of the
+ * batch.
+ *
+ * An edge that rounds to neither count describes a different lattice, and
+ * wrapping onto it would return densities from the wrong place with nothing to
+ * mark them as wrong.
  *
  * The comparison is absolute, against an allowance proportional to the largest
  * magnitude the axis's geometry takes -- the further of its two endpoints, or
@@ -151,39 +192,51 @@ double interpolate_density_at(const GridParams& gp, const float* values,
  * always the larger of the two -- by 2n_i / (n_i - 1), which is fourfold on a
  * two-node axis. Leaving it out of the scale is enough to make a two-node grid
  * at 5.45 A centred on the origin fail on a cell it tiles exactly. A cell that
- * disagrees for a real reason disagrees by a fraction of a node interval at
- * least, which is orders above the allowance for any grid a crystallographic
- * map produces.
+ * matches neither count for a real reason misses the nearer one by a fraction
+ * of a node interval at least, which is orders above the allowance for any grid
+ * a crystallographic map produces.
  *
  * Exposed so a caller that is about to sample the grid periodically can reject
- * a bad cell before doing any other work, rather than after.
+ * a bad cell before doing any other work, rather than after. The interval counts
+ * come back so the wrap does not recompute them.
  *
  * @param gp Geometry from get_grid_params.
  * @param cell_a Unit cell dimension along x (Angstroms).
  * @param cell_b Unit cell dimension along y (Angstroms).
  * @param cell_c Unit cell dimension along z (Angstroms).
- * @throws CellError If an edge is not that axis's extent, or is not finite.
+ * @return The interval count each edge selects: n_i, or n_i - 1 for a grid the
+ *         caller is declaring to carry a duplicated closing plane.
+ * @throws CellError If an edge does not round to a whole number of that axis's
+ *         node intervals, if that number is neither n_i nor n_i - 1, or if the
+ *         edge or the axis's spacing is not finite and positive.
  */
-void require_commensurate_cell(const GridParams& gp,
-                               double cell_a, double cell_b, double cell_c);
+CellPeriods require_commensurate_cell(const GridParams& gp,
+                                      double cell_a, double cell_b, double cell_c);
 
 /**
  * @brief Periodic trilinear interpolation at a point, from derived geometry.
  *
- * The counterpart to interpolate_density_at for a map that tiles space. The
- * grid holds exactly one period, so node `n_i - 1`'s upper neighbour is node 0
- * and a point in an axis's final interval blends the two instead of falling off
- * the end. There is no outside to fall into, so @p default_value is returned
+ * The counterpart to interpolate_density_at for a map that tiles space. A point
+ * in an axis's final interval blends across the period boundary instead of
+ * falling off the end. Which node it blends into node 0 depends on how many
+ * intervals the period holds, and that is `p_i = round(cell_i / spacing_i)`, the
+ * count require_commensurate_cell derives from the caller's own cell. Both cases
+ * occur here and both are definite. Under `p_i == n_i` the grid holds n_i
+ * distinct nodes and node `n_i - 1` pairs with node 0. Under `p_i == n_i - 1` --
+ * the caller declaring node `n_i - 1` to be a copy of node 0, which is what the
+ * whole-cell assets in `tests/assets/mapq` carry -- node `n_i - 1` is never a
+ * lower neighbour and it is node `n_i - 2` that pairs with node 0.
+ * There is no outside to fall into, so @p default_value is returned
  * only when the point's fractional index is not finite -- which covers a
  * non-finite coordinate and also a finite one large enough that dividing it by
  * the spacing overflows.
  *
- * The wrap runs on the fractional index modulo the integer node count rather
- * than on the Cartesian coordinate modulo the cell edge. The reduction is then
- * exact -- fmod is exact and the period is an integer -- so the wrapped index
- * carries only the error already in the fractional index, no matter how many
- * cells out the point started. Reducing the coordinate instead would accumulate
- * the cell edge's own rounding once per cell crossed.
+ * The wrap runs on the fractional index modulo that integer interval count
+ * rather than on the Cartesian coordinate modulo the cell edge. The reduction is
+ * then exact -- fmod is exact and the period is an integer -- so the wrapped
+ * index carries only the error already in the fractional index, no matter how
+ * many cells out the point started. Reducing the coordinate instead would
+ * accumulate the cell edge's own rounding once per cell crossed.
  *
  * @param gp Geometry from get_grid_params.
  * @param values The grid's value array, from OESkewGrid::GetValues().
@@ -196,13 +249,12 @@ void require_commensurate_cell(const GridParams& gp,
  * @param default_value Value returned when the point's fractional index is not
  *        finite.
  * @return Interpolated density value.
- * @throws CellError If a cell edge is not the extent the grid samples on that
- *         axis, n_i * spacing_i, to within the allowance require_commensurate_cell
- *         makes for float node coordinates. Treating the last node as adjacent
- *         to the first is only the same lattice when the two agree; wrapping an
- *         incommensurate cell would resample the map onto a lattice it never
- *         had, so the caller is told rather than handed a plausible wrong
- *         number.
+ * @throws CellError If a cell edge does not round to n_i or n_i - 1 of that
+ *         axis's node intervals, to within the allowance
+ *         require_commensurate_cell makes for float node coordinates. Wrapping
+ *         at a period the grid was never sampled on would resample the map onto
+ *         a lattice it never had, so the caller is told rather than handed a
+ *         plausible wrong number.
  */
 double interpolate_density_periodic_at(const GridParams& gp, const float* values,
                                        double x, double y, double z,

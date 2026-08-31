@@ -146,10 +146,11 @@ OESystem::OESkewGrid* diff_to_calc(
  *         fits and no padding is needed. The caller owns the returned grid.
  * @throws StructureError If the molecule contains no heavy atoms.
  * @throws CellError As get_grid_params, if any cell dimension is not a finite
- *         positive value, or if a cell dimension is not the extent the grid
- *         samples on that axis -- the padded grid is filled by periodic sampling
- *         and inherits interpolate_density_periodic_at's commensurability
- *         requirement.
+ *         positive value, or if a cell dimension does not round to n_i or
+ *         n_i - 1 of that axis's node intervals -- the padded grid is filled by
+ *         periodic sampling and inherits interpolate_density_periodic_at's
+ *         commensurability requirement, including which of those two counts the
+ *         cell selects as the wrap period.
  * @throws GridError As get_grid_params, if padding is not a finite non-negative
  *         value, if a centroid shift the function applies would leave some atom
  *         at a coordinate that is not a finite value a float can hold, if an
