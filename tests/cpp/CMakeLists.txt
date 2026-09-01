@@ -24,6 +24,7 @@ add_executable(maptitude_tests
     test_density_calculator_characterization.cpp
     test_grid_ops_characterization.cpp
     test_grid_io.cpp
+    test_map_io.cpp
     test_input_validation.cpp
 )
 

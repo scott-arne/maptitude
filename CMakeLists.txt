@@ -70,6 +70,7 @@ set(MAPTITUDE_SOURCES
     src/Metric.cpp
     src/DensityScoreResult.cpp
     src/GridOps.cpp
+    src/MapIO.cpp
     src/SpatialIndex.cpp
 )
 
