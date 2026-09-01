@@ -25,6 +25,11 @@ constexpr std::size_t CCP4_HEADER_BYTES = 1024;
 /// Symmetry records are fixed-width and space-padded, with no separator.
 constexpr std::size_t SYMOP_RECORD_BYTES = 80;
 
+/// Maximum number of symmetry records allowed. The largest crystallographic
+/// space group has 192 general positions; this cap is twenty times that while
+/// keeping the allocation bounded at 320 KB.
+constexpr std::size_t MAX_SYMOP_RECORDS = 4096;
+
 // Word indices are 1-based, as the CCP4 specification numbers them.
 constexpr std::size_t WORD_NCSTART = 5;
 constexpr std::size_t WORD_NSYMBT = 24;
@@ -143,6 +148,18 @@ std::string ReadSymopBlock(const std::string& path, const MapHeader& header) {
                         std::to_string(header.nsymbt) +
                         ", which is not a non-negative multiple of " +
                         std::to_string(SYMOP_RECORD_BYTES));
+    }
+
+    const std::size_t record_count =
+        static_cast<std::size_t>(header.nsymbt) / SYMOP_RECORD_BYTES;
+    if (record_count > MAX_SYMOP_RECORDS) {
+        const std::size_t cap_bytes = MAX_SYMOP_RECORDS * SYMOP_RECORD_BYTES;
+        throw GridError("Map file '" + path + "' declares " +
+                        std::to_string(record_count) +
+                        " symmetry records (" +
+                        std::to_string(header.nsymbt) + " bytes), exceeds cap of " +
+                        std::to_string(MAX_SYMOP_RECORDS) + " records (" +
+                        std::to_string(cap_bytes) + " bytes)");
     }
 
     const std::size_t block_bytes = static_cast<std::size_t>(header.nsymbt);

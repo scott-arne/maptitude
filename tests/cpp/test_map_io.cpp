@@ -11,8 +11,9 @@
 
 #include <gtest/gtest.h>
 
-#include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -210,18 +211,47 @@ TEST(MapIoReadTest, MovesRatherThanResamplesTheEmPayload) {
     }
 }
 
+TEST(MapIoReadTest, RejectsNsymbtExceedingRecordCap) {
+    // Regression test for the symop record count cap. A header declaring more
+    // than MAX_SYMOP_RECORDS (4096) must not drive an unbounded allocation.
+    //
+    // NSYMBT = 409600 is 5120 records, exceeding the cap. Measurement showed
+    // OEReadGrid accepts this (7 ms) and the cap check fires. Without the cap,
+    // read_map would allocate 400 KB; with larger values a 2 GB file declaring
+    // 2 GB of symops would allocate that. The message check ensures this test
+    // fails if the cap is removed.
+    const std::string patched = CopyAndPatchWord(
+        DataPath("test_map.ccp4"), 24, 409600);
+
+    try {
+        MapFile map = read_map(patched);
+        FAIL() << "Expected GridError for NSYMBT exceeding record cap";
+    } catch (const GridError& e) {
+        const std::string msg(e.what());
+        EXPECT_NE(msg.find("exceeds cap"), std::string::npos)
+            << "Expected cap-check message, got: " << msg;
+        EXPECT_NE(msg.find("5120 symmetry records"), std::string::npos)
+            << "Expected cap-check message, got: " << msg;
+        EXPECT_NE(msg.find("4096 records"), std::string::npos)
+            << "Expected cap-check message, got: " << msg;
+    }
+
+    std::remove(patched.c_str());
+}
+
 TEST(MapIoReadTest, RejectsNsymbtLargerThanFile) {
-    // Regression test for the NSYMBT allocation bound. A header declaring
+    // Regression test for the NSYMBT file-size bound. A header declaring
     // NSYMBT larger than the file can contain must not drive an allocation off
     // the declared size; ReadSymopBlock must check the file's actual size first.
     //
-    // The measurement showed that OEReadGrid accepts this file (slowly), so the
-    // bound is reachable and this test discriminates: without the bound,
-    // read_map would allocate ~2.1 GB and throw after the short read; with it,
-    // read_map throws before allocating, naming both the declared and actual
-    // sizes. The message check ensures this test fails if the bound is removed.
+    // NSYMBT = 40000 is 500 records (under the cap) but test_map.ccp4 is only
+    // 38068 bytes, so the file ends before the symmetry block would. Measurement
+    // showed OEReadGrid accepts this (9 ms) and the file-size check fires.
+    // Without the bound, read_map would allocate 40 KB and throw after a short
+    // read; with it, read_map throws before allocating, naming both sizes. The
+    // message check ensures this test fails if the bound is removed.
     const std::string patched = CopyAndPatchWord(
-        DataPath("test_map.ccp4"), 24, 2147483600);
+        DataPath("test_map.ccp4"), 24, 40000);
 
     try {
         MapFile map = read_map(patched);
@@ -233,4 +263,6 @@ TEST(MapIoReadTest, RejectsNsymbtLargerThanFile) {
         EXPECT_NE(msg.find("need at least"), std::string::npos)
             << "Expected size-check message, got: " << msg;
     }
+
+    std::remove(patched.c_str());
 }
