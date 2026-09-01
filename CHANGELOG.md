@@ -44,6 +44,15 @@ below is written for that reader.
   extent it has to cover. It was a constant inside the function; it is public
   because it bounds how far short of the requested extent the padded grid may
   fall, and that bound is part of the function's contract.
+- **A configure-time warning when the installed SWIG differs from the one that
+  generated the checked-in proxy.** `python/maptitude/maptitude.py` is tracked,
+  and the build's post-build copy rewrites it with the output of whatever SWIG
+  is installed, so a contributor on another SWIG restaged a wholly regenerated
+  proxy alongside their real change with nothing to say so — observed with
+  4.4.1 overwriting a 4.5.0 proxy. The check reads the version from the tracked
+  file's own banner, so there is no second constant to keep in sync, and it
+  warns rather than failing, so a mismatch reports itself without blocking the
+  build.
 
 ### Changed
 
