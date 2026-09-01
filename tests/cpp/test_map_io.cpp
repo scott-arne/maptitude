@@ -13,8 +13,11 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -39,25 +42,6 @@ std::string AssetPath(const std::string& name) {
 
 std::string DataPath(const std::string& name) {
     return std::string(MAPTITUDE_TEST_DATA_DIR) + "/" + name;
-}
-
-/// Copy a map file and patch one header word (1-based indexing).
-std::string CopyAndPatchWord(const std::string& source, const std::size_t word,
-                              const std::int32_t value) {
-    const std::string temp =
-        std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") +
-        "/test_map_patched.ccp4";
-    std::ifstream src(source, std::ios::binary);
-    std::ofstream dst(temp, std::ios::binary);
-    dst << src.rdbuf();
-    src.close();
-    dst.close();
-
-    std::fstream file(temp, std::ios::binary | std::ios::in | std::ios::out);
-    file.seekp(static_cast<std::streamoff>((word - 1u) * 4u));
-    file.write(reinterpret_cast<const char*>(&value), 4);
-    file.close();
-    return temp;
 }
 
 /// One row of the section 2.1 read table.
@@ -91,6 +75,121 @@ std::vector<std::string> SplitLines(const std::string& text) {
         start = end + 1;
     }
     return lines;
+}
+
+/// Copy a fixture into a scratch file with named header words rewritten.
+///
+/// The variants section 2.1 measured (permuted MAPC/MAPR/MAPS, ORIGIN and
+/// NxSTART in each combination) are cheap to rebuild this way, so each
+/// measurement read_map depends on becomes a pin rather than a number that
+/// lives only in the design document.
+class HeaderVariant {
+public:
+    explicit HeaderVariant(const std::string& source)
+        : path_(::testing::TempDir() + "/maptitude_variant_" +
+                std::to_string(++counter_) + ".ccp4") {
+        std::ifstream in(source, std::ios::binary);
+        bytes_.assign(std::istreambuf_iterator<char>(in),
+                      std::istreambuf_iterator<char>());
+    }
+
+    ~HeaderVariant() { std::remove(path_.c_str()); }
+
+    HeaderVariant& SetInt(const std::size_t word, const std::int32_t value) {
+        std::memcpy(&bytes_[(word - 1u) * 4u], &value, 4);
+        return *this;
+    }
+
+    HeaderVariant& SetFloat(const std::size_t word, const float value) {
+        std::memcpy(&bytes_[(word - 1u) * 4u], &value, 4);
+        return *this;
+    }
+
+    /// Write the variant out and return its path.
+    const std::string& Write() {
+        std::ofstream out(path_, std::ios::binary);
+        out.write(bytes_.data(), static_cast<std::streamsize>(bytes_.size()));
+        out.close();
+        return path_;
+    }
+
+    /// Splice a symmetry block in at offset 1024 and update NSYMBT to match.
+    ///
+    /// The payload moves rather than being overwritten, which is what the
+    /// on-disk layout actually does. Truncating it instead would make
+    /// OEReadGrid fail first and the malformed-symop cases below would report
+    /// GridError, never reaching the parser they exist to exercise.
+    HeaderVariant& SetSymopBlock(const std::string& block) {
+        std::int32_t existing = 0;
+        std::memcpy(&existing, &bytes_[(24 - 1) * 4], 4);
+        bytes_.replace(1024u, static_cast<std::size_t>(existing), block);
+        const std::int32_t updated = static_cast<std::int32_t>(block.size());
+        std::memcpy(&bytes_[(24 - 1) * 4], &updated, 4);
+        return *this;
+    }
+
+    /// Cut the file short, for the case where NSYMBT outruns the file.
+    HeaderVariant& TruncateTo(const std::size_t size) {
+        bytes_.resize(size);
+        return *this;
+    }
+
+private:
+    static int counter_;
+    std::string path_;
+    std::string bytes_;
+};
+
+int HeaderVariant::counter_ = 0;
+
+/// Build a big-endian copy of a little-endian CCP4 file.
+///
+/// Words 1-52 and 55-56 are numeric and swap; word 53 is the "MAP " string and
+/// words 57-256 are the ten 80-character labels, both text, so neither does.
+/// Word 54 is MACHST, which is set to the big-endian stamp rather than swapped.
+/// The symmetry block is text. The payload is float32 and swaps.
+std::string MakeBigEndianCopy(const std::string& source) {
+    std::ifstream in(source, std::ios::binary);
+    std::string bytes((std::istreambuf_iterator<char>(in)),
+                      std::istreambuf_iterator<char>());
+
+    auto swap_word = [&bytes](const std::size_t word) {
+        std::uint32_t value = 0u;
+        std::memcpy(&value, &bytes[(word - 1u) * 4u], 4);
+        value = ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8) |
+                ((value & 0x00FF0000u) >> 8) | ((value & 0xFF000000u) >> 24);
+        std::memcpy(&bytes[(word - 1u) * 4u], &value, 4);
+    };
+
+    std::int32_t nsymbt = 0;
+    std::memcpy(&nsymbt, &bytes[(24 - 1) * 4], 4);
+
+    for (std::size_t word = 1; word <= 52; ++word) {
+        swap_word(word);
+    }
+    for (std::size_t word = 55; word <= 56; ++word) {
+        swap_word(word);
+    }
+    bytes[(54 - 1) * 4 + 0] = static_cast<char>(0x11);
+    bytes[(54 - 1) * 4 + 1] = static_cast<char>(0x11);
+    bytes[(54 - 1) * 4 + 2] = static_cast<char>(0x00);
+    bytes[(54 - 1) * 4 + 3] = static_cast<char>(0x00);
+
+    const std::size_t payload_start = 1024u + static_cast<std::size_t>(nsymbt);
+    for (std::size_t offset = payload_start; offset + 4u <= bytes.size();
+         offset += 4u) {
+        std::uint32_t value = 0u;
+        std::memcpy(&value, &bytes[offset], 4);
+        value = ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8) |
+                ((value & 0x00FF0000u) >> 8) | ((value & 0xFF000000u) >> 24);
+        std::memcpy(&bytes[offset], &value, 4);
+    }
+
+    const std::string path =
+        ::testing::TempDir() + "/maptitude_bigendian_1d26.ccp4";
+    std::ofstream out(path, std::ios::binary);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    return path;
 }
 
 }  // namespace
@@ -220,11 +319,11 @@ TEST(MapIoReadTest, RejectsNsymbtExceedingRecordCap) {
     // read_map would allocate 400 KB; with larger values a 2 GB file declaring
     // 2 GB of symops would allocate that. The message check ensures this test
     // fails if the cap is removed.
-    const std::string patched = CopyAndPatchWord(
-        DataPath("test_map.ccp4"), 24, 409600);
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetInt(24, 409600);
 
     try {
-        MapFile map = read_map(patched);
+        MapFile map = read_map(variant.Write());
         FAIL() << "Expected GridError for NSYMBT exceeding record cap";
     } catch (const GridError& e) {
         const std::string msg(e.what());
@@ -235,8 +334,6 @@ TEST(MapIoReadTest, RejectsNsymbtExceedingRecordCap) {
         EXPECT_NE(msg.find("4096 records"), std::string::npos)
             << "Expected cap-check message, got: " << msg;
     }
-
-    std::remove(patched.c_str());
 }
 
 TEST(MapIoReadTest, RejectsNsymbtLargerThanFile) {
@@ -250,11 +347,11 @@ TEST(MapIoReadTest, RejectsNsymbtLargerThanFile) {
     // Without the bound, read_map would allocate 40 KB and throw after a short
     // read; with it, read_map throws before allocating, naming both sizes. The
     // message check ensures this test fails if the bound is removed.
-    const std::string patched = CopyAndPatchWord(
-        DataPath("test_map.ccp4"), 24, 40000);
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetInt(24, 40000);
 
     try {
-        MapFile map = read_map(patched);
+        MapFile map = read_map(variant.Write());
         FAIL() << "Expected GridError for NSYMBT exceeding file size";
     } catch (const GridError& e) {
         const std::string msg(e.what());
@@ -263,6 +360,224 @@ TEST(MapIoReadTest, RejectsNsymbtLargerThanFile) {
         EXPECT_NE(msg.find("need at least"), std::string::npos)
             << "Expected size-check message, got: " << msg;
     }
+}
 
-    std::remove(patched.c_str());
+TEST(MapIoHeaderVariantTest, HonoursAPermutedAxisOrder) {
+    // MAPC/MAPR/MAPS at words 17-19. All five fixtures ship (1, 2, 3), so a
+    // synthetic variant is the only evidence the reader honours a permuted
+    // order.
+    //
+    // The committed NxSTART is (-10, -10, -10) and the grid is cubic, which
+    // makes a permutation the identity on node 0: measured, the permuted and
+    // unpermuted files both read back at (-5, -5, -5). So the starts have to
+    // be made distinct first, or this variant tests nothing.
+    //
+    // Measured with NxSTART (-10, -4, 6) at spacing 0.5:
+    //   MAPC/MAPR/MAPS  node 0
+    //   (1, 2, 3)       (-5, -2, +3)   -- unpermuted
+    //   (3, 1, 2)       (-2, +3, -5)
+    //   (2, 3, 1)       (+3, -5, -2)
+    //   (1, 3, 2)       (-5, +3, -2)
+    // The rule the numbers show: word 17 names the crystal axis the file's
+    // fast axis belongs to, so NCSTART's contribution lands on that axis.
+    // Pin the placement, not an inequality.
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetInt(5, -10).SetInt(6, -4).SetInt(7, 6);
+    variant.SetInt(17, 3).SetInt(18, 1).SetInt(19, 2);
+    const MapFile map = read_map(variant.Write());
+    const GridParams gp = get_grid_params(*map.grid);
+
+    EXPECT_NEAR(gp.x_origin, -2.0, 1e-9);
+    EXPECT_NEAR(gp.y_origin, 3.0, 1e-9);
+    EXPECT_NEAR(gp.z_origin, -5.0, 1e-9);
+
+    // The fixture is cubic, so dims and spacing are unchanged by the
+    // permutation and cannot testify either way -- assert them as the
+    // invariants they are, not as evidence of the permutation.
+    EXPECT_EQ(map.grid->GetXDim(), 21u);
+    EXPECT_NEAR(gp.x_spacing, 0.5, 1e-9);
+}
+
+TEST(MapIoHeaderVariantTest, DistinctStartsAreWhatMakeThePermutationVisible) {
+    // The premise of the test above, pinned so a later change to the fixture
+    // cannot silently turn it into a tautology. On the committed equal starts
+    // the permutation is unobservable in node 0; the test above is only
+    // meaningful because it sets distinct ones.
+    HeaderVariant permuted(DataPath("test_map.ccp4"));
+    permuted.SetInt(17, 3).SetInt(18, 1).SetInt(19, 2);
+    const GridParams permuted_gp =
+        get_grid_params(*read_map(permuted.Write()).grid);
+    const GridParams plain_gp =
+        get_grid_params(*read_map(DataPath("test_map.ccp4")).grid);
+
+    EXPECT_EQ(permuted_gp.x_origin, plain_gp.x_origin);
+    EXPECT_EQ(permuted_gp.y_origin, plain_gp.y_origin);
+    EXPECT_EQ(permuted_gp.z_origin, plain_gp.z_origin);
+}
+
+TEST(MapIoHeaderVariantTest, OriginRecordWinsWhenNxStartIsAlsoSet) {
+    // test_map.ccp4 already carries NxSTART (-10, -10, -10), which the reader
+    // applies as node 0 = (-5, -5, -5). Adding a nonzero ORIGIN makes both
+    // records live, which is exactly the tiebreak case.
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetFloat(50, 7.0f).SetFloat(51, 8.0f).SetFloat(52, 9.0f);
+    const std::string path = variant.Write();
+
+    const MapFile by_origin = read_map(path, OriginSource::ORIGIN_RECORD);
+    const GridParams origin_gp = get_grid_params(*by_origin.grid);
+    EXPECT_NEAR(origin_gp.x_origin, 7.0, 1e-6);
+    EXPECT_NEAR(origin_gp.y_origin, 8.0, 1e-6);
+    EXPECT_NEAR(origin_gp.z_origin, 9.0, 1e-6);
+
+    const MapFile by_nxstart = read_map(path, OriginSource::NXSTART);
+    const GridParams nxstart_gp = get_grid_params(*by_nxstart.grid);
+    EXPECT_NEAR(nxstart_gp.x_origin, -5.0, 1e-6);
+    EXPECT_NEAR(nxstart_gp.y_origin, -5.0, 1e-6);
+    EXPECT_NEAR(nxstart_gp.z_origin, -5.0, 1e-6);
+}
+
+TEST(MapIoHeaderVariantTest, TiebreakIsIgnoredWhenOnlyOneRecordIsSet) {
+    // NxSTART alone: both tiebreaks leave the reader's placement alone.
+    const MapFile a = read_map(DataPath("test_map.ccp4"),
+                               OriginSource::ORIGIN_RECORD);
+    const MapFile b = read_map(DataPath("test_map.ccp4"),
+                               OriginSource::NXSTART);
+    EXPECT_NEAR(get_grid_params(*a.grid).x_origin,
+                get_grid_params(*b.grid).x_origin, 1e-9);
+    EXPECT_NEAR(get_grid_params(*a.grid).x_origin, -5.0, 1e-6);
+
+    // ORIGIN alone: both tiebreaks apply it.
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetInt(5, 0).SetInt(6, 0).SetInt(7, 0);
+    variant.SetFloat(50, 3.5f).SetFloat(51, 3.5f).SetFloat(52, 3.5f);
+    const std::string path = variant.Write();
+    EXPECT_NEAR(get_grid_params(*read_map(path, OriginSource::NXSTART).grid)
+                    .x_origin,
+                3.5, 1e-6);
+    EXPECT_NEAR(
+        get_grid_params(*read_map(path, OriginSource::ORIGIN_RECORD).grid)
+            .x_origin,
+        3.5, 1e-6);
+}
+
+TEST(MapIoHeaderVariantTest, ResolvesLittleEndianForEveryShippedFixture) {
+    // Every committed fixture reads correctly on this little-endian host, so
+    // none of them can be carrying a big-endian MACHST. Pinning that keeps a
+    // future fixture from silently taking the swap path.
+    const char* fixtures[] = {"1d26_2fofc.ccp4", "340d_2fofc.ccp4",
+                              "3q9g_2fofc.ccp4", "390_emd_30342_A_z4.mrc"};
+    for (const char* name : fixtures) {
+        SCOPED_TRACE(name);
+        std::ifstream in(AssetPath(name), std::ios::binary);
+        char header[1024] = {0};
+        in.read(header, 1024);
+        EXPECT_NE(static_cast<unsigned char>(header[(54 - 1) * 4]), 0x11u);
+    }
+}
+
+TEST(MapIoErrorTest, RaisesOnAMissingFile) {
+    EXPECT_THROW(read_map(DataPath("no_such_map.ccp4")), GridError);
+}
+
+TEST(MapIoErrorTest, RaisesOnATruncatedFile) {
+    const std::string path =
+        ::testing::TempDir() + "/maptitude_truncated.ccp4";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out << "not a map";
+    }
+    EXPECT_THROW(read_map(path), GridError);
+    std::remove(path.c_str());
+}
+
+TEST(MapIoErrorTest, RaisesWhenNsymbtIsNotAMultipleOfEighty) {
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetInt(24, 37);
+    EXPECT_THROW(read_map(variant.Write()), GridError);
+}
+
+TEST(MapIoErrorTest, RaisesWhenNsymbtIsNegative) {
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetInt(24, -80);
+    EXPECT_THROW(read_map(variant.Write()), GridError);
+}
+
+TEST(MapIoErrorTest, RaisesWhenTheFileEndsBeforeTheSymopBlockDoes) {
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetInt(24, 160).TruncateTo(1024u + 80u);
+    EXPECT_THROW(read_map(variant.Write()), GridError);
+}
+
+TEST(MapIoErrorTest, RaisesSymOpErrorOnEachMalformedRecordShape) {
+    // One record per malformed shape section 2.1 measured. Each is padded to
+    // the fixed 80 bytes the on-disk block uses. A valid first record precedes
+    // the bad one so the case shows the parser rejecting a record rather than
+    // rejecting the block wholesale.
+    const char* malformed[] = {
+        "not a symop at all",  // non-triplet
+        "x,y",                 // two components
+        "x,y,z,w",             // four components
+        "x,y,q*z",             // bad coefficient
+    };
+    for (const char* record : malformed) {
+        SCOPED_TRACE(record);
+        std::string block("x,y,z");
+        block.resize(80, ' ');
+        std::string second(record);
+        second.resize(80, ' ');
+        block += second;
+
+        HeaderVariant variant(DataPath("test_map.ccp4"));
+        variant.SetSymopBlock(block);
+        EXPECT_THROW(read_map(variant.Write()), SymOpError);
+    }
+}
+
+TEST(MapIoErrorTest, AnEmptySymopBlockYieldsNoOperators) {
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetSymopBlock(std::string(80, ' '));
+    const MapFile map = read_map(variant.Write());
+    EXPECT_TRUE(map.symops.empty());
+    EXPECT_TRUE(SymOp::ParseAll(map.symops).empty());
+}
+
+TEST(MapIoErrorTest, ReadsAWellFormedSymopBlockSplicedIntoAFixtureThatHadNone) {
+    // The positive control for SetSymopBlock. Without it, a splice that
+    // corrupted the file would make every malformed case above pass for the
+    // wrong reason -- they only assert that something was rejected.
+    std::string block("x,y,z");
+    block.resize(80, ' ');
+    std::string second("-x,-y,z+1/2");
+    second.resize(80, ' ');
+    block += second;
+
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetSymopBlock(block);
+    const MapFile map = read_map(variant.Write());
+    EXPECT_EQ(map.symops, "x,y,z\n-x,-y,z+1/2");
+    EXPECT_EQ(SymOp::ParseAll(map.symops).size(), 2u);
+    // The payload moved rather than being overwritten, so the grid still reads.
+    EXPECT_EQ(map.grid->GetSize(), 9261u);
+}
+
+TEST(MapIoEndiannessTest, ReadsABigEndianFileAsItsLittleEndianOriginal) {
+    const std::string path = MakeBigEndianCopy(AssetPath("1d26_2fofc.ccp4"));
+    const MapFile big = read_map(path);
+    const MapFile little = read_map(AssetPath("1d26_2fofc.ccp4"));
+
+    EXPECT_EQ(big.grid->GetXDim(), little.grid->GetXDim());
+    EXPECT_EQ(big.grid->GetYDim(), little.grid->GetYDim());
+    EXPECT_EQ(big.grid->GetZDim(), little.grid->GetZDim());
+
+    const GridParams big_gp = get_grid_params(*big.grid);
+    const GridParams little_gp = get_grid_params(*little.grid);
+    EXPECT_NEAR(big_gp.x_spacing, little_gp.x_spacing, 1e-6);
+    EXPECT_NEAR(big_gp.y_spacing, little_gp.y_spacing, 1e-6);
+    EXPECT_NEAR(big_gp.z_spacing, little_gp.z_spacing, 1e-6);
+    EXPECT_NEAR(big_gp.x_origin, little_gp.x_origin, 1e-6);
+    EXPECT_NEAR(big_gp.y_origin, little_gp.y_origin, 1e-6);
+    EXPECT_NEAR(big_gp.z_origin, little_gp.z_origin, 1e-6);
+
+    EXPECT_EQ(big.symops, little.symops);
+    std::remove(path.c_str());
 }
