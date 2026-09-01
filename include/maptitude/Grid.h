@@ -342,9 +342,11 @@ std::vector<double> interpolate_density_batch(
 /**
  * @brief Periodic-aware trilinear interpolation at a Cartesian point.
  *
- * The grid holds one period of a map that tiles space, so node `n_i - 1`'s upper
- * neighbour is node 0 and no point is outside the map. See
- * interpolate_density_periodic_at for the wrap, the one case @p default_value
+ * The grid holds one period of a map that tiles space, so a point in an axis's
+ * final interval blends across the period boundary and no point is outside the
+ * map. Which node pairs with node 0 depends on how many intervals the caller's
+ * cell holds, `p_i = round(cell_i / spacing_i)`. See
+ * interpolate_density_periodic_at for both cases, the one case @p default_value
  * still covers, and the commensurability requirement.
  *
  * @param grid Input grid.
@@ -358,8 +360,8 @@ std::vector<double> interpolate_density_batch(
  *        finite.
  * @return Interpolated density value.
  * @throws GridError As get_grid_params.
- * @throws CellError As get_grid_params, or if a cell edge is not the extent the
- *         grid samples on that axis.
+ * @throws CellError As get_grid_params, or if a cell edge does not round to
+ *         `n_i` or `n_i - 1` whole node intervals on that axis.
  */
 double interpolate_density_periodic(
     const OESystem::OESkewGrid& grid,

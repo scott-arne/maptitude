@@ -1,6 +1,5 @@
 """Shared utilities for maptitude vs bms-bio benchmarks."""
 
-import math
 import pathlib
 import re
 import struct
@@ -183,33 +182,15 @@ def load_ccp4_grid(ccp4_path: pathlib.Path):
     return grid, (a, b, c), symops_text
 
 
-# Mirrors PAD_INTERVAL_COUNT_TOL in include/maptitude/GridOps.h.
-_PAD_INTERVAL_COUNT_TOL = 1e-6
-
-
-def pad_dim(extent, spacing):
-    """Node count covering *extent* at *spacing*, sized as the C++ path sizes it.
-
-    The interval count rounds up, because the node span is what the padding has
-    to cover: truncating it leaves part of the requested extent outside the
-    grid. The spacing is measured off float node coordinates, so an extent that
-    is an exact multiple of it divides to 10.000000000000002 and a bare ceil
-    would buy a spurious node; a ratio that close to a whole count is taken as
-    that count, and only a genuine remainder rounds up.
-
-    :param extent: Length the padded axis must cover (Angstroms).
-    :param spacing: Node interval on that axis (Angstroms).
-    :returns: Number of nodes, one more than the interval count.
-    """
-    intervals = extent / spacing
-    whole = round(intervals)
-    if abs(intervals - whole) <= _PAD_INTERVAL_COUNT_TOL * max(1.0, whole):
-        return int(whole) + 1
-    return math.ceil(intervals) + 1
-
-
 def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
     """Translate molecule into the unit cell and pad the grid if needed.
+
+    An adapter over :func:`maptitude.wrap_and_pad_grid`, which takes the three
+    cell edges separately where the loaders here return them as a tuple. The
+    benchmarks measure the shipped padding path, so this must not grow a second
+    implementation of it: an earlier Python copy that filled the padded grid by
+    sampling the non-periodic entry point produced the better wwPDB agreement
+    figures this suite once reported.
 
     The molecule is modified in-place (coordinates shifted).
 
@@ -217,82 +198,13 @@ def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
     :param mol: Molecule to shift.
     :param cell: Tuple (a, b, c) of cell dimensions.
     :param padding: Padding in Angstroms around the molecule.
-    :returns: Original or padded grid covering the molecule.
+    :returns: Padded grid, or the original when no padding is needed.
+    :raises StructureError: If the molecule has no heavy atoms.
+    :raises CellError: If an edge is not a whole number of the grid's node
+        intervals along that axis.
     """
     a, b, c = cell
-    gp = maptitude.get_grid_params(grid)
-    coords = oechem.OEFloatArray(3)
-
-    # Compute heavy-atom centroid
-    cx, cy, cz, n = 0.0, 0.0, 0.0, 0
-    for atom in mol.GetAtoms(oechem.OEIsHeavy()):
-        mol.GetCoords(atom, coords)
-        cx += coords[0]; cy += coords[1]; cz += coords[2]; n += 1
-    if n == 0:
-        return grid
-    cx /= n; cy /= n; cz /= n
-
-    # Shift centroid to grid centre using integer unit-cell vectors
-    gxm = grid.GetXMid()
-    gym = grid.GetYMid()
-    gzm = grid.GetZMid()
-    sx = round((gxm - cx) / a) * a if a > 0 else 0.0
-    sy = round((gym - cy) / b) * b if b > 0 else 0.0
-    sz = round((gzm - cz) / c) * c if c > 0 else 0.0
-
-    if abs(sx) > 0.01 or abs(sy) > 0.01 or abs(sz) > 0.01:
-        for atom in mol.GetAtoms():
-            mol.GetCoords(atom, coords)
-            mol.SetCoords(atom, oechem.OEFloatArray(
-                [coords[0] + sx, coords[1] + sy, coords[2] + sz]))
-
-    # Check whether all atoms fall inside the grid (with padding)
-    xs, ys, zs = [], [], []
-    for atom in mol.GetAtoms(oechem.OEIsHeavy()):
-        mol.GetCoords(atom, coords)
-        xs.append(float(coords[0]))
-        ys.append(float(coords[1]))
-        zs.append(float(coords[2]))
-
-    # The interpolatable domain is the node span, so the padding test asks
-    # whether the atoms fit inside the nodes rather than inside a bounding box.
-    gxmin, gymin, gzmin = gp.x_origin, gp.y_origin, gp.z_origin
-    gxmax = gxmin + (gp.x_dim - 1) * gp.x_spacing
-    gymax = gymin + (gp.y_dim - 1) * gp.y_spacing
-    gzmax = gzmin + (gp.z_dim - 1) * gp.z_spacing
-
-    if (min(xs) - padding < gxmin or max(xs) + padding > gxmax
-            or min(ys) - padding < gymin or max(ys) + padding > gymax
-            or min(zs) - padding < gzmin or max(zs) + padding > gzmax):
-        minmax = [
-            min(xs) - padding, min(ys) - padding, min(zs) - padding,
-            max(xs) + padding, max(ys) + padding, max(zs) + padding]
-        # OESkewGrid has no extents-box constructor, so derive the dims and the
-        # midpoint that box implied and set them explicitly, keeping each axis
-        # on its own node interval.
-        sp = (gp.x_spacing, gp.y_spacing, gp.z_spacing)
-        dim = [pad_dim(minmax[i + 3] - minmax[i], sp[i]) for i in range(3)]
-        mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
-        padded = oegrid.OESkewGrid()
-        # Checked, not assumed: these setters report failure by returning false
-        # rather than by raising. A rejected SetDim leaves the dims untouched;
-        # a rejected SetMid still moves the axes it did accept. Without these
-        # asserts the fill below would quietly return a grid with wrong geometry.
-        assert padded.SetDim(*dim)
-        assert padded.SetUnitCell(dim[0] * sp[0], dim[1] * sp[1], dim[2] * sp[2],
-                                  90.0, 90.0, 90.0, *dim)
-        assert padded.SetMid(*mid)
-
-        values = oechem.OEFloatArray(padded.GetSize())
-        for i in range(padded.GetSize()):
-            x, y, z = padded.ElementToSpatialCoord(i)
-            wx = gxmin + ((x - gxmin) % a)
-            wy = gymin + ((y - gymin) % b)
-            wz = gzmin + ((z - gzmin) % c)
-            values[i] = maptitude.interpolate_density(grid, wx, wy, wz, 0.0)
-        padded.SetValues(values, padded.GetSize())
-        return padded
-    return grid
+    return maptitude.wrap_and_pad_grid(grid, mol, a, b, c, padding)
 
 
 # ---------------------------------------------------------------------------

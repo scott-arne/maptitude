@@ -323,12 +323,15 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
 
     if (!needs_pad) return nullptr;
 
-    // The scalar carrier's extents-box constructor built the padded grid;
-    // OESkewGrid has no equivalent, so reproduce it explicitly. The interval count
-    // rounds up, because the node span is what the padding has to cover: for
+    // The scalar carrier's extents-box constructor built the padded grid and
+    // OESkewGrid has no equivalent, so the geometry is derived here instead. The
+    // sizing deliberately does not reproduce that constructor: the interval count
+    // rounds up, because the node span is what the padding has to cover. For
     // minmax {0,0,0, 9.5,9.5,9.5} at spacing 1.0 that is dims 11^3, mid 4.75 and
-    // node 0 at -0.25, spanning [-0.25, 9.75]. Truncating gives 10 nodes spanning
-    // [0.25, 9.25] and leaves a quarter of an Angstrom of the requested extent
+    // node 0 at -0.25, spanning [-0.25, 9.75]. That is not what the scalar
+    // constructor gives: measured, OEScalarGrid on that box at that spacing
+    // returns dims 10^3 with the same 4.75 midpoint, node 0 at 0.25 and a span of
+    // [0.25, 9.25], which leaves a quarter of an Angstrom of the requested extent
     // outside the grid on each face. Note the node origin is NOT minmax[0].
     const double minmax[6] = {
         min_x - padding, min_y - padding, min_z - padding,

@@ -271,8 +271,9 @@ def test_wrap_and_pad_grid_never_returns_none(scoring_inputs) -> None:
     run. Pinning the contract here is what makes that documentation checkable.
     """
     mol, obs, _ = scoring_inputs
-    # The cell must be the extent the grid samples, so derive each edge from that
-    # axis's own node interval rather than from one figure for the whole grid:
+    # The cell must be a whole number of the grid's node intervals, so derive each
+    # edge from that axis's own interval rather than from one figure for the whole
+    # grid:
     # wrap_and_pad_grid checks each edge against its axis independently. The atom
     # is at the origin and the grid is centred there, so no padding is needed and
     # the C++ function returns nullptr.

@@ -121,126 +121,12 @@ _PDB_RESOLUTIONS = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-# MRC/CCP4 map loading, symmetry-operator extraction and the padded-grid node
-# count are shared with the benchmark suite; import the single canonical
-# implementation (see conftest.py for the sys.path wiring) instead of
-# duplicating the header parsing here.
-from helpers import load_ccp4_grid, load_mrc_grid, pad_dim
-
-
-def _wrap_and_pad_grid(grid, mol, cell, padding: float = 3.0):
-    """Translate molecule into the unit cell and pad the grid if needed.
-
-    Crystallographic CCP4 maps cover one unit cell.  Deposited coordinates
-    may extend slightly beyond the cell boundary.  This helper:
-
-    1. Applies a rigid-body shift (integer multiples of cell vectors) to
-       bring the molecular centroid near the grid center.
-    2. If any atoms still fall outside the grid (plus *padding*), creates a
-       new grid covering the full coordinate range and fills it by sampling
-       the original grid with periodic wrapping.
-
-    The molecule is modified in-place (coordinates shifted).
-    """
-    from openeye import oechem, oegrid
-    from maptitude import get_grid_params, interpolate_density
-
-    a, b, c = cell
-    gp = get_grid_params(grid)
-    coords = oechem.OEFloatArray(3)
-
-    # Compute heavy-atom centroid
-    cx, cy, cz, n = 0.0, 0.0, 0.0, 0
-    for atom in mol.GetAtoms(oechem.OEIsHeavy()):
-        mol.GetCoords(atom, coords)
-        cx += coords[0]
-        cy += coords[1]
-        cz += coords[2]
-        n += 1
-    cx /= n
-    cy /= n
-    cz /= n
-
-    # Shift centroid to grid centre using integer unit-cell vectors
-    grid_xmid = grid.GetXMid()
-    grid_ymid = grid.GetYMid()
-    grid_zmid = grid.GetZMid()
-
-    shift_x = round((grid_xmid - cx) / a) * a if a > 0 else 0.0
-    shift_y = round((grid_ymid - cy) / b) * b if b > 0 else 0.0
-    shift_z = round((grid_zmid - cz) / c) * c if c > 0 else 0.0
-
-    if abs(shift_x) > 0.01 or abs(shift_y) > 0.01 or abs(shift_z) > 0.01:
-        for atom in mol.GetAtoms():
-            mol.GetCoords(atom, coords)
-            mol.SetCoords(
-                atom,
-                oechem.OEFloatArray(
-                    [coords[0] + shift_x, coords[1] + shift_y, coords[2] + shift_z]
-                ),
-            )
-
-    # Check whether all atoms fall inside the grid (with padding)
-    xs, ys, zs = [], [], []
-    for atom in mol.GetAtoms(oechem.OEIsHeavy()):
-        mol.GetCoords(atom, coords)
-        xs.append(float(coords[0]))
-        ys.append(float(coords[1]))
-        zs.append(float(coords[2]))
-
-    # The interpolatable domain is the node span, not the bounding box, so the
-    # padding test asks whether the atoms fit inside the nodes.
-    grid_xmin = gp.x_origin
-    grid_ymin = gp.y_origin
-    grid_zmin = gp.z_origin
-    grid_xmax = grid_xmin + (gp.x_dim - 1) * gp.x_spacing
-    grid_ymax = grid_ymin + (gp.y_dim - 1) * gp.y_spacing
-    grid_zmax = grid_zmin + (gp.z_dim - 1) * gp.z_spacing
-
-    needs_pad = (
-        min(xs) - padding < grid_xmin
-        or max(xs) + padding > grid_xmax
-        or min(ys) - padding < grid_ymin
-        or max(ys) + padding > grid_ymax
-        or min(zs) - padding < grid_zmin
-        or max(zs) + padding > grid_zmax
-    )
-
-    if not needs_pad:
-        return grid
-
-    # Build a padded grid using periodic wrapping of the unit-cell density
-    minmax = oechem.OEDoubleArray(
-        [
-            min(xs) - padding, min(ys) - padding, min(zs) - padding,
-            max(xs) + padding, max(ys) + padding, max(zs) + padding,
-        ]
-    )
-    # OESkewGrid has no extents-box constructor, so derive the dims and midpoint
-    # that box implied and set them explicitly, keeping each axis on its own
-    # node interval.
-    sp = (gp.x_spacing, gp.y_spacing, gp.z_spacing)
-    dim = [pad_dim(minmax[i + 3] - minmax[i], sp[i]) for i in range(3)]
-    mid = [(minmax[i] + minmax[i + 3]) / 2.0 for i in range(3)]
-    padded = oegrid.OESkewGrid()
-    assert padded.SetDim(*dim)
-    assert padded.SetUnitCell(
-        dim[0] * sp[0], dim[1] * sp[1], dim[2] * sp[2], 90.0, 90.0, 90.0, *dim
-    )
-    assert padded.SetMid(*mid)
-
-    orig_xmin = gp.x_origin
-    orig_ymin = gp.y_origin
-    orig_zmin = gp.z_origin
-    values = oechem.OEFloatArray(padded.GetSize())
-    for i in range(padded.GetSize()):
-        x, y, z = padded.ElementToSpatialCoord(i)
-        wx = orig_xmin + ((x - orig_xmin) % a)
-        wy = orig_ymin + ((y - orig_ymin) % b)
-        wz = orig_zmin + ((z - orig_zmin) % c)
-        values[i] = interpolate_density(grid, wx, wy, wz, 0.0)
-    assert padded.SetValues(values, padded.GetSize())
-    return padded
+# MRC/CCP4 map loading and symmetry-operator extraction are shared with the
+# benchmark suite; import the single canonical implementation (see conftest.py
+# for the sys.path wiring) instead of duplicating the header parsing here.
+# Padding is not imported from there either: it belongs to the library, and
+# these tests call maptitude.wrap_and_pad_grid directly.
+from helpers import load_ccp4_grid, load_mrc_grid
 
 
 class _HasResidueName:
@@ -473,7 +359,7 @@ class TestRSCCRSRBenchmark:
     def setup_class(cls):
         from openeye import oechem, oegrid
         from maptitude import (
-            rscc, rsr, fc_density, UnitCell, parse_symops,
+            rscc, rsr, fc_density, UnitCell, parse_symops, wrap_and_pad_grid,
         )
 
         cls.mols = {}
@@ -496,7 +382,7 @@ class TestRSCCRSRBenchmark:
                 _ASSET_DIR / f"{pdb}_2fofc.ccp4"
             )
             symops_list = parse_symops(symops_text) if symops_text else None
-            grid = _wrap_and_pad_grid(grid, mol, cell_dims)
+            grid = wrap_and_pad_grid(grid, mol, *cell_dims)
 
             cls.mols[pdb] = mol
             cls.grids[pdb] = grid

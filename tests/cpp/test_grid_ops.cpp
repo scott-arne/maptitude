@@ -416,6 +416,62 @@ TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsAGridsOwnExtentFarFromTheOrig
                  CellError);
 }
 
+TEST(GridOpsTest, InterpolateDensityPeriodicKeepsItsAllowanceBelowANodeInterval) {
+    // The count test rounds the edge-to-spacing ratio with llround, which leaves
+    // |edge - p * spacing| <= spacing / 2 for the p it picks. An allowance at half
+    // a node interval is therefore met by every edge that clears the count test,
+    // and the commensurability comparison stops discriminating. Distance from the
+    // Cartesian origin alone takes the allowance there, because AxisMagnitude
+    // carries the origin: the case below would otherwise accept a cell edge that
+    // misses every whole multiple of the grid's node spacing by at least four
+    // tenths of an interval.
+    constexpr unsigned int N = 12u;
+    constexpr double SPACING = 2.0;
+    constexpr double NODE0 = 3.0e6;
+
+    OESystem::OESkewGrid grid = MakeCubicGrid(N, SPACING, NODE0);
+    float* values = grid.GetValues();
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 1.0f;
+
+    const GridParams gp = get_grid_params(grid);
+    const double extent = gp.x_dim * gp.x_spacing;
+    const double probe = gp.x_origin + 1.5 * gp.x_spacing;
+
+    // Mirrors src/Grid.cpp, which keeps both file-local; see the note on
+    // CELL_EXTENT_ROUNDINGS there.
+    constexpr double FLOAT_HALF_ULP = 0x1p-24;
+    constexpr double CELL_EXTENT_ROUNDINGS = 8.0;
+    const double axis_magnitude =
+        std::max(std::max(std::abs(gp.x_origin),
+                          std::abs(gp.x_origin + (gp.x_dim - 1u) * gp.x_spacing)),
+                 gp.x_dim * gp.x_spacing);
+
+    // The premise, asserted rather than asserted-by-comment: this grid can only
+    // show what the cap does while its uncapped allowance really does clear half
+    // an interval. A later change to the rounding count that moves it back under
+    // fails here instead of leaving an EXPECT_THROW that passes for the wrong
+    // reason.
+    ASSERT_GT(CELL_EXTENT_ROUNDINGS * FLOAT_HALF_ULP * axis_magnitude,
+              0.5 * gp.x_spacing);
+
+    // The cap narrows the allowance; it does not move what a commensurate edge
+    // has to match. The grid's own extent still passes.
+    EXPECT_NO_THROW(interpolate_density_periodic(grid, probe, probe, probe,
+                                                 extent, extent, extent, -99.0));
+
+    // Four tenths of an interval too wide still rounds to the same node count, so
+    // the count test passes it through and the allowance is the only thing left
+    // that can refuse it.
+    const double off_lattice = extent + 0.4 * gp.x_spacing;
+    EXPECT_THROW(interpolate_density_periodic(grid, probe, probe, probe,
+                                              off_lattice, extent, extent, -99.0),
+                 CellError);
+    EXPECT_THROW(interpolate_density_periodic(grid, probe, probe, probe,
+                                              extent, extent - 0.4 * gp.z_spacing,
+                                              extent, -99.0),
+                 CellError);
+}
+
 TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent) {
     // The allowance is scaled by the largest magnitude in the axis's geometry,
     // which includes the cell edge and not only the two endpoints. On a grid
@@ -760,9 +816,10 @@ TEST(GridOpsTest, LeavesAShiftedMoleculeAtALatticeTranslateWhenTheSizingThrows) 
     }
 }
 
-TEST(GridOpsTest, WrapAndPadGridRejectsACellThatIsNotTheSampledExtent) {
+TEST(GridOpsTest, WrapAndPadGridRejectsACellTheGridDoesNotTile) {
     // The padded grid is filled by periodic sampling, so it inherits the periodic
-    // path's precondition: the cell has to be the extent the grid samples.
+    // path's precondition: the cell has to be n or n - 1 of the grid's own node
+    // intervals. Twelve is neither, on a grid that samples ten.
     OESystem::OESkewGrid grid = MakeTestGrid();  // 10 nodes at spacing 1.0
     auto mol = MakeTestMol(4.5, 4.5, 4.5);
     EXPECT_THROW(wrap_and_pad_grid(grid, mol, 12.0, 10.0, 10.0, 4.75), CellError);

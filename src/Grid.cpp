@@ -74,6 +74,30 @@ constexpr double NODE_SPAN_ROUNDINGS = 6.0;
 /// Change the mirror in the same edit.
 constexpr double CELL_EXTENT_ROUNDINGS = 8.0;
 
+/// Largest fraction of a node interval the cell-extent allowance may reach.
+///
+/// The count test in require_commensurate_cell rounds the edge-to-spacing ratio
+/// with llround, which leaves |given - p * spacing| <= spacing / 2 by
+/// construction. An allowance at half an interval is therefore satisfied by
+/// every edge the count test lets through, and the extent comparison stops
+/// adding anything to the count test that precedes it.
+///
+/// Nothing in the allowance itself prevents that. It is proportional to
+/// AxisMagnitude, which carries the axis origin, so it grows without bound as a
+/// grid moves away from the Cartesian origin: at 8 roundings of 2^-24 each it
+/// passes a quarter of an interval once AxisMagnitude exceeds 2^19 node
+/// intervals. Measured, a 12-node axis at 2.0 A spacing with origin 3e6 A gets a
+/// 1.43 A allowance against a 1.0 A half-interval, and accepts a cell edge 0.49
+/// of an interval away from the count it rounds to.
+///
+/// A quarter keeps a factor of two below that collapse. Capping is the right
+/// lever rather than rejecting the grid outright: the cap answers the
+/// commensurability question against the part of the error budget that is still
+/// smaller than the quantity being measured, so an exactly commensurate cell on
+/// a distant grid still passes and the extent comparison turns away only an edge
+/// genuinely off by more than a quarter interval.
+constexpr double CELL_TOL_INTERVAL_CAP = 0.25;
+
 /// Read one node's Cartesian coordinate, enforcing derivation checks 2 and 3.
 /// @p axis names the axis whose walk needs this node, for the error text.
 void ReadNodeCoord(const OESystem::OESkewGrid& grid, const unsigned int element,
@@ -421,8 +445,12 @@ CellPeriods require_commensurate_cell(const GridParams& gp, const double cell_a,
     for (int i = 0; i < 3; ++i) {
         const double full = n[i] * spacing[i];
         const double closed = (n[i] - 1u) * spacing[i];
-        const double tol = CELL_EXTENT_ROUNDINGS * FLOAT_HALF_ULP *
-                           AxisMagnitude(origin[i], n[i], spacing[i]);
+        // Capped, because the rounding budget alone would let this allowance
+        // reach the point where the comparison it feeds is vacuous. See
+        // CELL_TOL_INTERVAL_CAP.
+        const double tol = std::min(CELL_EXTENT_ROUNDINGS * FLOAT_HALF_ULP *
+                                        AxisMagnitude(origin[i], n[i], spacing[i]),
+                                    CELL_TOL_INTERVAL_CAP * spacing[i]);
 
         // llround is defined only over the range its return type holds, so the
         // ratio is bounded before it is rounded rather than after. n_i + 1 is the

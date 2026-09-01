@@ -97,13 +97,18 @@ below is written for that reader.
   names rather than on the node count: for a cell edge spanning `p` node
   intervals, node `p - 1`'s upper neighbour is node 0, so a point in that last
   interval blends the two. Which period applies is a real choice, not a
-  formality. On `1d26_2fofc.ccp4`, whose own cell is `p = n - 1 = 48` because
-  the reader appends a closing plane, sweeping `x` across that last interval
-  with `y` and `z` held 3.5 spacings above their first nodes gives `-0.0017`,
-  `0.0213`, `0.0442` and `0.0662` at a quarter, a half, three quarters and 0.99
-  of the way through; wrapping on `n` holds flat at `-0.0246` across all four,
-  the plateau produced by blending the duplicated closing plane against its
-  source.
+  formality. `1d26_2fofc.ccp4`'s own cell is `p = n - 1 = 48`, because the
+  reader appends a closing plane. The two periods part company over `x` between
+  48 and 49 node intervals above the first node — past the period on the
+  `p = 48` reading, the period's own last interval on the `p = 49` one. Holding
+  `y` and `z` 3.5 spacings above their first nodes and taking `x` a quarter, a
+  half, three quarters and 0.99 of the way through that interval, `p = 48` gives
+  `-0.0017`, `0.0213`, `0.0442` and `0.0662` while `p = 49` holds flat at
+  `-0.0246`, the plateau produced by blending the duplicated closing plane
+  against its source. The interval below it separates nothing: node 48 repeats
+  node 0 to the bit at all 49x25 nodes of that face, so `p = 48`, `p = 49` and
+  the non-periodic entry point all return `0.0423`, `0.0200`, `-0.0023` and
+  `-0.0237` there.
   Previously the wrap produced coordinates one node interval wider than the
   domain the interpolator accepts, and every point in that final interval came
   back as `default_value`: on a 10-node, 1.0 A, cell-10 grid, `x` anywhere in
@@ -140,10 +145,22 @@ below is written for that reader.
   `spacing / (12 * 2^-24 * magnitude)` times the boundary tolerance, so the
   ratio falls as a grid's coordinates grow. It is about 5500x for a 256-node
   0.9 A map at the Cartesian origin and about 420x for a 20-node map of that
-  spacing 3000 A out; the commensurability tolerance's margin against a whole
-  node interval is 1.5x those figures. The boundary tolerance would reach half a
-  node interval only at a magnitude of about 1.4 million node intervals, which
-  for a 0.9 A map is over 100 micrometres.
+  spacing 3000 A out. The boundary tolerance would reach half a node interval
+  only at a magnitude of about 1.4 million node intervals, which for a 0.9 A map
+  is over 100 micrometres.
+- **The commensurability allowance is capped at a quarter of a node interval.**
+  Scaling it by the axis magnitude let it grow without bound, while the count
+  test it feeds rounds the edge-to-spacing ratio and so already leaves the edge
+  within half an interval of the count it picks. An allowance at half an interval
+  was therefore satisfied by every edge that got that far, and the
+  commensurability check stopped adding anything to the count test: measured, a
+  12-node axis at 2.0 A spacing with origin 3e6 A accepted edges of 23.02 A and
+  24.98 A alongside its true 24.0 A extent, and neither is a whole number of its
+  node intervals. The allowance is now the smaller of the counted rounding budget and a
+  quarter of the node interval, so it stops growing at an axis magnitude of
+  `2^19` node intervals — about 47 micrometres for a 0.9 A map. A cell edge more
+  than a quarter of an interval from the count it rounds to now raises
+  `CellError` where such an edge on a distant grid was previously accepted.
 - **The grid `wrap_and_pad_grid` builds covers the extent it was sized for.**
   The node count truncated the interval count rather than rounding it up, so an
   atom extent that was not a whole number of node intervals produced a grid
