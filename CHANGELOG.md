@@ -161,6 +161,27 @@ below is written for that reader.
   `2^19` node intervals — about 47 micrometres for a 0.9 A map. A cell edge more
   than a quarter of an interval from the count it rounds to now raises
   `CellError` where such an edge on a distant grid was previously accepted.
+  A quarter of an interval is the allowance's ceiling, and is its width only from
+  that magnitude up; below it the counted budget governs and is narrower — near
+  the Cartesian origin, far narrower, so a 10-node 1.0 A grid at origin 0 gets
+  4.77e-06 A and refuses a 10.0001 A edge.
+- **Past roughly `2^21` node intervals from the origin, some grids no longer
+  pass their own reported cell.** Once
+  float32 spacing between node coordinates approaches the node spacing, the span
+  the geometry derivation measures can shift by a whole ulp, so `n * spacing`
+  misses the edge `GetUnitCell` reports by about `2^-23` times the axis
+  magnitude — past a quarter interval, which the cap no longer forgives.
+  Sweeping 24 translations per octave across four grids, the first octave
+  holding any rejection was `2^21` node intervals for a 64-node 1.5 A axis,
+  `2^22` for a 49-node 0.902 A axis, and `2^23` for 10-node 1.0 A and 16-node
+  0.25 A axes; it is not monotone in the translation, and the 64-node axis
+  accepts every sample again two octaves further out. This is a consequence of
+  the cap rather than a regression it introduced: the uncapped allowance equals
+  the half-interval the count test already guarantees at exactly `2^20` node
+  intervals, so it stops discriminating an octave below the earliest rejection
+  measured. For a 0.9 A map `2^21` intervals is about 190 micrometres from the
+  origin; the furthest node in any of this repository's five test maps sits 89
+  node intervals out, so the onset is some 23,000x beyond them.
 - **The grid `wrap_and_pad_grid` builds covers the extent it was sized for.**
   The node count truncated the interval count rather than rounding it up, so an
   atom extent that was not a whole number of node intervals produced a grid

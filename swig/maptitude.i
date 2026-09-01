@@ -1414,7 +1414,11 @@ def wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0):
     :raises StructureError: If the molecule contains no heavy atoms.
     :raises CellError: If any cell edge is zero, negative, or non-finite. The
         wrap uses ``fmod`` against each edge, which is NaN for a zero divisor and
-        previously filled the padded grid with NaN voxels.
+        previously filled the padded grid with NaN voxels. Also if an edge does
+        not round to ``n_i`` or ``n_i - 1`` of that axis's node intervals, to
+        within the allowance made for float node coordinates: the padded grid is
+        filled by sampling this one periodically, which needs the grid to tile
+        the cell it is given.
     """
     result = _cpp_wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding)
     return result if result is not None else grid

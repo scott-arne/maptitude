@@ -361,7 +361,8 @@ std::vector<double> interpolate_density_batch(
  * @return Interpolated density value.
  * @throws GridError As get_grid_params.
  * @throws CellError As get_grid_params, or if a cell edge does not round to
- *         `n_i` or `n_i - 1` whole node intervals on that axis.
+ *         `n_i` or `n_i - 1` of that axis's node intervals, to within the
+ *         allowance require_commensurate_cell makes for float node coordinates.
  */
 double interpolate_density_periodic(
     const OESystem::OESkewGrid& grid,
@@ -384,8 +385,9 @@ double interpolate_density_periodic(
  *        finite.
  * @return Vector of interpolated values.
  * @throws GridError As get_grid_params.
- * @throws CellError As get_grid_params, or if a cell edge is not the extent the
- *         grid samples on that axis.
+ * @throws CellError As get_grid_params, or if a cell edge does not round to
+ *         `n_i` or `n_i - 1` of that axis's node intervals, to within the
+ *         allowance require_commensurate_cell makes for float node coordinates.
  */
 std::vector<double> interpolate_density_periodic_batch(
     const OESystem::OESkewGrid& grid,

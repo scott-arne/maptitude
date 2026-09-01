@@ -43,8 +43,8 @@ constexpr double FLOAT_HALF_ULP = 5.9604644775390625e-08;  // 0x1p-24
 /// is a bound with better than a factor of two in hand.
 constexpr double NODE_SPAN_ROUNDINGS = 6.0;
 
-/// Float roundings that separate a caller's cell edge from the extent the grid
-/// samples, n * spacing.
+/// Float roundings that separate a caller's cell edge from the p * spacing it
+/// rounds to, for the p in {n - 1, n} the count test picks.
 ///
 /// Seven are countable, each bounded by FLOAT_HALF_ULP times AxisMagnitude:
 /// three at the edge's own magnitude (the edge as OpenEye stores it, the
@@ -84,18 +84,40 @@ constexpr double CELL_EXTENT_ROUNDINGS = 8.0;
 ///
 /// Nothing in the allowance itself prevents that. It is proportional to
 /// AxisMagnitude, which carries the axis origin, so it grows without bound as a
-/// grid moves away from the Cartesian origin: at 8 roundings of 2^-24 each it
-/// passes a quarter of an interval once AxisMagnitude exceeds 2^19 node
-/// intervals. Measured, a 12-node axis at 2.0 A spacing with origin 3e6 A gets a
-/// 1.43 A allowance against a 1.0 A half-interval, and accepts a cell edge 0.49
-/// of an interval away from the count it rounds to.
+/// grid moves away from the Cartesian origin. At 8 roundings of 2^-24 each it
+/// equals the half-interval exactly at AxisMagnitude = 2^20 node intervals, so
+/// from there the uncapped comparison discriminates nothing at all. Before the
+/// cap, a 12-node axis at 2.0 A spacing with origin 3e6 A got a 1.43 A allowance
+/// against a 1.0 A half-interval and accepted a cell edge 0.49 of an interval
+/// away from the count it rounds to; it now raises on that edge.
 ///
-/// A quarter keeps a factor of two below that collapse. Capping is the right
-/// lever rather than rejecting the grid outright: the cap answers the
-/// commensurability question against the part of the error budget that is still
-/// smaller than the quantity being measured, so an exactly commensurate cell on
-/// a distant grid still passes and the extent comparison turns away only an edge
-/// genuinely off by more than a quarter interval.
+/// A quarter keeps the allowance a factor of two below that collapse, and the
+/// cap binds from AxisMagnitude = 2^19 node intervals up. Capping is the right
+/// lever rather than rejecting the grid outright: it answers the
+/// commensurability question against the part of the error budget still smaller
+/// than the quantity being measured.
+///
+/// Two things this does not buy, both measured rather than argued:
+///
+/// A quarter interval is this allowance's ceiling, and is its width only from
+/// AxisMagnitude = 2^19 node intervals up, where the counted budget first
+/// reaches it. Below that the counted budget governs and is narrower -- near the
+/// Cartesian origin, far narrower: a 10-node 1.0 A grid at origin 0 gets a
+/// 4.77e-06 A allowance and refuses a 10.0001 A edge.
+///
+/// Far enough out, a grid's own GetUnitCell edge is refused. Once ulp32 of the
+/// axis magnitude approaches the spacing, quantized node coordinates shift the
+/// span across n - 1 intervals by up to a whole ulp, so the derived n * spacing
+/// misses the stored edge by about 2^-23 * AxisMagnitude. Sweeping 24
+/// translations per octave over four grids, the first octave holding any
+/// rejection was 2^21 node intervals (64 nodes at 1.5 A), 2^22 (49 at 0.902 A)
+/// and 2^23 (10 at 1.0 A, and 16 at 0.25 A); an exactly representable spacing
+/// quantizes exactly and buys the last two their extra octaves. Nor is it
+/// monotone -- the 64-node axis rejects every sample in octave 2^22 and accepts
+/// every one again in 2^24. This is accepted, not fixed: vacuity starts at
+/// 2^20, an octave below the earliest rejection measured, so the cap still
+/// leaves the check strictly better than it found it, and 2^21 intervals of a
+/// 0.9 A map is about 190 micrometres from the origin.
 constexpr double CELL_TOL_INTERVAL_CAP = 0.25;
 
 /// Read one node's Cartesian coordinate, enforcing derivation checks 2 and 3.

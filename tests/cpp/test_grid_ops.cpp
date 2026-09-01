@@ -455,19 +455,29 @@ TEST(GridOpsTest, InterpolateDensityPeriodicKeepsItsAllowanceBelowANodeInterval)
               0.5 * gp.x_spacing);
 
     // The cap narrows the allowance; it does not move what a commensurate edge
-    // has to match. The grid's own extent still passes.
+    // has to match. The grid's own extent still passes. Note this expectation
+    // does not by itself rule out a cap of zero: this grid's spacing and origin
+    // are both exactly representable, so its extent sits a residual of exactly
+    // 0.0 from the count it rounds to.
     EXPECT_NO_THROW(interpolate_density_periodic(grid, probe, probe, probe,
                                                  extent, extent, extent, -99.0));
 
-    // Four tenths of an interval too wide still rounds to the same node count, so
-    // the count test passes it through and the allowance is the only thing left
-    // that can refuse it.
+    // Four tenths of an interval too wide still rounds to the same node count --
+    // measured, 24.8 / 2.0 = 12.4 rounds to 12, which is this grid's n -- so the
+    // count test passes it through and the allowance is the only thing left that
+    // can refuse it.
+    //
+    // Between them these three expectations pin the cap to [0, 0.4) of an
+    // interval, not to 0.25 exactly: at 0.45 the allowance is 0.9 A and both
+    // EXPECT_THROWs fail, while 0.05 and 0.0 both keep the whole test green.
+    // That range is what the test's name claims, and tightening it further would
+    // mean asserting on a constant rather than on a behaviour.
     const double off_lattice = extent + 0.4 * gp.x_spacing;
     EXPECT_THROW(interpolate_density_periodic(grid, probe, probe, probe,
                                               off_lattice, extent, extent, -99.0),
                  CellError);
     EXPECT_THROW(interpolate_density_periodic(grid, probe, probe, probe,
-                                              extent, extent - 0.4 * gp.z_spacing,
+                                              extent, extent - 0.4 * gp.y_spacing,
                                               extent, -99.0),
                  CellError);
 }
