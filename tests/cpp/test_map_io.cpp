@@ -499,7 +499,15 @@ TEST(MapIoErrorTest, RaisesWhenNsymbtIsNotAMultipleOfEighty) {
 TEST(MapIoErrorTest, RaisesWhenNsymbtIsNegative) {
     HeaderVariant variant(DataPath("test_map.ccp4"));
     variant.SetInt(24, -80);
-    EXPECT_THROW(read_map(variant.Write()), GridError);
+
+    try {
+        MapFile map = read_map(variant.Write());
+        FAIL() << "Expected GridError for negative NSYMBT";
+    } catch (const GridError& e) {
+        const std::string msg(e.what());
+        EXPECT_NE(msg.find("not a non-negative multiple of"), std::string::npos)
+            << "Expected guard 1 message, got: " << msg;
+    }
 }
 
 TEST(MapIoErrorTest, RaisesWhenTheFileEndsBeforeTheSymopBlockDoes) {
@@ -579,5 +587,13 @@ TEST(MapIoEndiannessTest, ReadsABigEndianFileAsItsLittleEndianOriginal) {
     EXPECT_NEAR(big_gp.z_origin, little_gp.z_origin, 1e-6);
 
     EXPECT_EQ(big.symops, little.symops);
+
+    ASSERT_EQ(big.grid->GetSize(), little.grid->GetSize());
+    const float* big_values = big.grid->GetValues();
+    const float* little_values = little.grid->GetValues();
+    for (unsigned int i = 0; i < little.grid->GetSize(); ++i) {
+        ASSERT_EQ(big_values[i], little_values[i]) << "voxel " << i;
+    }
+
     std::remove(path.c_str());
 }
