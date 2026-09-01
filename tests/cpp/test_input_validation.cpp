@@ -1509,3 +1509,40 @@ TEST(GridParamsDerivation, DerivesTheExpectedValuesForAKnownGrid) {
     // catch an x/y/z divisor swap. Task 6's test_per_axis_spacing_matches_gemmi
     // owns that case against real anisotropic assets.
 }
+
+TEST(GridContainsDegenerateParams, AZeroNodeAxisNearTheOriginAdmitsNothing) {
+    // GridParams is a public struct with public fields, so get_grid_params's
+    // "at least two nodes on every axis" check does not stand between a caller
+    // and grid_contains. A zero-node axis used to make the predicate answer yes
+    // almost everywhere: dim - 1 was unsigned, so 0u - 1u wrapped to 2^32 - 1,
+    // putting the axis's far endpoint there and widening the span tolerance to
+    // some 1536 A. The accepted range measured [-1536 A, 4.29e9 A].
+    GridParams gp;
+    gp.x_origin = gp.y_origin = gp.z_origin = 0.0;
+    gp.x_dim = gp.y_dim = gp.z_dim = 2u;
+    gp.x_spacing = gp.y_spacing = gp.z_spacing = 1.0;
+
+    // The premise: this baseline discriminates. Without it a failure below could
+    // be a grid that admits everything for some unrelated reason.
+    ASSERT_TRUE(grid_contains(gp, 0.5, 0.5, 0.5));
+    ASSERT_FALSE(grid_contains(gp, 5.0, 0.5, 0.5));
+
+    gp.x_dim = 0u;
+
+    // At this origin a zero-node axis spans nothing, so nothing lies within it
+    // -- not even the coordinate its first node would have occupied.
+    EXPECT_FALSE(grid_contains(gp, 0.0, 0.5, 0.5));
+    EXPECT_FALSE(grid_contains(gp, 0.5, 0.5, 0.5));
+
+    // The two points that bracketed each end of the old accepted range. Both
+    // sat inside it, so either one alone would have caught the wraparound.
+    EXPECT_FALSE(grid_contains(gp, -1000.0, 0.5, 0.5));
+    EXPECT_FALSE(grid_contains(gp, 1.0e9, 0.5, 0.5));
+
+    // Scoped to an origin at zero on purpose. The span tolerance grows with
+    // distance from the Cartesian origin and is deliberately uncapped, so far
+    // enough out a zero-node axis admits a band again: at an origin of 1e8 A
+    // with a 1 A interval the admitted offsets measured [-35, 34] A. That is
+    // the uncapped boundary tolerance every axis carries, not a remnant of the
+    // wraparound pinned here, so this test does not reach for it.
+}

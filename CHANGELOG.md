@@ -268,6 +268,19 @@ The Python-surface removals that follow from the carrier switch are grouped in
   `GridOpsTest.WrapAndPadGridShiftsCoordinates`, whose tolerance was exactly the
   size of the error.
 
+- **`grid_contains` answered yes almost everywhere for a `GridParams` with a
+  zero-node axis.** `GridParams` is a public struct callers fill in directly, so
+  `get_grid_params`'s "at least two nodes on every axis" check does not stand on
+  that path. The node count was subtracted as `unsigned`, so a `dim` of 0 wrapped
+  `0u - 1u` to `2^32 - 1`: that put the axis's far endpoint there and widened the
+  span tolerance to some 1536 A, giving a measured accepted range of
+  `[-1536 A, 4.29e9 A]`. The subtraction is now done in `double`, and a zero-node
+  axis at the Cartesian origin admits nothing.
+  `GridContainsDegenerateParams.AZeroNodeAxisNearTheOriginAdmitsNothing` pins it.
+  Grids from `get_grid_params` are unaffected — for any `dim` of 1 or more the
+  two forms agree exactly. The uncapped boundary tolerance every axis carries is
+  unchanged, so a zero-node axis far from the origin still admits a band.
+
 ### The Python break
 
 The carrier switch removes five classes of method from the grid objects a Python

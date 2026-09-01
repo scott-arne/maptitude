@@ -161,11 +161,18 @@ void ReadNodeCoord(const OESystem::OESkewGrid& grid, const unsigned int element,
 /// by the endpoints alone would then understate the noise fourfold on a two-node
 /// axis. Dropping the cell edge from this max is not the simplification it looks
 /// like: GridOpsTest.InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent
-/// fails without it. The result is never zero: it is at least the cell edge, and
-/// get_grid_params has already rejected a non-positive interval.
+/// fails without it. On geometry get_grid_params produced the result is at least
+/// the cell edge, so the tolerance it scales never collapses: that function
+/// rejects both an axis of fewer than two nodes and a non-positive interval.
+///
+/// GridParams is a public struct with public fields that callers fill in
+/// directly, though, so the node count subtracts in double. Left unsigned, a
+/// dim of 0 wraps 0u - 1u to
+/// 2^32 - 1, which inflates this magnitude to that same 2^32 and takes the
+/// tolerance built from it from around 1e-7 A to around 1536 A.
 double AxisMagnitude(const double origin, const unsigned int dim, const double spacing) {
-    return std::max(std::max(std::abs(origin), std::abs(origin + (dim - 1u) * spacing)),
-                    dim * spacing);
+    const double last = (static_cast<double>(dim) - 1.0) * spacing;
+    return std::max(std::max(std::abs(origin), std::abs(origin + last)), dim * spacing);
 }
 
 /// True when a fractional index lies within its axis's node span, allowing for
@@ -180,7 +187,12 @@ bool WithinAxisSpan(const double f, const double origin, const unsigned int dim,
                     const double spacing) {
     const double tol =
         NODE_SPAN_ROUNDINGS * FLOAT_HALF_ULP * AxisMagnitude(origin, dim, spacing);
-    return f * spacing >= -tol && (f - (dim - 1u)) * spacing <= tol;
+    // In double, for the reason AxisMagnitude gives, and the wrap costs more
+    // here than a slack tolerance: unsigned, a dim of 0 puts this axis's far
+    // endpoint at element 2^32 - 1, and grid_contains then reported every point
+    // short of 4.29e9 A as inside.
+    const double last = static_cast<double>(dim) - 1.0;
+    return f * spacing >= -tol && (f - last) * spacing <= tol;
 }
 
 /// The containment predicate, taking an already-computed fractional index.
