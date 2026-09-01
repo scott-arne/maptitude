@@ -246,6 +246,27 @@ below is written for that reader.
   `float` can hold raises `GridError` with no atom modified, so a shift that
   cannot be stored no longer leaves the molecule part-way through one. A shift
   every atom's float coordinates can hold is applied exactly as before.
+- **The advertised SWIG floor is 4.2, correcting a 4.0 the build already refused
+  to honour.** `openeye_add_swig_module` runs `find_package(SWIG 4.2 REQUIRED)`
+  when stable-ABI output is requested, and `MAPTITUDE_USE_STABLE_ABI` defaults
+  to `ON` and is pinned `ON` for wheels, so the default build and every wheel
+  build stop at configure time below 4.2 while the README and the
+  `build-system` requires both advertised 4.0. Measured with a SWIG reporting
+  4.1.0: `CMake Error ... required is at least "4.2"`, naming the module line
+  that asked. Both declarations now say 4.2, and the README records that 4.0
+  is still enough under `-DMAPTITUDE_USE_STABLE_ABI=OFF`, which is the version
+  that configuration's module path asks for.
+
+  The top-level `find_package(SWIG 4.0)` probe deliberately keeps its 4.0.
+  Raising it to match was tried and measured worse: because that probe is not
+  `REQUIRED` and only sets the `SWIG_FOUND` guard, asking it for 4.2 turned the
+  error above into a configure that succeeds and silently omits the Python
+  bindings. A permissive probe followed by the module's own `REQUIRED` check is
+  what makes the failure loud.
+
+  This corrects the advertised number to the one the build enforces; it is not a
+  report that 4.2 was tested. The only SWIG this project is built and tested
+  against is 4.5.0, which is also the current release.
 
 ### Removed
 
