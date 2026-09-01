@@ -21,6 +21,8 @@
 #include <string>
 #include <vector>
 
+#include <unistd.h>
+
 #include <oegrid.h>
 #include <oesystem.h>
 
@@ -87,6 +89,7 @@ class HeaderVariant {
 public:
     explicit HeaderVariant(const std::string& source)
         : path_(::testing::TempDir() + "/maptitude_variant_" +
+                std::to_string(::getpid()) + "_" +
                 std::to_string(++counter_) + ".ccp4") {
         std::ifstream in(source, std::ios::binary);
         bytes_.assign(std::istreambuf_iterator<char>(in),
@@ -152,6 +155,7 @@ class BigEndianCopy {
 public:
     explicit BigEndianCopy(const std::string& source)
         : path_(::testing::TempDir() + "/maptitude_bigendian_" +
+                std::to_string(::getpid()) + "_" +
                 std::to_string(++counter_) + ".ccp4") {
         std::ifstream in(source, std::ios::binary);
         std::string bytes((std::istreambuf_iterator<char>(in)),
@@ -203,6 +207,28 @@ private:
 };
 
 int BigEndianCopy::counter_ = 0;
+
+/// RAII wrapper for a truncated test file.
+class TruncatedFile {
+public:
+    TruncatedFile()
+        : path_(::testing::TempDir() + "/maptitude_truncated_" +
+                std::to_string(::getpid()) + "_" +
+                std::to_string(++counter_) + ".ccp4") {
+        std::ofstream out(path_, std::ios::binary);
+        out << "not a map";
+    }
+
+    ~TruncatedFile() { std::remove(path_.c_str()); }
+
+    const std::string& Path() const { return path_; }
+
+private:
+    static int counter_;
+    std::string path_;
+};
+
+int TruncatedFile::counter_ = 0;
 
 }  // namespace
 
@@ -492,14 +518,8 @@ TEST(MapIoErrorTest, RaisesOnAMissingFile) {
 }
 
 TEST(MapIoErrorTest, RaisesOnATruncatedFile) {
-    const std::string path =
-        ::testing::TempDir() + "/maptitude_truncated.ccp4";
-    {
-        std::ofstream out(path, std::ios::binary);
-        out << "not a map";
-    }
-    EXPECT_THROW(read_map(path), GridError);
-    std::remove(path.c_str());
+    TruncatedFile truncated;
+    EXPECT_THROW(read_map(truncated.Path()), GridError);
 }
 
 TEST(MapIoErrorTest, RaisesWhenNsymbtIsNotAMultipleOfEighty) {
