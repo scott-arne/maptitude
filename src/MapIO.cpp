@@ -151,6 +151,24 @@ std::string ReadSymopBlock(const std::string& path, const MapHeader& header) {
         throw GridError("Cannot reopen map file '" + path +
                         "' to read its symmetry block");
     }
+
+    // Check that the file is large enough before allocating block_bytes.
+    in.seekg(0, std::ios::end);
+    const std::streampos file_size_pos = in.tellg();
+    if (!in || file_size_pos < 0) {
+        throw GridError("Cannot determine size of map file '" + path + "'");
+    }
+    const std::size_t file_size = static_cast<std::size_t>(file_size_pos);
+    const std::size_t required_size = CCP4_HEADER_BYTES + block_bytes;
+    if (file_size < required_size) {
+        throw GridError("Map file '" + path + "' declares NSYMBT " +
+                        std::to_string(header.nsymbt) + " (" +
+                        std::to_string(block_bytes) +
+                        " bytes) but file size is " +
+                        std::to_string(file_size) + " bytes, need at least " +
+                        std::to_string(required_size) + " bytes");
+    }
+
     in.seekg(static_cast<std::streamoff>(CCP4_HEADER_BYTES));
     std::string block(block_bytes, '\0');
     in.read(&block[0], static_cast<std::streamsize>(block_bytes));

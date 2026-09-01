@@ -11,7 +11,9 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -36,6 +38,25 @@ std::string AssetPath(const std::string& name) {
 
 std::string DataPath(const std::string& name) {
     return std::string(MAPTITUDE_TEST_DATA_DIR) + "/" + name;
+}
+
+/// Copy a map file and patch one header word (1-based indexing).
+std::string CopyAndPatchWord(const std::string& source, const std::size_t word,
+                              const std::int32_t value) {
+    const std::string temp =
+        std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") +
+        "/test_map_patched.ccp4";
+    std::ifstream src(source, std::ios::binary);
+    std::ofstream dst(temp, std::ios::binary);
+    dst << src.rdbuf();
+    src.close();
+    dst.close();
+
+    std::fstream file(temp, std::ios::binary | std::ios::in | std::ios::out);
+    file.seekp(static_cast<std::streamoff>((word - 1u) * 4u));
+    file.write(reinterpret_cast<const char*>(&value), 4);
+    file.close();
+    return temp;
 }
 
 /// One row of the section 2.1 read table.
@@ -186,5 +207,30 @@ TEST(MapIoReadTest, MovesRatherThanResamplesTheEmPayload) {
     const float* original = bare.GetValues();
     for (unsigned int i = 0; i < bare.GetSize(); ++i) {
         ASSERT_EQ(moved[i], original[i]) << "voxel " << i;
+    }
+}
+
+TEST(MapIoReadTest, RejectsNsymbtLargerThanFile) {
+    // Regression test for the NSYMBT allocation bound. A header declaring
+    // NSYMBT larger than the file can contain must not drive an allocation off
+    // the declared size; ReadSymopBlock must check the file's actual size first.
+    //
+    // The measurement showed that OEReadGrid accepts this file (slowly), so the
+    // bound is reachable and this test discriminates: without the bound,
+    // read_map would allocate ~2.1 GB and throw after the short read; with it,
+    // read_map throws before allocating, naming both the declared and actual
+    // sizes. The message check ensures this test fails if the bound is removed.
+    const std::string patched = CopyAndPatchWord(
+        DataPath("test_map.ccp4"), 24, 2147483600);
+
+    try {
+        MapFile map = read_map(patched);
+        FAIL() << "Expected GridError for NSYMBT exceeding file size";
+    } catch (const GridError& e) {
+        const std::string msg(e.what());
+        EXPECT_NE(msg.find("file size is"), std::string::npos)
+            << "Expected size-check message, got: " << msg;
+        EXPECT_NE(msg.find("need at least"), std::string::npos)
+            << "Expected size-check message, got: " << msg;
     }
 }
