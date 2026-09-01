@@ -142,55 +142,67 @@ private:
 
 int HeaderVariant::counter_ = 0;
 
-/// Build a big-endian copy of a little-endian CCP4 file.
+/// Build a big-endian copy of a little-endian CCP4 file with RAII cleanup.
 ///
 /// Words 1-52 and 55-56 are numeric and swap; word 53 is the "MAP " string and
 /// words 57-256 are the ten 80-character labels, both text, so neither does.
 /// Word 54 is MACHST, which is set to the big-endian stamp rather than swapped.
 /// The symmetry block is text. The payload is float32 and swaps.
-std::string MakeBigEndianCopy(const std::string& source) {
-    std::ifstream in(source, std::ios::binary);
-    std::string bytes((std::istreambuf_iterator<char>(in)),
-                      std::istreambuf_iterator<char>());
+class BigEndianCopy {
+public:
+    explicit BigEndianCopy(const std::string& source)
+        : path_(::testing::TempDir() + "/maptitude_bigendian_" +
+                std::to_string(++counter_) + ".ccp4") {
+        std::ifstream in(source, std::ios::binary);
+        std::string bytes((std::istreambuf_iterator<char>(in)),
+                          std::istreambuf_iterator<char>());
 
-    auto swap_word = [&bytes](const std::size_t word) {
-        std::uint32_t value = 0u;
-        std::memcpy(&value, &bytes[(word - 1u) * 4u], 4);
-        value = ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8) |
-                ((value & 0x00FF0000u) >> 8) | ((value & 0xFF000000u) >> 24);
-        std::memcpy(&bytes[(word - 1u) * 4u], &value, 4);
-    };
+        auto swap_word = [&bytes](const std::size_t word) {
+            std::uint32_t value = 0u;
+            std::memcpy(&value, &bytes[(word - 1u) * 4u], 4);
+            value = ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8) |
+                    ((value & 0x00FF0000u) >> 8) | ((value & 0xFF000000u) >> 24);
+            std::memcpy(&bytes[(word - 1u) * 4u], &value, 4);
+        };
 
-    std::int32_t nsymbt = 0;
-    std::memcpy(&nsymbt, &bytes[(24 - 1) * 4], 4);
+        std::int32_t nsymbt = 0;
+        std::memcpy(&nsymbt, &bytes[(24 - 1) * 4], 4);
 
-    for (std::size_t word = 1; word <= 52; ++word) {
-        swap_word(word);
+        for (std::size_t word = 1; word <= 52; ++word) {
+            swap_word(word);
+        }
+        for (std::size_t word = 55; word <= 56; ++word) {
+            swap_word(word);
+        }
+        bytes[(54 - 1) * 4 + 0] = static_cast<char>(0x11);
+        bytes[(54 - 1) * 4 + 1] = static_cast<char>(0x11);
+        bytes[(54 - 1) * 4 + 2] = static_cast<char>(0x00);
+        bytes[(54 - 1) * 4 + 3] = static_cast<char>(0x00);
+
+        const std::size_t payload_start = 1024u + static_cast<std::size_t>(nsymbt);
+        for (std::size_t offset = payload_start; offset + 4u <= bytes.size();
+             offset += 4u) {
+            std::uint32_t value = 0u;
+            std::memcpy(&value, &bytes[offset], 4);
+            value = ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8) |
+                    ((value & 0x00FF0000u) >> 8) | ((value & 0xFF000000u) >> 24);
+            std::memcpy(&bytes[offset], &value, 4);
+        }
+
+        std::ofstream out(path_, std::ios::binary);
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    for (std::size_t word = 55; word <= 56; ++word) {
-        swap_word(word);
-    }
-    bytes[(54 - 1) * 4 + 0] = static_cast<char>(0x11);
-    bytes[(54 - 1) * 4 + 1] = static_cast<char>(0x11);
-    bytes[(54 - 1) * 4 + 2] = static_cast<char>(0x00);
-    bytes[(54 - 1) * 4 + 3] = static_cast<char>(0x00);
 
-    const std::size_t payload_start = 1024u + static_cast<std::size_t>(nsymbt);
-    for (std::size_t offset = payload_start; offset + 4u <= bytes.size();
-         offset += 4u) {
-        std::uint32_t value = 0u;
-        std::memcpy(&value, &bytes[offset], 4);
-        value = ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8) |
-                ((value & 0x00FF0000u) >> 8) | ((value & 0xFF000000u) >> 24);
-        std::memcpy(&bytes[offset], &value, 4);
-    }
+    ~BigEndianCopy() { std::remove(path_.c_str()); }
 
-    const std::string path =
-        ::testing::TempDir() + "/maptitude_bigendian_1d26.ccp4";
-    std::ofstream out(path, std::ios::binary);
-    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    return path;
-}
+    const std::string& Path() const { return path_; }
+
+private:
+    static int counter_;
+    std::string path_;
+};
+
+int BigEndianCopy::counter_ = 0;
 
 }  // namespace
 
@@ -569,8 +581,8 @@ TEST(MapIoErrorTest, ReadsAWellFormedSymopBlockSplicedIntoAFixtureThatHadNone) {
 }
 
 TEST(MapIoEndiannessTest, ReadsABigEndianFileAsItsLittleEndianOriginal) {
-    const std::string path = MakeBigEndianCopy(AssetPath("1d26_2fofc.ccp4"));
-    const MapFile big = read_map(path);
+    BigEndianCopy big_endian(AssetPath("1d26_2fofc.ccp4"));
+    const MapFile big = read_map(big_endian.Path());
     const MapFile little = read_map(AssetPath("1d26_2fofc.ccp4"));
 
     EXPECT_EQ(big.grid->GetXDim(), little.grid->GetXDim());
@@ -594,6 +606,32 @@ TEST(MapIoEndiannessTest, ReadsABigEndianFileAsItsLittleEndianOriginal) {
     for (unsigned int i = 0; i < little.grid->GetSize(); ++i) {
         ASSERT_EQ(big_values[i], little_values[i]) << "voxel " << i;
     }
+}
 
-    std::remove(path.c_str());
+TEST(MapIoEndiannessTest, SwapsTheOriginRecordOnABigEndianEmMap) {
+    // 390_emd_30342_A_z4.mrc has nonzero ORIGIN (145.825, 112.825, 120.517)
+    // and zero NCSTART, so this exercises read_map's own ORIGIN byte-swap at
+    // src/MapIO.cpp:115 through WordAsFloat's Swap32. The 1d26 test above
+    // compares (0,0,0) against (0,0,0) and cannot see a missing swap.
+    BigEndianCopy big_endian(AssetPath("390_emd_30342_A_z4.mrc"));
+    const MapFile little = read_map(AssetPath("390_emd_30342_A_z4.mrc"));
+    const MapFile big = read_map(big_endian.Path());
+
+    float big_x = 0.0f, big_y = 0.0f, big_z = 0.0f;
+    ASSERT_TRUE(big.grid->ElementToSpatialCoord(0u, big_x, big_y, big_z));
+
+    const GridParams little_gp = get_grid_params(*little.grid);
+    EXPECT_NEAR(big_x, little_gp.x_origin, 1e-6);
+    EXPECT_NEAR(big_y, little_gp.y_origin, 1e-6);
+    EXPECT_NEAR(big_z, little_gp.z_origin, 1e-6);
+    EXPECT_NEAR(big_x, 145.825, 1e-3);
+    EXPECT_NEAR(big_y, 112.825, 1e-3);
+    EXPECT_NEAR(big_z, 120.517, 1e-3);
+
+    ASSERT_EQ(big.grid->GetSize(), little.grid->GetSize());
+    const float* big_values = big.grid->GetValues();
+    const float* little_values = little.grid->GetValues();
+    for (unsigned int i = 0; i < little.grid->GetSize(); ++i) {
+        ASSERT_EQ(big_values[i], little_values[i]) << "voxel " << i;
+    }
 }
