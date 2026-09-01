@@ -40,7 +40,7 @@ Building from source requires CMake 3.21+, SWIG 4.0+, FFTW3, and the OpenEye C++
 
 ```python
 from openeye import oechem, oegrid
-from maptitude import fc_density, rscc, UnitCell, parse_symops
+from maptitude import UnitCell, fc_density, get_unit_cell, rscc
 
 # Load structure and observed density map
 mol = oechem.OEGraphMol()
@@ -49,8 +49,14 @@ oechem.OEReadMolecule(oechem.oemolistream("model.pdb"), mol)
 obs_grid = oegrid.OESkewGrid()
 oegrid.OEReadGrid("2fofc.map", obs_grid)
 
+# Calculate the model density to score against. get_unit_cell reports the
+# grid's edges; the angles are yours to supply.
+edges = get_unit_cell(obs_grid)
+cell = UnitCell(edges.a, edges.b, edges.c, 90.0, 90.0, 90.0)
+calc_grid = fc_density(mol, obs_grid, 2.0, cell)
+
 # Score the fit
-result = rscc(mol, obs_grid, 2.0)
+result = rscc(mol, obs_grid, 2.0, calc_grid=calc_grid)
 print(f"Overall RSCC: {result.overall:.3f}")
 ```
 
@@ -217,7 +223,7 @@ ops = parse_symops("x,y,z\n-x,y+1/2,-z+1/2")
 from maptitude import get_scattering_factors
 
 # Look up Cromer-Mann coefficients for carbon (Z=6)
-coeffs = get_scattering_factors(6, charge=0)
+coeffs = get_scattering_factors(6, formal_charge=0)
 f0 = coeffs.Evaluate(0.0)  # Scattering factor at sin(theta)/lambda = 0
 ```
 
