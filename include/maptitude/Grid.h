@@ -208,8 +208,13 @@ double interpolate_density_at(const GridParams& gp, const float* values,
  * @return The interval count each edge selects: n_i, or n_i - 1 for a grid the
  *         caller is declaring to carry a duplicated closing plane.
  * @throws CellError If an edge does not round to a whole number of that axis's
- *         node intervals, if that number is neither n_i nor n_i - 1, or if the
- *         edge or the axis's spacing is not finite and positive.
+ *         node intervals, if that number is neither n_i nor n_i - 1, if the edge
+ *         sits further from that count than the allowance made for float node
+ *         coordinates, or if the edge or the axis's spacing is not finite and
+ *         positive. Rounding to an accepted count is necessary and not
+ *         sufficient: CELL_TOL_INTERVAL_CAP in Grid.cpp documents how wide the
+ *         allowance is, where it stops widening, and what that costs a grid far
+ *         from the Cartesian origin.
  */
 CellPeriods require_commensurate_cell(const GridParams& gp,
                                       double cell_a, double cell_b, double cell_c);

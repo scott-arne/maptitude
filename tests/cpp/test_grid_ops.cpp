@@ -469,9 +469,17 @@ TEST(GridOpsTest, InterpolateDensityPeriodicKeepsItsAllowanceBelowANodeInterval)
     //
     // Between them these three expectations pin the cap to [0, 0.4) of an
     // interval, not to 0.25 exactly: at 0.45 the allowance is 0.9 A and both
-    // EXPECT_THROWs fail, while 0.05 and 0.0 both keep the whole test green.
-    // That range is what the test's name claims, and tightening it further would
-    // mean asserting on a constant rather than on a behaviour.
+    // EXPECT_THROWs fail, while 0.05 and 0.0 leave this test green. Nothing here
+    // notices an allowance shrinking to nothing, because this grid's spacing and
+    // origin are both exactly representable and its extent sits a residual of
+    // exactly 0.0 from its count.
+    //
+    // The suite is narrower than this test, so do not read [0, 0.4) as the
+    // suite's bound. InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent
+    // accepts own extents whose residuals are small but nonzero -- measured
+    // 1.34e-06 A at two nodes and 4.58e-06 A at four -- and tol is
+    // min(counted budget, cap * spacing), so a zero cap refuses both. The lower
+    // bound is pinned behaviourally; it is just pinned there rather than here.
     const double off_lattice = extent + 0.4 * gp.x_spacing;
     EXPECT_THROW(interpolate_density_periodic(grid, probe, probe, probe,
                                               off_lattice, extent, extent, -99.0),
@@ -480,6 +488,59 @@ TEST(GridOpsTest, InterpolateDensityPeriodicKeepsItsAllowanceBelowANodeInterval)
                                               extent, extent - 0.4 * gp.y_spacing,
                                               extent, -99.0),
                  CellError);
+}
+
+TEST(GridOpsTest, InterpolateDensityPeriodicRefusesADistantGridsOwnCell) {
+    // The cap's documented cost, pinned so that widening the cap far enough to
+    // accept this grid again cannot pass unnoticed. Narrowing it only refuses
+    // more, which this test cannot see -- the cap's other side is held by
+    // InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent.
+    //
+    // Far enough from the Cartesian origin, float node coordinates quantize
+    // coarsely enough to move the spacing get_grid_params derives, and the grid
+    // is then refused the very cell GetUnitCell reports for it.
+    //
+    // Two nodes is the amplifying shape. The derived spacing is the whole span
+    // divided by n - 1, so the extent test scales a one-ulp span error by
+    // n / (n - 1) -- 2 here, tending to 1 as n grows. At this magnitude ulp32 is
+    // 0.25 A, coarse enough that the 1.3 A spacing asked for below comes back
+    // as 1.5.
+    constexpr unsigned int N = 2u;
+    constexpr double SPACING = 1.3;
+    constexpr double NODE0 = 2099302.4;
+
+    // Mirrors src/Grid.cpp, which keeps it file-local; see CELL_TOL_INTERVAL_CAP
+    // there for why the allowance stops widening.
+    constexpr double CELL_TOL_INTERVAL_CAP = 0.25;
+
+    OESystem::OESkewGrid grid = MakeCubicGrid(N, SPACING, NODE0);
+    float* values = grid.GetValues();
+    for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 1.0f;
+
+    const GridParams gp = get_grid_params(grid);
+    const UnitCellParams uc = get_unit_cell(grid);
+
+    // The premise, asserted rather than assumed. Without this the refusal below
+    // could be the ordinary one -- an edge that rounds to the wrong interval
+    // count -- and the case would stop testing the cap at all. The count test has
+    // to pass so that the allowance is the only thing left that can refuse this
+    // edge, and the residual has to clear the cap so that it does.
+    const long long p = std::llround(uc.a / gp.x_spacing);
+    ASSERT_EQ(p, static_cast<long long>(gp.x_dim));
+    ASSERT_GT(std::abs(uc.a - static_cast<double>(p) * gp.x_spacing),
+              CELL_TOL_INTERVAL_CAP * gp.x_spacing);
+
+    const double probe = gp.x_origin + 0.5 * (gp.x_dim - 1u) * gp.x_spacing;
+    try {
+        interpolate_density_periodic(grid, probe, probe, probe, uc.a, uc.b, uc.c, -99.0);
+        FAIL() << "expected CellError for this grid's own reported cell";
+    } catch (const CellError& e) {
+        // The refusal has to say why. Reporting a wrong interval count here would
+        // send a caller looking for a geometry error that is not there.
+        const std::string what = e.what();
+        EXPECT_NE(what.find("does round to"), std::string::npos) << what;
+        EXPECT_EQ(what.find("this edge is neither"), std::string::npos) << what;
+    }
 }
 
 TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent) {

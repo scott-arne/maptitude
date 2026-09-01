@@ -97,7 +97,7 @@ constexpr double CELL_EXTENT_ROUNDINGS = 8.0;
 /// commensurability question against the part of the error budget still smaller
 /// than the quantity being measured.
 ///
-/// Two things this does not buy, both measured rather than argued:
+/// Two limits, both measured rather than argued.
 ///
 /// A quarter interval is this allowance's ceiling, and is its width only from
 /// AxisMagnitude = 2^19 node intervals up, where the counted budget first
@@ -105,19 +105,24 @@ constexpr double CELL_EXTENT_ROUNDINGS = 8.0;
 /// Cartesian origin, far narrower: a 10-node 1.0 A grid at origin 0 gets a
 /// 4.77e-06 A allowance and refuses a 10.0001 A edge.
 ///
-/// Far enough out, a grid's own GetUnitCell edge is refused. Once ulp32 of the
-/// axis magnitude approaches the spacing, quantized node coordinates shift the
-/// span across n - 1 intervals by up to a whole ulp, so the derived n * spacing
-/// misses the stored edge by about 2^-23 * AxisMagnitude. Sweeping 24
-/// translations per octave over four grids, the first octave holding any
-/// rejection was 2^21 node intervals (64 nodes at 1.5 A), 2^22 (49 at 0.902 A)
-/// and 2^23 (10 at 1.0 A, and 16 at 0.25 A); an exactly representable spacing
-/// quantizes exactly and buys the last two their extra octaves. Nor is it
-/// monotone -- the 64-node axis rejects every sample in octave 2^22 and accepts
-/// every one again in 2^24. This is accepted, not fixed: vacuity starts at
-/// 2^20, an octave below the earliest rejection measured, so the cap still
-/// leaves the check strictly better than it found it, and 2^21 intervals of a
-/// 0.9 A map is about 190 micrometres from the origin.
+/// Far enough out, a grid can be refused the cell GetUnitCell reports for it.
+/// Float node coordinates quantize, which perturbs the derived spacing, and the
+/// extent test scales that perturbation by n / (n - 1) -- so a low node count
+/// amplifies it, and past a quarter interval the cap stops forgiving the
+/// difference. Acceptance is not monotone in the translation and the onset
+/// depends on the axis's shape, so there is no single threshold worth quoting.
+/// The earliest case found is a two-node axis at 1.34 * 2^20 node intervals,
+/// whose requested 1.3 A spacing quantized to 1.5 A.
+///
+/// That is a deliberate trade rather than an oversight. Uncapped, the allowance
+/// reaches the half-interval at 2^20 intervals and the extent test discriminates
+/// nothing at all from there up; capped, it keeps working, at the price of those
+/// refusals. For a 0.9 A map 2^20 intervals is some 94 micrometres from the
+/// origin. GridOpsTest.InterpolateDensityPeriodicRefusesADistantGridsOwnCell
+/// pins one such refusal, so widening the cap far enough to accept that grid
+/// again cannot pass unnoticed. Narrowing it only refuses more, which that test
+/// cannot see; InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent is
+/// what holds the cap away from zero.
 constexpr double CELL_TOL_INTERVAL_CAP = 0.25;
 
 /// Read one node's Cartesian coordinate, enforcing derivation checks 2 and 3.
@@ -490,11 +495,11 @@ CellPeriods require_commensurate_cell(const GridParams& gp, const double cell_a,
         // p >= 1 keeps a negative or zero count out of the unsigned conversion
         // below, and phrasing the short case as p + 1 == n_i keeps the comparison
         // off an unsigned n_i - 1 that could wrap.
-        const bool accepted =
-            ratio_roundable && p >= 1 &&
-            (static_cast<unsigned long long>(p) == n[i] ||
-             static_cast<unsigned long long>(p) + 1u == n[i]) &&
-            std::abs(given[i] - static_cast<double>(p) * spacing[i]) <= tol;
+        const bool count_ok = ratio_roundable && p >= 1 &&
+                              (static_cast<unsigned long long>(p) == n[i] ||
+                               static_cast<unsigned long long>(p) + 1u == n[i]);
+        const double residual = std::abs(given[i] - static_cast<double>(p) * spacing[i]);
+        const bool accepted = count_ok && residual <= tol;
 
         if (!accepted) {
             std::ostringstream message;
@@ -508,9 +513,23 @@ CellPeriods require_commensurate_cell(const GridParams& gp, const double cell_a,
                        "which is what OpenEye's reader hands back for a whole-cell CCP4 or "
                        "MRC map), to within a "
                     << tol
-                    << " A allowance for float node coordinates. The cell is what chooses "
-                       "between those two, and this edge is neither, so the grid does not "
-                       "tile it";
+                    << " A allowance for float node coordinates. ";
+            // Which of the two tests refused this edge is the whole of what the
+            // caller can act on, and they call for opposite responses: a wrong
+            // count means the cell does not belong to this grid, while a count
+            // that lands and a residual that does not means the grid's own
+            // coordinates no longer pin its spacing that finely.
+            if (count_ok) {
+                message << "This edge does round to " << p << " of them, but sits "
+                        << residual
+                        << " A away from that count, which is past the allowance. Node "
+                           "coordinates far from the Cartesian origin quantize coarsely "
+                           "enough to move the spacing the count is measured against, so a "
+                           "distant grid can be refused the very cell it reports for itself";
+            } else {
+                message << "The cell is what chooses between those two, and this edge is "
+                           "neither, so the grid does not tile it";
+            }
             throw CellError(message.str());
         }
         period[i] = static_cast<unsigned int>(p);

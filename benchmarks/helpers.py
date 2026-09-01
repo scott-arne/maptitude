@@ -200,8 +200,9 @@ def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
     :param padding: Padding in Angstroms around the molecule.
     :returns: Padded grid, or the original when no padding is needed.
     :raises StructureError: If the molecule has no heavy atoms.
-    :raises CellError: If an edge is not a whole number of the grid's node
-        intervals along that axis.
+    :raises CellError: If an edge is zero, negative, or non-finite, or does not
+        round to ``n`` or ``n - 1`` of that axis's node intervals to within the
+        allowance made for float node coordinates.
     """
     a, b, c = cell
     return maptitude.wrap_and_pad_grid(grid, mol, a, b, c, padding)

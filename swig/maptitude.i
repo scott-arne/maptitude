@@ -843,11 +843,53 @@ std::vector<double> interpolate_density_batch(
 std::vector<unsigned int> get_atom_grid_points(
     const OESystem::OESkewGrid& grid,
     double x, double y, double z, double radius);
+// Documented through %feature rather than a Python wrapper: both are hot paths
+// called per point, and a wrapper would put an interpreter frame on every call
+// to buy nothing but the docstring. The commensurability contract has to appear
+// here because these two reach require_commensurate_cell directly, so a Python
+// caller who never touches wrap_and_pad_grid would otherwise meet the CellError
+// with no documented cause.
+%feature("docstring") interpolate_density_periodic %{
+Trilinearly interpolate density, wrapping the query point into the unit cell.
+
+:param grid: Grid sampling one unit cell.
+:param x: Query x (Angstroms).
+:param y: Query y (Angstroms).
+:param z: Query z (Angstroms).
+:param cell_a: Unit cell dimension a (Angstroms).
+:param cell_b: Unit cell dimension b (Angstroms).
+:param cell_c: Unit cell dimension c (Angstroms).
+:param default_value: Returned where the grid cannot supply a value.
+:returns: Interpolated density at the wrapped point.
+:raises GridError: If an axis has fewer than two nodes, a node has no spatial
+    coordinate or a non-finite one, or a derived interval is not finite and
+    positive.
+:raises CellError: If the sampling is not axis-aligned, or if a cell edge does
+    not round to ``n_i`` or ``n_i - 1`` of that axis's node intervals to within
+    the allowance made for float node coordinates. Wrapping at a period the grid
+    was never sampled on would resample the map onto a lattice it never had, so
+    the caller is told rather than handed a plausible wrong number.
+%}
 double interpolate_density_periodic(
     const OESystem::OESkewGrid& grid,
     double x, double y, double z,
     double cell_a, double cell_b, double cell_c,
     double default_value = 0.0);
+%feature("docstring") interpolate_density_periodic_batch %{
+Interpolate many points at once, wrapping each into the unit cell.
+
+:param grid: Grid sampling one unit cell.
+:param points: Flat sequence of x, y, z triples.
+:param num_points: Number of triples in ``points``.
+:param cell_a: Unit cell dimension a (Angstroms).
+:param cell_b: Unit cell dimension b (Angstroms).
+:param cell_c: Unit cell dimension c (Angstroms).
+:param default_value: Returned where the grid cannot supply a value.
+:returns: One interpolated density per point, in input order.
+:raises GridError: As :func:`interpolate_density_periodic`.
+:raises CellError: As :func:`interpolate_density_periodic`. The cell is checked
+    once for the whole batch, before any point is sampled.
+%}
 std::vector<double> interpolate_density_periodic_batch(
     const OESystem::OESkewGrid& grid,
     const std::vector<double>& points,

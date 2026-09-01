@@ -325,7 +325,7 @@ raised already.
 | `n_scale_shells` outside `[1, 1000]`                                  | `GridError`                   |
 | A non-orthorhombic unit cell                                          | `CellError`                   |
 | A zero, negative, or non-finite cell edge to `wrap_and_pad_grid`      | `CellError`                   |
-| A cell edge that is neither `n` nor `n - 1` node intervals, to a periodic entry point or `wrap_and_pad_grid` | `CellError` |
+| A cell edge that is neither `n` nor `n - 1` node intervals, or is further from that count than the float-coordinate allowance, to a periodic entry point or `wrap_and_pad_grid` | `CellError` |
 | A molecule with no heavy atoms                                        | `StructureError`              |
 | A Q-score radial sweep that cannot terminate or produce a shell       | `GridError`                   |
 | An `AtomRadius` or `RadialSampling` value the enum does not declare   | `RuntimeError`                |
