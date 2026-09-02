@@ -230,6 +230,57 @@ private:
 
 int TruncatedFile::counter_ = 0;
 
+/// A scratch destination that removes itself, so a failing assertion cannot
+/// leave a stale map behind for the next run to read.
+///
+/// The process id is part of the name because gtest_discover_tests gives every
+/// case its own ctest process, where a static counter alone repeats.
+class ScratchPath {
+public:
+    explicit ScratchPath(const std::string& extension)
+        : path_(::testing::TempDir() + "/maptitude_write_" +
+                std::to_string(::getpid()) + "_" +
+                std::to_string(++counter_) + extension) {
+        std::remove(path_.c_str());
+    }
+    ~ScratchPath() { std::remove(path_.c_str()); }
+    const std::string& Str() const { return path_; }
+
+private:
+    static int counter_;
+    std::string path_;
+};
+
+int ScratchPath::counter_ = 0;
+
+/// Assert that a written file reads back as the grid it came from.
+void ExpectRoundTrip(const OESystem::OESkewGrid& original,
+                     const std::string& path,
+                     const std::string& symops) {
+    const MapFile back = read_map(path);
+    ASSERT_TRUE(back.grid);
+    EXPECT_EQ(compare_written_map(original, *back.grid), "");
+    EXPECT_EQ(back.symops, symops);
+}
+
+/// Read @p count bytes of @p path starting at @p offset.
+///
+/// The symmetry-block test has to read the file as bytes. read_map strips and
+/// rejoins the records, so comparing through it passes on a block whose NSYMBT
+/// or record width is wrong but which strips to the same triplets, and those
+/// bytes are what a consumer that is not read_map will read.
+std::string ReadBytesAt(const std::string& path, const std::size_t offset,
+                        const std::size_t count) {
+    std::ifstream in(path, std::ios::binary);
+    EXPECT_TRUE(in.good()) << "cannot open " << path;
+    in.seekg(static_cast<std::streamoff>(offset));
+    std::string bytes(count, '\0');
+    in.read(&bytes[0], static_cast<std::streamsize>(count));
+    EXPECT_EQ(in.gcount(), static_cast<std::streamsize>(count))
+        << path << " holds fewer than " << (offset + count) << " bytes";
+    return bytes;
+}
+
 }  // namespace
 
 TEST(MapIoReadTest, PinsTheFiveFixtures) {
@@ -654,4 +705,331 @@ TEST(MapIoEndiannessTest, SwapsTheOriginRecordOnABigEndianEmMap) {
     for (unsigned int i = 0; i < little.grid->GetSize(); ++i) {
         ASSERT_EQ(big_values[i], little_values[i]) << "voxel " << i;
     }
+}
+
+TEST(MapIoWriteTest, RoundTripsEachOfTheFiveFixtures) {
+    const char* fixtures[] = {"1d26_2fofc.ccp4", "340d_2fofc.ccp4",
+                              "3q9g_2fofc.ccp4", "390_emd_30342_A_z4.mrc"};
+    for (const char* name : fixtures) {
+        SCOPED_TRACE(name);
+        const MapFile source = read_map(AssetPath(name));
+        ScratchPath out(".ccp4");
+        write_map(out.Str(), *source.grid, source.symops);
+        ExpectRoundTrip(*source.grid, out.Str(), source.symops);
+    }
+
+    SCOPED_TRACE("test_map.ccp4");
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath out(".ccp4");
+    write_map(out.Str(), *source.grid, source.symops);
+    ExpectRoundTrip(*source.grid, out.Str(), source.symops);
+}
+
+TEST(MapIoWriteTest, WritesTheEmOriginIntoTheHeader) {
+    // The one fixture whose node 0 exercises the ORIGIN patch at all.
+    const MapFile source = read_map(AssetPath("390_emd_30342_A_z4.mrc"));
+    ScratchPath out(".mrc");
+    write_map(out.Str(), *source.grid, source.symops);
+
+    std::ifstream in(out.Str(), std::ios::binary);
+    char header[1024] = {0};
+    in.read(header, 1024);
+    float origin[3] = {0.0f, 0.0f, 0.0f};
+    std::memcpy(origin, header + (50 - 1) * 4, 12);
+    EXPECT_NEAR(origin[0], 145.825f, 1e-3f);
+    EXPECT_NEAR(origin[1], 112.825f, 1e-3f);
+    EXPECT_NEAR(origin[2], 120.517f, 1e-3f);
+}
+
+TEST(MapIoWriteTest, WritesTheSymmetryBlockAsFixedWidthRecordsOnDisk) {
+    // The byte-level companion to RoundTripsEachOfTheFiveFixtures, and the test
+    // side of write_map's raw symop check. The round-trip test compares
+    // back.symops, which read_map has already stripped and rejoined: it passes
+    // on a block whose NSYMBT is wrong, or whose records are newline-terminated
+    // rather than 80-byte space-padded, because both strip to the same
+    // triplets. A consumer that is not read_map reads these bytes.
+    //
+    // Measured on the two shipped fixtures that carry symmetry records
+    // (390_emd_30342_A_z4.mrc and test_map.ccp4 both declare NSYMBT 0, so
+    // neither can stand in here):
+    //   1d26_2fofc.ccp4  NSYMBT  640   8 records
+    //   3q9g_2fofc.ccp4  NSYMBT 1280  16 records
+    // Both start "x,y,z" and end "y,x,-z", no record starts with a space, and
+    // stripping each record and re-padding it to 80 with spaces reproduces the
+    // on-disk block byte for byte. That last measurement is what lets this
+    // demand equality with the source block rather than mere re-parsability.
+    // Two fixtures, not one: a writer that hardcoded a record count would pass
+    // on either alone.
+    struct Fixture {
+        const char* name;
+        std::int32_t nsymbt;
+        std::size_t records;
+    };
+    const Fixture fixtures[] = {{"1d26_2fofc.ccp4", 640, 8},
+                                {"3q9g_2fofc.ccp4", 1280, 16}};
+
+    for (const Fixture& fixture : fixtures) {
+        SCOPED_TRACE(fixture.name);
+        const std::string source_path = AssetPath(fixture.name);
+        const MapFile source = read_map(source_path);
+        ASSERT_FALSE(source.symops.empty())
+            << "this fixture no longer carries symmetry records, so the "
+               "comparisons below would hold vacuously";
+
+        ScratchPath out(".ccp4");
+        write_map(out.Str(), *source.grid, source.symops);
+
+        const std::string header = ReadBytesAt(out.Str(), 0, 1024);
+        std::int32_t nsymbt = 0;
+        std::memcpy(&nsymbt, header.data() + (24 - 1) * 4, 4);
+        EXPECT_EQ(nsymbt, fixture.nsymbt);
+
+        const std::string written =
+            ReadBytesAt(out.Str(), 1024, static_cast<std::size_t>(fixture.nsymbt));
+        ASSERT_EQ(written.size() % 80u, 0u);
+        EXPECT_EQ(written.size() / 80u, fixture.records);
+        EXPECT_EQ(written.substr(0, 80),
+                  std::string("x,y,z") + std::string(75, ' '));
+        EXPECT_EQ(written.substr((fixture.records - 1u) * 80u, 80u),
+                  std::string("y,x,-z") + std::string(74, ' '));
+
+        // The shape assertions above name which property broke; this one is the
+        // actual contract, and would otherwise fail as 640 bytes of diff.
+        EXPECT_EQ(written,
+                  ReadBytesAt(source_path, 1024,
+                              static_cast<std::size_t>(fixture.nsymbt)));
+    }
+}
+
+TEST(MapIoWriteTest, WritesToBothWritableExtensions) {
+    // Both dispatch to the same CCP4 writer, so this is not a format test: it
+    // is what shows the temporary carrying whichever extension it was given
+    // rather than a hardcoded .ccp4.
+    const MapFile source = read_map(AssetPath("1d26_2fofc.ccp4"));
+    for (const char* extension : {".ccp4", ".mrc"}) {
+        SCOPED_TRACE(extension);
+        ScratchPath out(extension);
+        write_map(out.Str(), *source.grid, source.symops);
+        ExpectRoundTrip(*source.grid, out.Str(), source.symops);
+    }
+}
+
+TEST(MapIoWriteTest, RoundTripsAGridWhoseNodeZeroIsAHalfIntegerOfSpacings) {
+    // SetMid(0,0,0) with an even dim puts node 0 on a half integer, which
+    // NCSTART cannot encode. The ORIGIN patch carries it and read_map prefers
+    // ORIGIN, so the position survives. This is the regression test for the
+    // integer-NCSTART refusal section 2.4 retired: if either half of that
+    // mechanism regresses, this grid lands half a voxel out.
+    OESystem::OESkewGrid grid;
+    ASSERT_TRUE(grid.SetDim(20u, 20u, 20u));
+    ASSERT_TRUE(grid.SetUnitCell(20.0f, 20.0f, 20.0f, 90.0f, 90.0f, 90.0f,
+                                 40u, 40u, 40u));
+    ASSERT_TRUE(grid.SetMid(0.0f, 0.0f, 0.0f));
+    ASSERT_TRUE(grid.SetSpaceGroup(1u));
+    std::vector<float> values(grid.GetSize());
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        values[i] = static_cast<float>(i % 17u);
+    }
+    ASSERT_TRUE(grid.SetValues(values.data(),
+                               static_cast<unsigned int>(values.size())));
+
+    const GridParams before = get_grid_params(grid);
+    ASSERT_NEAR(std::fmod(std::fabs(before.x_origin / before.x_spacing), 1.0),
+                0.5, 1e-6)
+        << "node 0 is not a half-integer number of spacings, so this test no "
+           "longer exercises what it was written for";
+
+    ScratchPath out(".ccp4");
+    write_map(out.Str(), grid);
+    ExpectRoundTrip(grid, out.Str(), "");
+}
+
+TEST(MapIoWriteTest, PreservesASpaceGroupTheInputCarries) {
+    const MapFile source = read_map(AssetPath("3q9g_2fofc.ccp4"));
+    ScratchPath out(".ccp4");
+    write_map(out.Str(), *source.grid, source.symops);
+    EXPECT_EQ(read_map(out.Str()).grid->GetSpaceGroup(), 98u);
+}
+
+TEST(MapIoWriteTest, DefaultsAnAbsentSpaceGroupToP1) {
+    // Deliberately not identity: section 4 defaults to P1 because an unset
+    // space group makes OEWriteGrid double the cell and regrid.
+    const MapFile source = read_map(AssetPath("390_emd_30342_A_z4.mrc"));
+    ASSERT_EQ(source.grid->GetSpaceGroup(), 0u);
+    ScratchPath out(".mrc");
+    write_map(out.Str(), *source.grid);
+    const MapFile back = read_map(out.Str());
+    EXPECT_TRUE(back.grid->HasSpaceGroup());
+    EXPECT_EQ(back.grid->GetSpaceGroup(), 1u);
+}
+
+TEST(MapIoWriteTest, RefusesAGridWhoseCellEqualsItsSampledExtent) {
+    // The geometric condition behind the wrap_and_pad_grid refusal, reached
+    // without a molecule: no test under tests/cpp reads a molecule from the
+    // assets, and this needs no new fixture plumbing to exercise the same
+    // branch. MakeEmptyGrid declares cell = n * spacing with n divisions, so
+    // the written NX equals the written NC and the re-read node count comes
+    // back one higher per axis. The Python suite covers the same refusal
+    // through wrap_and_pad_grid itself on a real asset.
+    //
+    // Measured on this exact construction, with the P1 default applied as
+    // step 2 applies it: dim (21,21,21), cell 10.5, spacing 0.5 writes and
+    // reads back as dim (22,22,22), size 9261 -> 10648. Both OEWriteGrid and
+    // OEReadGrid return true; the header is self-consistent and describes a
+    // different grid, which is what the verify exists to catch.
+    OESystem::OESkewGrid grid = MakeEmptyGrid(5.0, 0.5);
+    const GridParams gp = get_grid_params(grid);
+    const UnitCellParams cell = get_unit_cell(grid);
+    ASSERT_NEAR(cell.a, gp.x_dim * gp.x_spacing, 1e-6)
+        << "this grid's cell is no longer its sampled extent, so it no longer "
+           "reaches the branch this test exists for";
+
+    ScratchPath out(".ccp4");
+    try {
+        write_map(out.Str(), grid);
+        FAIL() << "expected GridError: the written header describes a 22^3 grid";
+    } catch (const GridError& error) {
+        EXPECT_NE(std::string(error.what()).find("dimensions differ"),
+                  std::string::npos)
+            << "refused by the wrong branch: " << error.what();
+    }
+    std::ifstream probe(out.Str(), std::ios::binary);
+    EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
+}
+
+TEST(MapIoWriteTest, AFailedWriteLeavesTheDestinationAlone) {
+    const MapFile source = read_map(AssetPath("1d26_2fofc.ccp4"));
+    ScratchPath out(".ccp4");
+    write_map(out.Str(), *source.grid, source.symops);
+    const MapFile before = read_map(out.Str());
+
+    OESystem::OESkewGrid doomed = MakeEmptyGrid(5.0, 0.5);
+    EXPECT_THROW(write_map(out.Str(), doomed), GridError);
+
+    const MapFile after = read_map(out.Str());
+    EXPECT_EQ(compare_written_map(*before.grid, *after.grid), "");
+    EXPECT_EQ(after.symops, before.symops);
+}
+
+TEST(MapIoWriteTest, RoundTripsAPermutedAxisOrder) {
+    // Section 9 leaves the write side of MAPC/MAPR/MAPS unmeasured: no measured
+    // input makes OEWriteGrid emit a permuted header, and section 4 leaves
+    // NC/NX/MAPC as OEWriteGrid wrote them. Reading a permuted file and writing
+    // it back is the cheapest thing that exercises the ORIGIN patch against a
+    // permuted input.
+    //
+    // If this fails, do not patch MAPC to make it pass -- that is the axis
+    // recomputation section 3.1 forbids. Record the gap in the task report,
+    // change the case to EXPECT_THROW(GridError) documenting the refusal, and
+    // say so. A silently wrong permuted write is the outcome to avoid; a
+    // refused one is acceptable.
+    HeaderVariant variant(DataPath("test_map.ccp4"));
+    variant.SetInt(17, 3).SetInt(18, 1).SetInt(19, 2);
+    const MapFile source = read_map(variant.Write());
+
+    ScratchPath out(".ccp4");
+    write_map(out.Str(), *source.grid, source.symops);
+    ExpectRoundTrip(*source.grid, out.Str(), source.symops);
+}
+
+TEST(MapIoWriteTest, RaisesOnAnExtensionOpenEyeDoesNotWrite) {
+    // Section 2.4 measures the unguarded call to be a process abort, not a
+    // false return. If the check in step 1 is missing or wrong, this test does
+    // not fail -- it takes the whole binary down.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    for (const char* extension : {".dat", ""}) {
+        SCOPED_TRACE(extension);
+        ScratchPath out(extension);
+        EXPECT_THROW(write_map(out.Str(), *source.grid), GridError);
+        std::ifstream probe(out.Str(), std::ios::binary);
+        EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
+    }
+}
+
+TEST(MapIoWriteTest, RaisesSymOpErrorBeforeTouchingTheFilesystem) {
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath out(".ccp4");
+    EXPECT_THROW(write_map(out.Str(), *source.grid, "not a symop"), SymOpError);
+    std::ifstream probe(out.Str(), std::ios::binary);
+    EXPECT_FALSE(probe.good());
+}
+
+namespace {
+
+/// A small grid the seam tests mutate one quantity at a time.
+OESystem::OESkewGrid SeamGrid() {
+    OESystem::OESkewGrid grid;
+    grid.SetDim(4u, 5u, 6u);
+    grid.SetUnitCell(4.0f, 5.0f, 6.0f, 90.0f, 90.0f, 90.0f, 8u, 10u, 12u);
+    grid.SetMid(0.0f, 0.0f, 0.0f);
+    grid.SetSpaceGroup(1u);
+    std::vector<float> values(grid.GetSize(), 1.0f);
+    grid.SetValues(values.data(), static_cast<unsigned int>(values.size()));
+    return grid;
+}
+
+}  // namespace
+
+TEST(MapIoVerifySeamTest, AgreesWithItself) {
+    const OESystem::OESkewGrid grid = SeamGrid();
+    EXPECT_EQ(compare_written_map(grid, grid), "");
+}
+
+TEST(MapIoVerifySeamTest, NamesADimensionDifference) {
+    const OESystem::OESkewGrid expected = SeamGrid();
+    OESystem::OESkewGrid actual = SeamGrid();
+    ASSERT_TRUE(actual.SetDim(4u, 5u, 7u));
+    const std::string message = compare_written_map(expected, actual);
+    EXPECT_NE(message.find("dimension"), std::string::npos) << message;
+}
+
+TEST(MapIoVerifySeamTest, NamesACellDifference) {
+    const OESystem::OESkewGrid expected = SeamGrid();
+    OESystem::OESkewGrid actual = SeamGrid();
+    ASSERT_TRUE(actual.SetUnitCell(4.5f, 5.0f, 6.0f, 90.0f, 90.0f, 90.0f,
+                                   8u, 10u, 12u));
+    const std::string message = compare_written_map(expected, actual);
+    EXPECT_NE(message.find("cell"), std::string::npos) << message;
+}
+
+TEST(MapIoVerifySeamTest, NamesASpacingDifference) {
+    // Same dim and same declared cell edges, different division count -- so
+    // the spacing moves while dim and cell do not. A verify that skipped
+    // spacing would pass this pair.
+    const OESystem::OESkewGrid expected = SeamGrid();
+    OESystem::OESkewGrid actual = SeamGrid();
+    ASSERT_TRUE(actual.SetUnitCell(4.0f, 5.0f, 6.0f, 90.0f, 90.0f, 90.0f,
+                                   16u, 20u, 24u));
+
+    // The pair rests on SetUnitCell's division count moving the derived
+    // spacing. If it stops doing that, the assertion below still passes for the
+    // wrong reason, so state the premise rather than assume it.
+    const GridParams expected_gp = get_grid_params(expected);
+    const GridParams actual_gp = get_grid_params(actual);
+    ASSERT_NE(expected_gp.x_spacing, actual_gp.x_spacing)
+        << "the two grids have the same spacing, so this pair no longer "
+           "discriminates a verify that skips spacing";
+    ASSERT_EQ(expected_gp.x_dim, actual_gp.x_dim);
+
+    const std::string message = compare_written_map(expected, actual);
+    EXPECT_NE(message.find("spacing"), std::string::npos) << message;
+}
+
+TEST(MapIoVerifySeamTest, NamesANodeZeroDifference) {
+    const OESystem::OESkewGrid expected = SeamGrid();
+    OESystem::OESkewGrid actual = SeamGrid();
+    ASSERT_TRUE(actual.SetMid(1.0f, 0.0f, 0.0f));
+    const std::string message = compare_written_map(expected, actual);
+    EXPECT_NE(message.find("node 0"), std::string::npos) << message;
+}
+
+TEST(MapIoVerifySeamTest, NamesAVoxelDifference) {
+    const OESystem::OESkewGrid expected = SeamGrid();
+    OESystem::OESkewGrid actual = SeamGrid();
+    std::vector<float> values(actual.GetSize(), 1.0f);
+    values[7] = 2.0f;
+    ASSERT_TRUE(actual.SetValues(values.data(),
+                                 static_cast<unsigned int>(values.size())));
+    const std::string message = compare_written_map(expected, actual);
+    EXPECT_NE(message.find("voxel"), std::string::npos) << message;
 }
