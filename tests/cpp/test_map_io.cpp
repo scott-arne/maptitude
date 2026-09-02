@@ -895,12 +895,14 @@ TEST(MapIoWriteTest, SplitsSemicolonSeparatedSymopsIntoOneRecordEach) {
               std::string("-x,y+1/2,-z") + std::string(69, ' '));
 }
 
-TEST(MapIoWriteTest, WritesToBothWritableExtensions) {
-    // Both dispatch to the same CCP4 writer, so this is not a format test: it
-    // is what shows the temporary carrying whichever extension it was given
-    // rather than a hardcoded .ccp4.
+TEST(MapIoWriteTest, WritesToEachDocumentedExtension) {
+    // The three spellings the header and the refusal message put in front of a
+    // caller. They dispatch to the same CCP4 writer, so this is not a format
+    // test: it is what shows the temporary carrying whichever extension it was
+    // given rather than a hardcoded .ccp4. '.map' is here because it was named
+    // in both places and written by no test.
     const MapFile source = read_map(AssetPath("1d26_2fofc.ccp4"));
-    for (const char* extension : {".ccp4", ".mrc"}) {
+    for (const char* extension : {".ccp4", ".mrc", ".map"}) {
         SCOPED_TRACE(extension);
         ScratchPath out(extension);
         write_map(out.Str(), *source.grid, source.symops);
@@ -1164,6 +1166,44 @@ TEST(MapIoWriteTest, RefusesAGridFormatOpenEyeWritesButThisPathCannotPatch) {
     EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
     EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
         << "a refused write left its hidden temporary behind";
+}
+
+TEST(MapIoWriteTest, RefusesAnUnpatchableExtensionBeforeItReachesOEWriteGrid) {
+    // What makes the extension gate worth having is its position: it runs
+    // ahead of MakeTemporarySibling and OEWriteGrid, so a '.grd' destination
+    // never reaches the writer and no GRD file gets CCP4-offset bytes spliced
+    // into it. RefusesAGridFormatOpenEyeWritesButThisPathCannotPatch cannot
+    // pin that -- with the old OEIsWriteableGrid gate in place its
+    // destination-absence and sibling-count assertions both still pass,
+    // because the later refusal is atomic too. A parent directory that does
+    // not exist separates the two by message: the gate refuses on the
+    // extension, while anything that gets past it fails at OEWriteGrid, which
+    // has nowhere to open a file.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    const std::filesystem::path absent =
+        std::filesystem::path(::testing::TempDir()) /
+        ("maptitude_absent_" + std::to_string(::getpid()));
+    ASSERT_FALSE(std::filesystem::exists(absent))
+        << "the parent directory exists, so this case no longer separates the "
+           "gate from the write: " << absent.string();
+    const std::string out = (absent / "out.grd").string();
+
+    try {
+        write_map(out, *source.grid, source.symops);
+        FAIL() << "expected GridError: '.grd' is not an extension OpenEye maps "
+                  "to CCP4";
+    } catch (const GridError& error) {
+        const std::string message(error.what());
+        EXPECT_NE(message.find("CCP4"), std::string::npos)
+            << "the message does not name the format family this writer "
+               "produces: " << message;
+        EXPECT_EQ(message.find("OEWriteGrid failed"), std::string::npos)
+            << "the extension reached OEWriteGrid, so the gate did not run "
+               "ahead of it: " << message;
+    }
+
+    EXPECT_FALSE(std::filesystem::exists(absent))
+        << "a refused write created the destination's parent directory";
 }
 
 TEST(MapIoWriteTest, RefusesASymopRecordWiderThanTheOnDiskField) {
