@@ -348,11 +348,24 @@ std::filesystem::path MakeTemporarySibling(const std::filesystem::path& dest) {
 }
 
 /// Normalize symop text to the one-triplet-per-line form read_map returns.
+///
+/// The boundaries have to be the ones SymOp::ParseAll uses, which are newline
+/// *and* semicolon -- write_map validates the caller's text through that parser,
+/// and SymopBlockBytes emits one 80-byte CCP4 record per line this function
+/// hands back. Splitting on newlines alone accepts "x,y,z;-x,y,-z" as two
+/// operators and then writes it as a single record with an embedded semicolon,
+/// which no consumer that reads the fixed-width records literally can split.
+///
+/// Normalizing rather than refusing, because the semicolon spelling is what
+/// fc_density hands back and refusing it here alone would make the writer
+/// stricter than every other symop consumer in the library. The cost is that
+/// the spelling does not survive the round trip: a caller who writes "a;b"
+/// reads back "a\nb". The operator set does.
 std::string CanonicalSymops(const std::string& symops) {
     std::string joined;
     std::size_t start = 0;
     while (start <= symops.size() && !symops.empty()) {
-        const std::size_t end = symops.find('\n', start);
+        const std::size_t end = symops.find_first_of("\n;", start);
         const std::string record = Strip(
             end == std::string::npos ? symops.substr(start)
                                      : symops.substr(start, end - start));
@@ -796,6 +809,13 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
     // NSYMBT and the fixed-width record shape are what a consumer that is not
     // read_map will read, and the text comparison passes on a block whose
     // padding or record count is wrong but which strips to the same triplets.
+    //
+    // Both sides below are derived from `canonical`, so this guard is only ever
+    // as good as CanonicalSymops: it checks that the writer emitted the record
+    // boundaries that function chose, never that those boundaries are the right
+    // ones. That is why CanonicalSymops has to split on exactly what
+    // SymOp::ParseAll splits on, and why the test for it asserts on raw bytes
+    // written from hand-built symop text rather than through this check.
     const std::string expected_block = SymopBlockBytes(canonical);
     if (static_cast<std::size_t>(written.nsymbt) != expected_block.size()) {
         throw GridError("Refusing to write '" + path + "': NSYMBT is " +

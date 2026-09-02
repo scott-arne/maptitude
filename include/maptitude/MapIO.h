@@ -168,7 +168,10 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  *        records this function restores.
  * @param grid Grid to write.
  * @param symops Symmetry text in the form read_map returns: one triplet per
- *        line, newline-separated. Empty writes no block.
+ *        line, newline-separated. Empty writes no block. The semicolon
+ *        separator SymOp::ParseAll also accepts is normalized to a newline, so
+ *        the operator set survives the round trip but that spelling does not:
+ *        writing "a;b" reads back as "a\nb".
  * @throws GridError if @p path's extension is not a grid format OpenEye
  *         writes or names a compressed file, if the write fails, if the re-read
  *         map differs from the grid in dimensions, cell, per-axis spacing,

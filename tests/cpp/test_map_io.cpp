@@ -856,6 +856,45 @@ TEST(MapIoWriteTest, WritesTheSymmetryBlockAsFixedWidthRecordsOnDisk) {
     }
 }
 
+TEST(MapIoWriteTest, SplitsSemicolonSeparatedSymopsIntoOneRecordEach) {
+    // write_map validates its symops through SymOp::ParseAll, which treats ';'
+    // as an operator boundary as readily as '\n'. The canonicalization that
+    // feeds the on-disk block has to agree, or the same two operators are one
+    // 80-byte record in the ';' spelling and two in the '\n' spelling.
+    //
+    // This asserts on the raw bytes rather than through read_map, and on
+    // hand-built symop text rather than on a fixture's. write_map's own NSYMBT
+    // and block checks derive both sides from the canonicalization, so they
+    // cannot see a canonicalization that is itself wrong; and read_map hands
+    // the record back verbatim, so a one-record block with an embedded ';'
+    // compares equal to the text that produced it. Fixture symops come from
+    // read_map already split on newlines, which is the case that never fails.
+    const std::string semicolons = "x,y,z;-x,y+1/2,-z";
+    ASSERT_EQ(SymOp::ParseAll(semicolons).size(), 2u)
+        << "the parser no longer reads this as two operators, so the split "
+           "this test pins is not the one write_map validates against";
+
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ASSERT_TRUE(source.symops.empty())
+        << "this fixture now carries its own symmetry records, so the block "
+           "below would not be the one under test";
+
+    ScratchPath out(".ccp4");
+    write_map(out.Str(), *source.grid, semicolons);
+
+    const std::string header = ReadBytesAt(out.Str(), 0, 1024);
+    std::int32_t nsymbt = 0;
+    std::memcpy(&nsymbt, header.data() + (24 - 1) * 4, 4);
+    EXPECT_EQ(nsymbt, 160)
+        << "the two operators were not written as two 80-byte records";
+
+    const std::string written = ReadBytesAt(out.Str(), 1024, 160);
+    EXPECT_EQ(written.substr(0, 80),
+              std::string("x,y,z") + std::string(75, ' '));
+    EXPECT_EQ(written.substr(80, 80),
+              std::string("-x,y+1/2,-z") + std::string(69, ' '));
+}
+
 TEST(MapIoWriteTest, WritesToBothWritableExtensions) {
     // Both dispatch to the same CCP4 writer, so this is not a format test: it
     // is what shows the temporary carrying whichever extension it was given
