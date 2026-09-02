@@ -353,14 +353,20 @@ std::filesystem::path MakeTemporarySibling(const std::filesystem::path& dest) {
 /// *and* semicolon -- write_map validates the caller's text through that parser,
 /// and SymopBlockBytes emits one 80-byte CCP4 record per line this function
 /// hands back. Splitting on newlines alone accepts "x,y,z;-x,y,-z" as two
-/// operators and then writes it as a single record with an embedded semicolon,
-/// which no consumer that reads the fixed-width records literally can split.
+/// operators and then writes it as a single record with an embedded semicolon.
+/// A consumer that reads the fixed-width records literally gets one malformed
+/// operator out of that record, not two well-formed ones.
 ///
-/// Normalizing rather than refusing, because the semicolon spelling is what
-/// fc_density hands back and refusing it here alone would make the writer
-/// stricter than every other symop consumer in the library. The cost is that
-/// the spelling does not survive the round trip: a caller who writes "a;b"
-/// reads back "a\nb". The operator set does.
+/// Normalizing rather than refusing, because the semicolon spelling is one the
+/// library takes in, not one it emits. Both consumers checked accept it:
+/// SymOp::ParseAll splits on it, and fc_density documents its symops argument
+/// as accepting it, then consumes the string through ParseAll and returns a
+/// grid. No semicolon join exists under src/, include/, python/ or swig/;
+/// read_map joins with '\n'. Refusing the spelling here alone would therefore
+/// make the writer stricter than both of those consumers over a spelling
+/// nothing on those four paths produces. The cost is that the spelling does
+/// not survive the round trip: a caller who writes "a;b" reads back "a\nb".
+/// The operator set does.
 std::string CanonicalSymops(const std::string& symops) {
     std::string joined;
     std::size_t start = 0;
@@ -724,9 +730,11 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
                         "records this writer restores after OEWriteGrid cannot "
                         "be spliced into a compressed stream");
     }
-    // OEGetGridFileType wants the extension with no leading dot -- measured, a
-    // dot makes every extension read as UNDEFINED. It is already
-    // case-insensitive, so lowercasing here would be dead code.
+    // OEGetGridFileType wants the extension with no leading dot: over an
+    // eleven-spelling sweep of leading-dot forms every one read as UNDEFINED,
+    // ".ccp4" and ".mrc" among them, while "ccp4." read as CCP4. It is
+    // case-insensitive over the mixed-case spellings swept -- "ccpQ", "MAPX"
+    // and "MaPq" all read as CCP4 -- so lowercasing here would be dead code.
     std::string extension = std::filesystem::path(path).extension().string();
     if (!extension.empty()) {
         extension.erase(0, 1u);
@@ -748,8 +756,8 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
         // reading back when the fault was the extension.
         throw GridError("Cannot write '" + path +
                         "': this writer restores CCP4 header records after "
-                        "OEWriteGrid, so it writes only the CCP4 family -- "
-                        "'.ccp4', '.mrc' or '.map'");
+                        "OEWriteGrid, so the extension has to be one OpenEye "
+                        "maps to CCP4; write '.ccp4', '.mrc' or '.map'");
     }
 
     // Step 2: copy, and default the space group. Section 2.3 shows an unset

@@ -162,11 +162,19 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * the bound a guarantee instead of an observation about one toolkit version.
  *
  * @param path Destination. The format follows the extension, as OpenEye
- *        dispatches on it, and only the CCP4 family -- ".ccp4", ".mrc",
- *        ".map" -- is written: the header records this function restores after
- *        OEWriteGrid are at CCP4 offsets, so any other extension is rejected
- *        before anything is written. So is a compressed destination such as
- *        ".ccp4.gz", whose stream has no place to splice them.
+ *        dispatches on it, and this writer admits whatever OEGetGridFileType
+ *        maps to CCP4. In a thirty-spelling sweep that class was every
+ *        spelling whose first three characters are "ccp", "map" or "mrc",
+ *        compared case-insensitively, and nothing else: ".ccp4junk" and
+ *        ".mrcs" are admitted and written as CCP4 exactly as ".ccp4" is.
+ *        ".ccp4", ".mrc" and ".map" are the spellings this writer is tested
+ *        on, not the accepted set. An extension OpenEye maps elsewhere is
+ *        rejected before anything is written, because the header records this
+ *        function restores after OEWriteGrid are at CCP4 offsets; so is a
+ *        compressed destination such as ".ccp4.gz", whose stream has no place
+ *        to splice them. The extension is whatever std::filesystem reports, so
+ *        a filename that is nothing but an extension -- ".ccp4" -- has none
+ *        and is refused.
  * @param grid Grid to write.
  * @param symops Symmetry text in the form read_map returns: one triplet per
  *        line, newline-separated. Empty writes no block. The semicolon
