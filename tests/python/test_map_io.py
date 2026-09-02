@@ -28,6 +28,13 @@ from openeye import oegrid
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "mapq"
 _DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
+_CCP4_HEADER_BYTES = 1024
+_SYMOP_RECORD_BYTES = 80
+
+# Every malformed shape the C++ parser pin covers, from
+# tests/cpp/test_map_io.cpp:551.
+_MALFORMED_SYMOPS = ["not a symop at all", "x,y", "x,y,z,w", "x,y,q*z"]
+
 
 def test_read_map_returns_a_native_grid_and_symop_text():
     result = read_map(_ASSET_DIR / "1d26_2fofc.ccp4")
@@ -113,5 +120,22 @@ def test_read_map_grid_survives_repeated_attribute_access():
     assert first.GetSize() == 9261
 
 
-def test_symop_error_is_still_the_typed_exception():
+@pytest.mark.parametrize("record", _MALFORMED_SYMOPS)
+def test_read_map_raises_the_typed_symop_error(tmp_path, record):
+    # The hierarchy check alone cannot show that SymOpError survives the SWIG
+    # boundary: it holds whether or not read_map can raise and marshal one.
+    # Overwriting record 1 of 1d26's eight-record block leaves the file length
+    # and every header word untouched, so the symop parser is the only thing
+    # that can reject the file -- and record 0 stays valid, so this pins the
+    # parser rejecting a record rather than rejecting the block wholesale.
     assert issubclass(SymOpError, maptitude.MaptitudeError)
+
+    raw = bytearray((_ASSET_DIR / "1d26_2fofc.ccp4").read_bytes())
+    start = _CCP4_HEADER_BYTES + _SYMOP_RECORD_BYTES
+    raw[start:start + _SYMOP_RECORD_BYTES] = record.encode().ljust(
+        _SYMOP_RECORD_BYTES, b" ")
+    variant = tmp_path / "malformed_symop.ccp4"
+    variant.write_bytes(bytes(raw))
+
+    with pytest.raises(SymOpError):
+        read_map(variant)
