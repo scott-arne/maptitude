@@ -291,15 +291,23 @@ bool IsCompressedPath(const std::string& path) {
 /// which would otherwise be silently truncated and could collide again on the
 /// next call if std::random_device degrades to a deterministic sequence. It
 /// does not close a TOCTOU race against a concurrent writer; nothing short of
-/// an atomic create would, and mkstemps -- the obvious way to get one -- costs
-/// a permissions regression. Measured on this machine under umask 0022:
-/// mkstemps creates its file at mode 0600, rename carries that 0600 onto the
-/// destination, and an ordinary create lands at 0644. So every map written
-/// through mkstemps would come out readable only by the user who wrote it.
-/// Two concurrent write_map calls to the same destination are already
-/// unsafe at the rename regardless of how the temporary is named, so the
-/// reservation would buy nothing the caller can rely on and would cost a
-/// visible permissions regression.
+/// an atomic create would, and mkstemps -- the obvious way to get one -- moves
+/// the permissions rather than fixing them.
+///
+/// Neither scheme preserves the destination's mode, because the rename replaces
+/// its inode either way. Measured on this machine under umask 0022: an ordinary
+/// create lands at 0644, mkstemps at 0600, and the rename carries whichever one
+/// onto the destination. So mkstemps would publish every map readable only by
+/// its writer, while the scheme used here silently widens a destination the
+/// caller had narrowed -- 0600 back to 0644 on rewrite. Trading a visible
+/// regression on every write for an invisible one on rewrites of a restricted
+/// file is the choice made, not a permissions-preserving option that mkstemps
+/// lacks; the caller-facing consequences are stated on write_map.
+///
+/// The race itself stays open deliberately. Two concurrent write_map calls to
+/// the same destination are already unsafe at the rename regardless of how the
+/// temporary is named, so a reservation would buy nothing the caller can rely
+/// on.
 std::filesystem::path MakeTemporarySibling(const std::filesystem::path& dest) {
     constexpr int MAX_ATTEMPTS = 8;
     std::random_device entropy;
@@ -383,21 +391,26 @@ std::string SymopBlockBytes(const std::string& canonical) {
 /// ReadRawHeader stops at the header, which is all the read path needs; the
 /// verify step needs the block itself, so it gets its own reader rather than
 /// widening that one and making every read_map call carry the extra bytes.
+///
+/// @p destination is the caller's path, named in failures instead of @p file:
+/// @p file is the randomly named hidden sibling, which the caller never chose
+/// and whose destructor has removed it by the time the message is read.
 std::string ReadSymopBlock(const std::filesystem::path& file,
-                           const std::size_t count) {
+                           const std::size_t count,
+                           const std::string& destination) {
     std::string block(count, '\0');
     if (count == 0u) {
         return block;
     }
     std::ifstream in(file, std::ios::binary);
     if (!in) {
-        throw GridError("Cannot reopen '" + file.string() +
+        throw GridError("Cannot reopen the map written for '" + destination +
                         "' to verify its symmetry block");
     }
     in.seekg(static_cast<std::streamoff>(CCP4_HEADER_BYTES));
     in.read(&block[0], static_cast<std::streamsize>(count));
     if (in.gcount() != static_cast<std::streamsize>(count)) {
-        throw GridError("'" + file.string() + "' declares " +
+        throw GridError("The map written for '" + destination + "' declares " +
                         std::to_string(count) +
                         " bytes of symmetry records but holds fewer");
     }
@@ -421,21 +434,25 @@ void SetRawWord(std::string& bytes, const std::size_t word,
 /// patch an earlier draft applied here as a no-op on whole-cell grids and a
 /// silent corruption on a sub-box, where it preserves dim, cell and voxel
 /// count while moving the spacing and the grid's position.
+///
+/// @p destination is the caller's path, named in failures instead of @p file,
+/// for the reason given on ReadSymopBlock.
 void PatchHeaderRecords(const std::filesystem::path& file,
                         const std::string& canonical_symops,
-                        const OESystem::OESkewGrid& grid) {
+                        const OESystem::OESkewGrid& grid,
+                        const std::string& destination) {
     std::string bytes;
     {
         std::ifstream in(file, std::ios::binary);
         if (!in) {
-            throw GridError("Cannot reopen '" + file.string() +
-                            "' to restore its header records");
+            throw GridError("Cannot reopen the map written for '" +
+                            destination + "' to restore its header records");
         }
         bytes.assign(std::istreambuf_iterator<char>(in),
                      std::istreambuf_iterator<char>());
     }
     if (bytes.size() < CCP4_HEADER_BYTES) {
-        throw GridError("OEWriteGrid produced '" + file.string() +
+        throw GridError("OEWriteGrid produced a map for '" + destination +
                         "' with a header shorter than " +
                         std::to_string(CCP4_HEADER_BYTES) + " bytes");
     }
@@ -459,7 +476,7 @@ void PatchHeaderRecords(const std::filesystem::path& file,
     if (existing_nsymbt < 0 ||
         static_cast<std::size_t>(existing_nsymbt) >
             bytes.size() - CCP4_HEADER_BYTES) {
-        throw GridError("OEWriteGrid produced '" + file.string() +
+        throw GridError("OEWriteGrid produced a map for '" + destination +
                         "' with an unusable NSYMBT of " +
                         std::to_string(existing_nsymbt));
     }
@@ -472,7 +489,7 @@ void PatchHeaderRecords(const std::filesystem::path& file,
     float node_x = 0.0f, node_y = 0.0f, node_z = 0.0f;
     if (!grid.ElementToSpatialCoord(0u, node_x, node_y, node_z)) {
         throw GridError("Cannot read the position of element 0 to write the "
-                        "ORIGIN record of '" + file.string() + "'");
+                        "ORIGIN record of the map for '" + destination + "'");
     }
     if (node_x != 0.0f || node_y != 0.0f || node_z != 0.0f) {
         put_float(WORD_ORIGIN + 0u, node_x);
@@ -482,13 +499,14 @@ void PatchHeaderRecords(const std::filesystem::path& file,
 
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
     if (!out) {
-        throw GridError("Cannot rewrite '" + file.string() +
+        throw GridError("Cannot rewrite the map written for '" + destination +
                         "' with its restored header records");
     }
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     out.close();
     if (!out) {
-        throw GridError("Failed while rewriting '" + file.string() + "'");
+        throw GridError("Failed while rewriting the map written for '" +
+                        destination + "'");
     }
 }
 
@@ -700,12 +718,25 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
 
     // Step 4.
     const std::string canonical = CanonicalSymops(symops);
-    PatchHeaderRecords(temporary.Path(), canonical, out);
+    PatchHeaderRecords(temporary.Path(), canonical, out, path);
 
     // Step 5: verify against a read_map re-read. The round trip is closed
     // under read_map, not under OEReadGrid: the bare reader never consults
     // ORIGIN, so a map written with a nonzero one lands wrong by construction.
-    const MapFile back = read_map(temporary.Path().string());
+    //
+    // read_map names the file it was handed, which here is the temporary, so
+    // its GridErrors are re-raised against the destination. The specific reason
+    // is dropped rather than quoted, because every one of them embeds that
+    // path. Every reason in this class means the same thing to a caller: the
+    // bytes this writer just produced do not read back as a map.
+    MapFile back;
+    try {
+        back = read_map(temporary.Path().string());
+    } catch (const GridError&) {
+        throw GridError("Refusing to write '" + path +
+                        "': the map written for it does not read back as a "
+                        "map, so it cannot be verified");
+    }
     const std::string difference = compare_written_map(out, *back.grid);
     if (!difference.empty()) {
         throw GridError("Refusing to write '" + path +
@@ -722,7 +753,16 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
     // unconditionally: gating it on a nonzero node 0 would gate the NSYMBT
     // check with it. The symop check below opens the file a second time for the
     // block itself, which starts past what ReadRawHeader returns.
-    const std::string raw = ReadRawHeader(temporary.Path().string());
+    std::string raw;
+    try {
+        raw = ReadRawHeader(temporary.Path().string());
+    } catch (const GridError&) {
+        // Same reason as the read_map above: the two failures ReadRawHeader
+        // reports both quote the temporary's path.
+        throw GridError("Refusing to write '" + path +
+                        "': the header of the map written for it cannot be "
+                        "re-read");
+    }
     const MapHeader written = ParseHeader(raw);
 
     // back.symops above compares the parsed text. This compares the bytes:
@@ -736,7 +776,7 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
                         "block is " + std::to_string(expected_block.size()) +
                         " bytes");
     }
-    if (ReadSymopBlock(temporary.Path(), expected_block.size()) !=
+    if (ReadSymopBlock(temporary.Path(), expected_block.size(), path) !=
         expected_block) {
         throw GridError("Refusing to write '" + path +
                         "': the symmetry records on disk are not the "
