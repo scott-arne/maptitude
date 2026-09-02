@@ -1136,6 +1136,36 @@ TEST(MapIoWriteTest, RefusesACompressedDestination) {
     EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
 }
 
+TEST(MapIoWriteTest, RefusesAGridFormatOpenEyeWritesButThisPathCannotPatch) {
+    // '.grd' is a format OpenEye writes -- OEGetGridFileType("grd") is GRD and
+    // OEIsWriteableGrid accepts it -- but not one whose header holds the CCP4
+    // records this path splices back in. Under the old writeability gate it got
+    // as far as OEWriteGrid and PatchHeaderRecords before the verify refused
+    // it, and the refusal blamed the map for not reading back rather than the
+    // extension for selecting a format this writer cannot patch. Same shape as
+    // RefusesACompressedDestination: refuse up front, name the real reason.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath out(".grd");
+    try {
+        write_map(out.Str(), *source.grid, source.symops);
+        FAIL() << "expected GridError: a GRD destination cannot carry the CCP4 "
+                  "records this path patches in";
+    } catch (const GridError& error) {
+        const std::string message(error.what());
+        EXPECT_NE(message.find("CCP4"), std::string::npos)
+            << "the message does not name the format family this writer "
+               "produces: " << message;
+        EXPECT_EQ(message.find("does not read back"), std::string::npos)
+            << "the message still blames the map for not reading back: "
+            << message;
+    }
+
+    std::ifstream probe(out.Str(), std::ios::binary);
+    EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
+    EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
+        << "a refused write left its hidden temporary behind";
+}
+
 TEST(MapIoWriteTest, RefusesASymopRecordWiderThanTheOnDiskField) {
     // The on-disk record is a fixed 80 bytes and the block builder pads to it
     // with resize(), which truncates just as readily. Past 80 the record lost

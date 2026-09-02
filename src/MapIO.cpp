@@ -724,14 +724,32 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
                         "records this writer restores after OEWriteGrid cannot "
                         "be spliced into a compressed stream");
     }
-    if (!OESystem::OEIsWriteableGrid(path)) {
+    // OEGetGridFileType wants the extension with no leading dot -- measured, a
+    // dot makes every extension read as UNDEFINED. It is already
+    // case-insensitive, so lowercasing here would be dead code.
+    std::string extension = std::filesystem::path(path).extension().string();
+    if (!extension.empty()) {
+        extension.erase(0, 1u);
+    }
+    if (OESystem::OEGetGridFileType(extension.c_str()) !=
+        OESystem::OEGridFileType::CCP4) {
         // Section 2.4 measures that OEWriteGrid on an extension OpenEye does
         // not recognize prints a fatal error and exits rather than returning
-        // false. This check is the only thing between the caller and a killed
-        // process; once OEWriteGrid has the path there is nothing to catch.
+        // false. This check is still the only thing between the caller and a
+        // killed process; once OEWriteGrid has the path there is nothing to
+        // catch. UNDEFINED is not CCP4, so it covers that case as the old
+        // OEIsWriteableGrid test did.
+        //
+        // It is narrower than that test, deliberately. A format OpenEye writes
+        // but this path cannot patch -- ".grd" is the measured one -- passed
+        // the old gate, so OEWriteGrid produced a GRD file and
+        // PatchHeaderRecords spliced CCP4-offset bytes into it before the
+        // verify refused. The refusal was atomic, but it blamed the map for not
+        // reading back when the fault was the extension.
         throw GridError("Cannot write '" + path +
-                        "': OpenEye writes no grid format with this "
-                        "file extension");
+                        "': this writer restores CCP4 header records after "
+                        "OEWriteGrid, so it writes only the CCP4 family -- "
+                        "'.ccp4', '.mrc' or '.map'");
     }
 
     // Step 2: copy, and default the space group. Section 2.3 shows an unset

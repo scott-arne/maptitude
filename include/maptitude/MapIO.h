@@ -162,18 +162,19 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * the bound a guarantee instead of an observation about one toolkit version.
  *
  * @param path Destination. The format follows the extension, as OpenEye
- *        dispatches on it; an extension OpenEye does not recognize is
- *        rejected before anything is written, as is a compressed destination
- *        such as ".ccp4.gz", whose stream has no place to splice the header
- *        records this function restores.
+ *        dispatches on it, and only the CCP4 family -- ".ccp4", ".mrc",
+ *        ".map" -- is written: the header records this function restores after
+ *        OEWriteGrid are at CCP4 offsets, so any other extension is rejected
+ *        before anything is written. So is a compressed destination such as
+ *        ".ccp4.gz", whose stream has no place to splice them.
  * @param grid Grid to write.
  * @param symops Symmetry text in the form read_map returns: one triplet per
  *        line, newline-separated. Empty writes no block. The semicolon
  *        separator SymOp::ParseAll also accepts is normalized to a newline, so
  *        the operator set survives the round trip but that spelling does not:
  *        writing "a;b" reads back as "a\nb".
- * @throws GridError if @p path's extension is not a grid format OpenEye
- *         writes or names a compressed file, if the write fails, if the re-read
+ * @throws GridError if @p path's extension is not one OpenEye maps to the CCP4
+ *         format or names a compressed file, if the write fails, if the re-read
  *         map differs from the grid in dimensions, cell, per-axis spacing,
  *         node 0, or any voxel, if either the grid or the re-read map has an
  *         axis with fewer than two nodes, so its spacing is undefined, if its
