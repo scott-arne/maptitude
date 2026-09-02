@@ -1549,8 +1549,9 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
         by ``os.fspath``.
     :raises CellError: If the file's sampling is not axis-aligned. maptitude
         requires an orthorhombic cell; a skewed one is rejected on read.
-    :raises GridError: If the file cannot be read or its header cannot be
-        parsed.
+    :raises GridError: If the file cannot be read, its header cannot be
+        parsed, or the copy that returns the grid to Python did not preserve
+        the source geometry -- a degenerate cell edge reaches this.
     :raises SymOpError: If the symmetry block is present and does not parse.
 
     Example::

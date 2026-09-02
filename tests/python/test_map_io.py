@@ -120,6 +120,34 @@ def test_read_map_rejects_a_skewed_cell_with_a_typed_error(tmp_path):
     assert cell.c == pytest.approx(50.0, abs=1e-4)
 
 
+def test_read_map_reports_a_failed_geometry_copy_as_grid_error(tmp_path):
+    # The other arm of the branch the skewed-cell test above drives.  Round 4
+    # made the copy-validation block choose between CellError and GridError;
+    # this pins the choice rather than one side of it.  Before round 4 both
+    # arms arrived as builtins.RuntimeError.
+    #
+    # A zero cell edge is what reaches this arm: the copy succeeds, then
+    # same_grid_geometry cannot derive a node interval from the degenerate
+    # axis.  OpenEye prints "SetXMid unable to handle NaN" warnings to stderr
+    # on this input; they come from the toolkit's own setters and are not a
+    # failure.
+    raw = bytearray((_ASSET_DIR / "1d26_2fofc.ccp4").read_bytes())
+    struct.pack_into("<f", raw, (11 - 1) * 4, 0.0)
+    degenerate = tmp_path / "a_zero.ccp4"
+    degenerate.write_bytes(bytes(raw))
+
+    with pytest.raises(GridError) as caught:
+        read_map(degenerate)
+    assert "Grid geometry copy failed" in str(caught.value)
+    # The discriminating assertions.  CellError is a sibling of GridError, not
+    # a parent, so a change that routed every copy failure to CellError would
+    # still satisfy `pytest.raises(MaptitudeError)` -- but not this.  And
+    # GridError is not a RuntimeError subclass, so this also fails if the
+    # pre-round-4 behaviour comes back.
+    assert not isinstance(caught.value, CellError)
+    assert not isinstance(caught.value, RuntimeError)
+
+
 def test_tiebreak_selects_which_record_wins(tmp_path):
     # Both records must be live for the tiebreak to have anything to break.
     # test_map.ccp4 carries NxSTART (-10, -10, -10), which the reader places at

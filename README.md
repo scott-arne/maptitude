@@ -282,13 +282,13 @@ in the structure or map it was given -- they are listed in the second table, and
 |------------------|----------------------------------------------------------------------|
 | `MaptitudeError` | Base class. Never raised directly.                                   |
 | `StructureError` | The molecule is unsuitable: no heavy atoms, missing coordinates.     |
-| `GridError`      | Grid geometry is wrong, a required grid is missing, or a numeric argument is outside its usable range. |
+| `GridError`      | Grid geometry is wrong, a required grid is missing, a numeric argument is outside its usable range, or the copy that returns a grid to Python did not preserve the source geometry. |
 | `SymOpError`     | A symmetry-operator string cannot be parsed.                         |
-| `CellError`      | Unit-cell parameters are invalid or describe an unsupported lattice. |
+| `CellError`      | Unit-cell parameters are invalid or describe an unsupported lattice, including a map file whose sampling is not axis-aligned. |
 
 | Exception      | Raised when                                                                       |
 |----------------|------------------------------------------------------------------------------------|
-| `RuntimeError` | An option value is out of range -- every option setter validates in C++ and its `std::invalid_argument` surfaces here -- or the copy that returns a grid to Python did not preserve the source geometry. |
+| `RuntimeError` | An option value is out of range -- every option setter validates in C++ and its `std::invalid_argument` surfaces here. |
 | `ValueError`   | A string argument the Python wrappers resolve against a table names nothing: `atom_radius="vdw"`, or `atom_radius="adaptive"` to `rscc`. |
 | `TypeError`    | An argument has the wrong type: a `mask` that is not an OpenEye atom predicate, an `options` object of the wrong class, a `symops` that is not a string or a sequence of `SymOp`. |
 | `MemoryError`  | The copy that returns a grid to Python could not be allocated. |
