@@ -628,6 +628,39 @@ std::string compare_written_map(const OESystem::OESkewGrid& expected,
     return std::string();
 }
 
+std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
+                                      const OESystem::OESkewGrid& by_nxstart) {
+    const GridParams origin_gp = get_grid_params(by_origin);
+    const GridParams nxstart_gp = get_grid_params(by_nxstart);
+    const struct {
+        const char* label;
+        double spacing;
+        double from_origin;
+        double from_nxstart;
+    } axes[] = {
+        {"node 0 x", origin_gp.x_spacing, origin_gp.x_origin,
+         nxstart_gp.x_origin},
+        {"node 0 y", origin_gp.y_spacing, origin_gp.y_origin,
+         nxstart_gp.y_origin},
+        {"node 0 z", origin_gp.z_spacing, origin_gp.z_origin,
+         nxstart_gp.z_origin},
+    };
+    for (const auto& axis : axes) {
+        const double interval = std::fabs(axis.spacing);
+        const double divergence = std::fabs(axis.from_origin -
+                                            axis.from_nxstart);
+        if (divergence > 0.5 * interval * (1.0 + MAP_PLACEMENT_SLACK)) {
+            std::ostringstream out;
+            out << axis.label << " differs between the header's two placement "
+                << "records by " << divergence << " A, more than half the "
+                << interval << " A node interval: ORIGIN puts it at "
+                << axis.from_origin << ", NxSTART at " << axis.from_nxstart;
+            return out.str();
+        }
+    }
+    return std::string();
+}
+
 void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
                const std::string& symops) {
     // Step 1: validate both arguments before touching the filesystem, so a bad
@@ -731,6 +764,29 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
                             "': the ORIGIN record read back from disk does "
                             "not match the grid's node 0");
         }
+    }
+
+    // The verify above re-read with the default ORIGIN tiebreak, which discards
+    // NxSTART whenever ORIGIN is nonzero -- so nothing so far has looked at
+    // NxSTART on precisely the maps where it can be wrong. read_map under
+    // OriginSource::NXSTART is public API, and it reads that record.
+    //
+    // This check does not fire on anything measured: OpenEye derives NCSTART by
+    // rounding ORIGIN/spacing to the nearest node, which bounds the two
+    // placements half a node interval apart, and the shipped fixtures stay well
+    // inside that. It is here to hold the bound as a guarantee rather than as
+    // an observation about one toolkit version. The failures it would catch are
+    // a toolkit that truncates where it rounds, an axis permutation pairing one
+    // axis's NCSTART with another's spacing, and -- the case worth the cost --
+    // a toolkit that stops emitting NCSTART, which would misplace a written EM
+    // map by its whole origin offset for every NXSTART reader with nothing else
+    // noticing.
+    const MapFile by_nxstart =
+        read_map(temporary.Path().string(), OriginSource::NXSTART);
+    const std::string placement =
+        compare_placement_records(*back.grid, *by_nxstart.grid);
+    if (!placement.empty()) {
+        throw GridError("Refusing to write '" + path + "': " + placement);
     }
 
     // Step 6: the only step that modifies the destination, and it runs only

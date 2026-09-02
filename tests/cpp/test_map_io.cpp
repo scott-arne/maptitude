@@ -1152,6 +1152,34 @@ TEST(MapIoWriteTest, RoundTripsAGridCarryingANaNVoxel) {
         << "the NaN did not survive the round trip";
 }
 
+TEST(MapIoWriteTest, WritesAnEmMapWhoseTwoPlacementRecordsAgree) {
+    // The written header states node 0 twice, and the verify re-reads with the
+    // default ORIGIN tiebreak, which discards NxSTART on exactly the maps whose
+    // NxSTART can be wrong. This is the only shipped fixture with an off-lattice
+    // node 0, so it is the only one where the two records can come apart.
+    const MapFile source = read_map(AssetPath("390_emd_30342_A_z4.mrc"));
+    ScratchPath out(".mrc");
+    write_map(out.Str(), *source.grid, source.symops);
+
+    const MapFile by_origin = read_map(out.Str(), OriginSource::ORIGIN_RECORD);
+    const MapFile by_nxstart = read_map(out.Str(), OriginSource::NXSTART);
+    EXPECT_EQ(compare_placement_records(*by_origin.grid, *by_nxstart.grid), "");
+
+    // Without this the agreement above would also hold on a file that carried
+    // no NxSTART at all, or whose two reads were identical for some unrelated
+    // reason -- neither of which is what the check is meant to establish.
+    const GridParams origin_gp = get_grid_params(*by_origin.grid);
+    const GridParams nxstart_gp = get_grid_params(*by_nxstart.grid);
+    const double divergence =
+        std::fabs(origin_gp.x_origin - nxstart_gp.x_origin);
+    EXPECT_GT(divergence, 0.0)
+        << "the two reads place node 0 identically, so this file cannot "
+           "distinguish a correct NxSTART from an absent one";
+    EXPECT_LT(divergence, 0.5 * origin_gp.x_spacing)
+        << "the two placement records are further apart than the rounding an "
+           "integer node index forces";
+}
+
 namespace {
 
 /// A small grid the seam tests mutate one quantity at a time.
@@ -1230,6 +1258,47 @@ TEST(MapIoVerifySeamTest, NamesAVoxelDifference) {
                                  static_cast<unsigned int>(values.size())));
     const std::string message = compare_written_map(expected, actual);
     EXPECT_NE(message.find("voxel"), std::string::npos) << message;
+}
+
+TEST(MapIoPlacementSeamTest, AgreesWhenBothRecordsPlaceNodeZeroAlike) {
+    const OESystem::OESkewGrid grid = SeamGrid();
+    EXPECT_EQ(compare_placement_records(grid, grid), "");
+}
+
+TEST(MapIoPlacementSeamTest, AcceptsADisagreementOfExactlyHalfANodeInterval) {
+    // The bound is inclusive. Measured at spacing 0.5: a node 0 of 2.75 makes
+    // OpenEye round away from zero to NCSTART 6, putting the NxSTART placement
+    // exactly half a node interval from the ORIGIN one -- and that write is
+    // correct. A >= comparison would refuse it.
+    const OESystem::OESkewGrid by_origin = SeamGrid();
+    OESystem::OESkewGrid by_nxstart = SeamGrid();
+    ASSERT_TRUE(by_nxstart.SetMid(0.25f, 0.0f, 0.0f));
+
+    const GridParams origin_gp = get_grid_params(by_origin);
+    const GridParams nxstart_gp = get_grid_params(by_nxstart);
+    ASSERT_NEAR(std::fabs(origin_gp.x_origin - nxstart_gp.x_origin),
+                0.5 * origin_gp.x_spacing, 1e-6)
+        << "the shift is no longer exactly half a node interval, so this pair "
+           "no longer sits on the bound it is meant to pin";
+
+    EXPECT_EQ(compare_placement_records(by_origin, by_nxstart), "");
+}
+
+TEST(MapIoPlacementSeamTest, NamesAnAxisWhoseRecordsPlaceNodeZeroApart) {
+    const OESystem::OESkewGrid by_origin = SeamGrid();
+    OESystem::OESkewGrid by_nxstart = SeamGrid();
+    ASSERT_TRUE(by_nxstart.SetMid(1.0f, 0.0f, 0.0f));
+
+    const GridParams origin_gp = get_grid_params(by_origin);
+    const GridParams nxstart_gp = get_grid_params(by_nxstart);
+    ASSERT_NEAR(std::fabs(origin_gp.x_origin - nxstart_gp.x_origin) /
+                    origin_gp.x_spacing,
+                2.0, 1e-6)
+        << "the disagreement is no longer about two node intervals";
+
+    const std::string message =
+        compare_placement_records(by_origin, by_nxstart);
+    EXPECT_NE(message.find("node 0 x"), std::string::npos) << message;
 }
 
 TEST(MapIoVerifySeamTest, TreatsTwoNaNVoxelsAsAgreeing) {
