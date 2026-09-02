@@ -16,9 +16,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <unistd.h>
@@ -280,6 +282,58 @@ std::string ReadBytesAt(const std::string& path, const std::size_t offset,
         << path << " holds fewer than " << (offset + count) << " bytes";
     return bytes;
 }
+
+/// Count the files beside @p destination whose names have the shape write_map's
+/// temporary takes: "." + stem + "-" + <hex> + extension, in the destination's
+/// own directory.
+///
+/// The hex comes from std::random_device, so the name cannot be predicted and
+/// the shape has to be matched instead. Enumerating the parent and requiring it
+/// empty would not do: TempDir() is shared with the other scratch helpers in
+/// this file, and under `ctest -j 8` with other processes' files as well. The
+/// stem carries this process's pid and this ScratchPath's counter, so the
+/// pattern is narrow enough to be unaffected by any of them.
+std::size_t CountTemporarySiblings(const std::string& destination) {
+    const std::filesystem::path dest(destination);
+    const std::string prefix = "." + dest.stem().string() + "-";
+    const std::string suffix = dest.extension().string();
+
+    std::error_code error;
+    std::filesystem::directory_iterator entries(dest.parent_path(), error);
+    EXPECT_FALSE(error) << "cannot enumerate " << dest.parent_path().string()
+                        << ": " << error.message();
+
+    std::size_t found = 0;
+    for (const std::filesystem::directory_entry& entry : entries) {
+        const std::string name = entry.path().filename().string();
+        if (name.size() > prefix.size() + suffix.size() &&
+            name.compare(0, prefix.size(), prefix) == 0 &&
+            name.compare(name.size() - suffix.size(), suffix.size(), suffix) ==
+                0) {
+            ++found;
+        }
+    }
+    return found;
+}
+
+/// A file with the name shape CountTemporarySiblings looks for, planted beside
+/// a destination so a test can show that counter is capable of seeing one.
+class DecoySibling {
+public:
+    explicit DecoySibling(const std::string& destination) {
+        const std::filesystem::path dest(destination);
+        path_ = (dest.parent_path() / ("." + dest.stem().string() + "-decoy" +
+                                       dest.extension().string()))
+                    .string();
+        std::ofstream out(path_, std::ios::binary);
+        out << "decoy";
+    }
+    ~DecoySibling() { std::remove(path_.c_str()); }
+    const std::string& Str() const { return path_; }
+
+private:
+    std::string path_;
+};
 
 }  // namespace
 
@@ -909,6 +963,38 @@ TEST(MapIoWriteTest, AFailedWriteLeavesTheDestinationAlone) {
     const MapFile after = read_map(out.Str());
     EXPECT_EQ(compare_written_map(*before.grid, *after.grid), "");
     EXPECT_EQ(after.symops, before.symops);
+}
+
+TEST(MapIoWriteTest, ARefusedWriteLeavesNoHiddenTemporaryBehind) {
+    // The two refusal cases that reach the verify both assert on the
+    // destination, which is not where the temporary is: write_map names it as a
+    // hidden sibling in the same directory. So a TemporaryFile destructor that
+    // stopped removing it would leak one file per refused write with every
+    // other case in this file still green.
+    //
+    // Measured, rather than argued: neutering that destructor leaves MapIo at
+    // 38/38 and two files behind in TempDir(), one per test process that threw
+    // after the temporary was created. This case is the only thing that sees
+    // it.
+    OESystem::OESkewGrid doomed = MakeEmptyGrid(5.0, 0.5);
+    ScratchPath out(".ccp4");
+
+    // A counter that reports zero because it is pointed at the wrong directory,
+    // or because it matches the wrong name shape, is indistinguishable from one
+    // reporting a genuine absence. Show it can see a file of exactly the shape
+    // and in exactly the place it is about to report the absence of.
+    {
+        const DecoySibling decoy(out.Str());
+        ASSERT_EQ(CountTemporarySiblings(out.Str()), 1u)
+            << "the sibling probe cannot see " << decoy.Str()
+            << ", so its zero below would say nothing";
+    }
+    ASSERT_EQ(CountTemporarySiblings(out.Str()), 0u)
+        << "the decoy outlived its scope, so the count below starts dirty";
+
+    EXPECT_THROW(write_map(out.Str(), doomed), GridError);
+    EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
+        << "a refused write left its temporary beside " << out.Str();
 }
 
 TEST(MapIoWriteTest, RoundTripsAPermutedAxisOrder) {
