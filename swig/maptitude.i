@@ -19,6 +19,7 @@
 #include "maptitude/DensityCalculator.h"
 #include "maptitude/Metric.h"
 #include "maptitude/GridOps.h"
+#include "maptitude/MapIO.h"
 #include "maptitude/SpatialIndex.h"
 
 #include <oechem.h>
@@ -660,6 +661,12 @@ enum class MapOp {
     MAX
 };
 
+/// Which header record wins when both encode a nonzero origin.
+enum class OriginSource {
+    ORIGIN_RECORD,
+    NXSTART
+};
+
 // ============================================================================
 // Residue struct
 // ============================================================================
@@ -976,6 +983,30 @@ DensityScoreResult coverage(
 // ============================================================================
 // Grid operations
 // ============================================================================
+%feature("novaluewrapper") Maptitude::MapFile;
+
+%typemap(out) Maptitude::MapFile {
+    /* $1.grid is a unique_ptr; release it into the helper, which takes
+       ownership and deletes the C++ grid after copy-assigning it into a
+       Python-owned OESkewGrid. */
+    PyObject* grid_obj = _maptitude_wrap_as_oe_skew_grid($1.grid.release());
+    if (!grid_obj) SWIG_fail;
+    PyObject* symops_obj = PyUnicode_FromStringAndSize(
+        $1.symops.data(), (Py_ssize_t)$1.symops.size());
+    if (!symops_obj) {
+        Py_DECREF(grid_obj);
+        SWIG_fail;
+    }
+    $result = PyTuple_New(2);
+    if (!$result) {
+        Py_DECREF(grid_obj);
+        Py_DECREF(symops_obj);
+        SWIG_fail;
+    }
+    PyTuple_SET_ITEM($result, 0, grid_obj);
+    PyTuple_SET_ITEM($result, 1, symops_obj);
+}
+
 void scale_map(OESystem::OESkewGrid& grid, double factor);
 OESystem::OESkewGrid* combine_maps(
     const OESystem::OESkewGrid& lhs,
@@ -989,6 +1020,11 @@ OESystem::OESkewGrid* wrap_and_pad_grid(
     OEChem::OEMolBase& mol,
     double cell_a, double cell_b, double cell_c,
     double padding = 3.0);
+
+struct MapFile;
+
+MapFile read_map(const std::string& path,
+                 OriginSource tiebreak = OriginSource::ORIGIN_RECORD);
 
 }  // namespace Maptitude
 
@@ -1116,6 +1152,7 @@ _cpp_scale_map = scale_map
 _cpp_combine_maps = combine_maps
 _cpp_diff_to_calc = diff_to_calc
 _cpp_wrap_and_pad_grid = wrap_and_pad_grid
+_cpp_read_map = read_map
 
 
 def _lookup_atom_radius(metric, radius_map, name):
@@ -1439,6 +1476,58 @@ def diff_to_calc(obs_grid, diff_grid):
     :returns: New OESkewGrid with calculated density.
     """
     return _cpp_diff_to_calc(obs_grid, diff_grid)
+
+
+class MapFile(tuple):
+    """The contents of a map file: its density grid and its symmetry text.
+
+    A 2-tuple of ``(grid, symops)`` with the two members also reachable by
+    name, so ``result.grid`` and ``grid, symops = read_map(path)`` both work.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, grid, symops):
+        return tuple.__new__(cls, (grid, symops))
+
+    @property
+    def grid(self):
+        """The density carrier, an ``OESkewGrid`` at the file's origin."""
+        return self[0]
+
+    @property
+    def symops(self):
+        """Newline-separated triplets; ``""`` when the file carries none."""
+        return self[1]
+
+    def __repr__(self):
+        return "MapFile(grid={0!r}, symops={1!r})".format(self[0], self[1])
+
+
+def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
+    """Read a CCP4 or MRC map, preserving the records OEReadGrid discards.
+
+    OEReadGrid returns the payload, the cell and the space group but never
+    consults the MRC2000 ORIGIN record and does not expose the symmetry block.
+    This reads both and returns a grid already moved onto the file's origin.
+
+    :param path: Map file to read. Accepts anything ``str()`` renders as a path.
+    :param tiebreak: Which record wins when ORIGIN and NxSTART both encode a
+        nonzero, differing origin. One of ``OriginSource.ORIGIN_RECORD`` (the
+        default) or ``OriginSource.NXSTART``. Ignored when at most one is
+        nonzero.
+    :returns: A :class:`MapFile` of ``(grid, symops)``.
+    :raises GridError: If the file cannot be read or its header cannot be
+        parsed.
+    :raises SymOpError: If the symmetry block is present and does not parse.
+
+    Example::
+
+        result = read_map("2fofc.ccp4")
+        symops = parse_symops(result.symops) if result.symops else None
+    """
+    grid, symops = _cpp_read_map(str(path), tiebreak)
+    return MapFile(grid, symops)
 
 
 def wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0):
