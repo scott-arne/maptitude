@@ -566,72 +566,79 @@ _load_cached_extension_if_needed()
 _check_openeye_version()
 
 from .maptitude import (
-    AtomRadius_ADAPTIVE,
-    AtomRadius_BINNED,
-    AtomRadius_FIXED,
-    AtomRadius_SCALED,
-    CellError,
-    CoverageOptions,
-    # Scattering factor types and functions
-    CromerMannCoeffs,
-    # Classes
-    DensityCalculator,
-    DensityScoreResult,
-    # Container types
-    DoubleVector,
-    GridError,
-    GridParams,
-    MapFile,
-    MapOp_ADD,
-    MapOp_MAX,
-    MapOp_MIN,
-    MapOp_SUBTRACT,
-    # Exceptions
-    MaptitudeError,
-    OriginSource_NXSTART,
-    OriginSource_ORIGIN_RECORD,
-    QScoreOptions,
-    RadialSampling_ADAPTIVE,
-    RadialSampling_FIXED,
     # Core types
     Residue,
+    UnitCell,
+    SymOp,
+    QScoreOptions,
     RsccOptions,
     RsrOptions,
-    ScatteringFactorEntry,
-    StructureError,
-    SymOp,
-    SymOpError,
-    SymOpVector,
-    UnitCell,
+    CoverageOptions,
+    DensityScoreResult,
+    GridParams,
     UnitCellParams,
-    UnsignedIntVector,
-    combine_maps,
-    coverage,
-    diff_to_calc,
+    MapOp_ADD,
+    MapOp_SUBTRACT,
+    MapOp_MIN,
+    MapOp_MAX,
+    OriginSource_ORIGIN_RECORD,
+    OriginSource_NXSTART,
+    AtomRadius_FIXED,
+    AtomRadius_SCALED,
+    AtomRadius_BINNED,
+    AtomRadius_ADAPTIVE,
+    RadialSampling_FIXED,
+    RadialSampling_ADAPTIVE,
+
+    # Classes
+    DensityCalculator,
+
+    # Density scoring functions
+    rscc,
+    rsr,
+    qscore,
     ediam,
-    # Convenience functions
-    fc_density,
-    get_atom_grid_points,
+    coverage,
+
     # Grid utility functions
     get_grid_params,
-    get_scattering_factor_table,
-    get_scattering_factors,
     get_unit_cell,
     grid_contains,
+    same_grid_geometry,
     interpolate_density,
     interpolate_density_batch,
     interpolate_density_periodic,
     interpolate_density_periodic_batch,
+    get_atom_grid_points,
+    scale_map,
+    combine_maps,
+    diff_to_calc,
+    wrap_and_pad_grid,
+
+    # Scattering factor types and functions
+    CromerMannCoeffs,
+    ScatteringFactorEntry,
+    get_scattering_factors,
+    get_scattering_factor_table,
+
+    # Convenience functions
+    fc_density,
     parse_symop,
     parse_symops,
-    qscore,
+    MapFile,
     read_map,
-    # Density scoring functions
-    rscc,
-    rsr,
-    same_grid_geometry,
-    scale_map,
-    wrap_and_pad_grid,
+
+    # Container types
+    DoubleVector,
+    UnsignedIntVector,
+    SymOpVector,
+
+    # Exceptions
+    MaptitudeError,
+    StructureError,
+    GridError,
+    SymOpError,
+    CellError,
 )
 
 
