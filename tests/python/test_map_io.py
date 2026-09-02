@@ -71,10 +71,22 @@ def test_read_map_places_the_em_map_at_its_origin_record():
 
 
 def test_read_map_carries_the_unit_cell_on_the_grid():
-    cell = get_unit_cell(read_map(_ASSET_DIR / "3q9g_2fofc.ccp4").grid)
-    assert cell.a == pytest.approx(32.867, abs=1e-3)
-    assert cell.c == pytest.approx(55.413, abs=1e-3)
+    # 390_emd_30342_A_z4.mrc is the only shipped fixture whose three edge
+    # lengths differ, so a defect that copied b from a -- or defaulted any of
+    # the three -- goes red here where a tetragonal fixture would not.
+    #
+    # The three angle assertions are a completeness check, not a
+    # discriminating one: read_map rejects a nonorthogonal cell outright
+    # ("maptitude requires axis-aligned sampling"), so no fixture can carry a
+    # non-90 angle through this path and an implementation that hardcoded 90
+    # would pass.
+    cell = get_unit_cell(read_map(_ASSET_DIR / "390_emd_30342_A_z4.mrc").grid)
+    assert cell.a == pytest.approx(99.057, abs=1e-3)
+    assert cell.b == pytest.approx(90.153, abs=1e-3)
+    assert cell.c == pytest.approx(70.119, abs=1e-3)
     assert cell.alpha == pytest.approx(90.0, abs=1e-4)
+    assert cell.beta == pytest.approx(90.0, abs=1e-4)
+    assert cell.gamma == pytest.approx(90.0, abs=1e-4)
 
 
 def test_tiebreak_selects_which_record_wins(tmp_path):
@@ -109,10 +121,27 @@ def test_read_map_raises_grid_error_for_a_missing_file():
         read_map(_DATA_DIR / "no_such_map.ccp4")
 
 
+@pytest.mark.parametrize(
+    "bad", [None, 3, ["m.ccp4"], b"tests/data/test_map.ccp4"])
+def test_read_map_rejects_arguments_that_are_not_paths(bad):
+    # str(path) turned each of these into a filename and reported a missing
+    # file: None became "None", and the bytes case names a file that really
+    # exists but stringifies to "b'tests/data/test_map.ccp4'".  GridError is
+    # not a TypeError, so this goes red against the old body.  os.fspath
+    # rejects the first three; the std::string typemap rejects the bytes.
+    with pytest.raises(TypeError):
+        read_map(bad)
+
+
 def test_read_map_grid_survives_repeated_attribute_access():
-    # The out-typemap releases the heap grid into a Python-owned object exactly
-    # once, at call time. Two attribute reads return that same object; this
-    # pins that it is live and usable rather than a corpse.
+    # .grid is tuple slot 0, so both reads return the same object by
+    # construction.  What this pins is narrower: that the object the typemap
+    # built is a live, usable grid and that MapFile keeps it alive for the
+    # caller.  It says nothing about the released source grid's lifetime --
+    # _maptitude_wrap_as_oe_skew_grid copy-assigns into a separate
+    # Python-owned grid, so no Python-visible behaviour distinguishes a leaked
+    # source from a freed one.  Ownership is established by reading that
+    # helper, not here.
     result = read_map(_DATA_DIR / "test_map.ccp4")
     first = result.grid
     second = result.grid

@@ -1142,6 +1142,8 @@ sigma = property(GetSigma, SetSigma)
 // Module-level Python convenience functions
 // ============================================================================
 %pythoncode %{
+import os
+
 # Save references to SWIG-generated C++ wrappers before overriding
 _cpp_rscc = rscc
 _cpp_rsr = rsr
@@ -1511,12 +1513,15 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
     consults the MRC2000 ORIGIN record and does not expose the symmetry block.
     This reads both and returns a grid already moved onto the file's origin.
 
-    :param path: Map file to read. Accepts anything ``str()`` renders as a path.
+    :param path: Map file to read. A ``str`` or any :class:`os.PathLike`.
     :param tiebreak: Which record wins when ORIGIN and NxSTART both encode a
         nonzero, differing origin. One of ``OriginSource.ORIGIN_RECORD`` (the
         default) or ``OriginSource.NXSTART``. Ignored when at most one is
         nonzero.
     :returns: A :class:`MapFile` of ``(grid, symops)``.
+    :raises TypeError: If ``path`` is neither a ``str`` nor an :class:`os.PathLike`.
+        A ``bytes`` path is also rejected, by the ``std::string`` typemap rather than
+        by ``os.fspath``.
     :raises GridError: If the file cannot be read or its header cannot be
         parsed.
     :raises SymOpError: If the symmetry block is present and does not parse.
@@ -1526,7 +1531,7 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
         result = read_map("2fofc.ccp4")
         symops = parse_symops(result.symops) if result.symops else None
     """
-    grid, symops = _cpp_read_map(str(path), tiebreak)
+    grid, symops = _cpp_read_map(os.fspath(path), tiebreak)
     return MapFile(grid, symops)
 
 
