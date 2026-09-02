@@ -1131,6 +1131,8 @@ TEST(MapIoWriteTest, RefusesASymopRecordWiderThanTheOnDiskField) {
 
     std::ifstream probe(out.Str(), std::ios::binary);
     EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
+    EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
+        << "the SymOpError unwind left the hidden temporary behind";
 }
 
 TEST(MapIoWriteTest, RoundTripsAGridCarryingANaNVoxel) {
@@ -1178,6 +1180,46 @@ TEST(MapIoWriteTest, WritesAnEmMapWhoseTwoPlacementRecordsAgree) {
     EXPECT_LT(divergence, 0.5 * origin_gp.x_spacing)
         << "the two placement records are further apart than the rounding an "
            "integer node index forces";
+}
+
+TEST(MapIoWriteTest, AcceptsANonDyadicSpacingWhosePlacementLandsInsideTheSlack) {
+    // An even dim with SetMid(0,0,0) puts node 0 at a half-integer number of
+    // spacings whatever the spacing is, so the two placement records sit on the
+    // half-interval bound. With 47 divisions the spacing is not a dyadic
+    // rational, NCSTART * spacing is not exactly representable in float32, and
+    // the reconstructed NxSTART placement lands 9.4e-7 relative beyond the half.
+    // MAP_PLACEMENT_SLACK is what keeps this a correct write: with the slack at
+    // zero, write_map refuses this grid.
+    OESystem::OESkewGrid grid;
+    ASSERT_TRUE(grid.SetDim(20u, 20u, 20u));
+    ASSERT_TRUE(grid.SetUnitCell(20.0f, 20.0f, 20.0f, 90.0f, 90.0f, 90.0f,
+                                 47u, 47u, 47u));
+    ASSERT_TRUE(grid.SetMid(0.0f, 0.0f, 0.0f));
+    ASSERT_TRUE(grid.SetSpaceGroup(1u));
+    std::vector<float> values(grid.GetSize());
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        values[i] = static_cast<float>(i % 17u);
+    }
+    ASSERT_TRUE(grid.SetValues(values.data(),
+                               static_cast<unsigned int>(values.size())));
+
+    ScratchPath out(".ccp4");
+    write_map(out.Str(), grid);
+
+    // The premise, stated rather than assumed: this pair really does sit above
+    // the bare half-interval. Without it the acceptance above would pass for an
+    // implementation with no slack at all, which is the gap this test closes.
+    const GridParams by_origin =
+        get_grid_params(*read_map(out.Str(), OriginSource::ORIGIN_RECORD).grid);
+    const GridParams by_nxstart =
+        get_grid_params(*read_map(out.Str(), OriginSource::NXSTART).grid);
+    const double divergence =
+        std::fabs(by_origin.x_origin - by_nxstart.x_origin);
+    const double half = 0.5 * by_origin.x_spacing;
+    EXPECT_GT(divergence, half)
+        << "the divergence no longer exceeds half the node interval, so this "
+           "grid no longer distinguishes MAP_PLACEMENT_SLACK from zero";
+    EXPECT_LT(divergence, half * (1.0 + MAP_PLACEMENT_SLACK));
 }
 
 namespace {

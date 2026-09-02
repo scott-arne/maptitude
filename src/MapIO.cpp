@@ -267,9 +267,13 @@ private:
 /// header, so it ends up blaming whatever the compressed bytes decode to
 /// instead of naming the format it cannot patch.
 ///
-/// Only ".gz" is listed, because it is the only compression suffix measured to
-/// get past OEIsWriteableGrid; any other one is already refused there, with a
-/// message about the extension rather than about compression.
+/// Only ".gz" is listed. Six other compression suffixes were measured against
+/// OEIsWriteableGrid -- ".bz2", ".Z", ".zst", ".gzip" and ".xz" behind a
+/// ".ccp4" stem, and a bare ".bz2" -- and every one is refused there, with a
+/// message about the extension rather than about compression. Of the suffixes
+/// measured, ".gz" is the only one that gets past it, in any letter case and
+/// behind any stem: ".ccp4.gz", ".map.gz", ".mrc.gz" and ".ccp4.GZ" are all
+/// accepted there and all caught here.
 bool IsCompressedPath(const std::string& path) {
     std::string extension = std::filesystem::path(path).extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
@@ -277,6 +281,23 @@ bool IsCompressedPath(const std::string& path) {
                        return static_cast<char>(std::tolower(c));
                    });
     return extension == ".gz";
+}
+
+/// Re-word a nested read's message to name the destination, not the temporary.
+///
+/// The verify reads the file this writer just produced, which lives under a
+/// hidden sibling name the caller never asked for and cannot look at. Every
+/// GridError the read path raises interpolates its path argument unmodified, so
+/// replacing that exact substring keeps the diagnosis and drops the leak.
+std::string MessageAgainstDestination(const std::string& message,
+                                      const std::string& temporary,
+                                      const std::string& destination) {
+    std::string out = message;
+    for (std::size_t at = out.find(temporary); at != std::string::npos;
+         at = out.find(temporary, at + destination.size())) {
+        out.replace(at, temporary.size(), destination);
+    }
+    return out;
 }
 
 /// A hidden sibling of @p dest that keeps its extension and does not yet exist.
@@ -725,17 +746,20 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
     // ORIGIN, so a map written with a nonzero one lands wrong by construction.
     //
     // read_map names the file it was handed, which here is the temporary, so
-    // its GridErrors are re-raised against the destination. The specific reason
-    // is dropped rather than quoted, because every one of them embeds that
-    // path. Every reason in this class means the same thing to a caller: the
-    // bytes this writer just produced do not read back as a map.
+    // its GridErrors are re-raised against the destination with that path
+    // substituted out of the reason. The outer clause is what tells the reader
+    // the inner message is about the map just written rather than about a
+    // destination that may not exist yet.
     MapFile back;
     try {
         back = read_map(temporary.Path().string());
-    } catch (const GridError&) {
+    } catch (const GridError& error) {
         throw GridError("Refusing to write '" + path +
                         "': the map written for it does not read back as a "
-                        "map, so it cannot be verified");
+                        "map: " +
+                        MessageAgainstDestination(error.what(),
+                                                  temporary.Path().string(),
+                                                  path));
     }
     const std::string difference = compare_written_map(out, *back.grid);
     if (!difference.empty()) {
@@ -756,12 +780,15 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
     std::string raw;
     try {
         raw = ReadRawHeader(temporary.Path().string());
-    } catch (const GridError&) {
-        // Same reason as the read_map above: the two failures ReadRawHeader
+    } catch (const GridError& error) {
+        // Same treatment as the read_map above: the two failures ReadRawHeader
         // reports both quote the temporary's path.
         throw GridError("Refusing to write '" + path +
                         "': the header of the map written for it cannot be "
-                        "re-read");
+                        "re-read: " +
+                        MessageAgainstDestination(error.what(),
+                                                  temporary.Path().string(),
+                                                  path));
     }
     const MapHeader written = ParseHeader(raw);
 
@@ -821,8 +848,18 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
     // a toolkit that stops emitting NCSTART, which would misplace a written EM
     // map by its whole origin offset for every NXSTART reader with nothing else
     // noticing.
-    const MapFile by_nxstart =
-        read_map(temporary.Path().string(), OriginSource::NXSTART);
+    MapFile by_nxstart;
+    try {
+        by_nxstart = read_map(temporary.Path().string(),
+                              OriginSource::NXSTART);
+    } catch (const GridError& error) {
+        throw GridError("Refusing to write '" + path +
+                        "': the map written for it cannot be re-read under "
+                        "the NxSTART placement: " +
+                        MessageAgainstDestination(error.what(),
+                                                  temporary.Path().string(),
+                                                  path));
+    }
     const std::string placement =
         compare_placement_records(*back.grid, *by_nxstart.grid);
     if (!placement.empty()) {

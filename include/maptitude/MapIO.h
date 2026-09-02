@@ -97,10 +97,18 @@ std::string compare_written_map(const OESystem::OESkewGrid& expected,
 /// exactly half a node interval, and it is inclusive: OpenEye rounds
 /// ORIGIN/spacing to the nearest node with ties away from zero, so a node 0 at
 /// 2.75 with a spacing of 0.5 lands exactly on the half and is a correct write.
-/// Comparing against the half exactly would put that case on the boundary,
-/// where float32 noise in the ORIGIN record decides it. This widens the bound
-/// by a hundredth of a percent, which is far below any genuine disagreement --
-/// the smallest of those is a whole node interval.
+///
+/// Comparing against the half exactly refuses a subset of those correct writes.
+/// The NxSTART placement is reconstructed as NCSTART times the spacing and held
+/// in float32; where that product is not exactly representable the reconstructed
+/// position lands up to half a float32 ULP off, which pushes the divergence to
+/// either side of the half. Measured over fifteen division counts on a dim-20,
+/// cell-20 grid whose node 0 is a half-integer of spacings: six land above the
+/// half, the worst at 9.4e-7 relative, and all six are refused with this slack
+/// at zero. The ORIGIN record is not the source -- at those placements it
+/// round-trips node 0 bit-exactly. This slack clears the worst measured
+/// excursion by about a factor of a hundred, and stays four orders below the
+/// smallest genuine disagreement, which is a whole node interval.
 constexpr double MAP_PLACEMENT_SLACK = 1e-4;
 
 /**
@@ -164,9 +172,11 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * @throws GridError if @p path's extension is not a grid format OpenEye
  *         writes or names a compressed file, if the write fails, if the re-read
  *         map differs from the grid in dimensions, cell, per-axis spacing,
- *         node 0, or any voxel, if its ORIGIN and NxSTART records place node 0
- *         more than half a node interval apart, or if the temporary file
- *         cannot be renamed onto @p path.
+ *         node 0, or any voxel, if either the grid or the re-read map has an
+ *         axis with fewer than two nodes, so its spacing is undefined, if its
+ *         ORIGIN and NxSTART records place node 0 more than half a node
+ *         interval apart, or if the temporary file cannot be renamed onto
+ *         @p path.
  * @throws SymOpError if symops is non-empty and does not parse, or if any of
  *         its records is longer than the format's 80-character field.
  * @throws CellError if the grid's sampling is not axis-aligned, which a cell
