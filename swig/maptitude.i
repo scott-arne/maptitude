@@ -393,6 +393,7 @@ static PyObject* _maptitude_wrap_as_oe_skew_grid(OESystem::OESkewGrid* grid) {
        block exists to detect, the throw is the detection, and any other
        exception it raises is equally a reason not to hand the grid back. */
     bool copy_ok = false;
+    bool cell_failure = false;
     std::string detail;
     try {
         copy_ok = Maptitude::same_grid_geometry(*dest, *grid) &&
@@ -402,6 +403,14 @@ static PyObject* _maptitude_wrap_as_oe_skew_grid(OESystem::OESkewGrid* grid) {
         if (copy_ok && dest->HasSpaceGroup()) {
             copy_ok = dest->GetSpaceGroup() == grid->GetSpaceGroup();
         }
+    } catch (const Maptitude::CellError& e) {
+        /* The source grid's own sampling is unrepresentable -- read_map can be
+           handed such a file. Nothing about the copy failed, so this is
+           reported as the CellError the rest of the package documents for
+           non-axis-aligned sampling rather than as a copy failure. */
+        copy_ok = false;
+        cell_failure = true;
+        detail = e.what();
     } catch (const std::exception& e) {
         copy_ok = false;
         detail = e.what();
@@ -410,17 +419,33 @@ static PyObject* _maptitude_wrap_as_oe_skew_grid(OESystem::OESkewGrid* grid) {
         detail = "unknown C++ exception";
     }
     if (!copy_ok) {
+        /* This runs after the %exception-protected call has returned, so the
+           class is chosen here or the failure escapes as a bare RuntimeError
+           that `except maptitude.MaptitudeError` cannot catch. The statics are
+           set in %init and cannot be NULL at call time; the fallback keeps a
+           NULL out of PyErr_SetString rather than trading one bug for a
+           crash. */
         char errmsg[512];
-        std::snprintf(errmsg, sizeof(errmsg),
-                      "Grid geometry copy failed: source is %ux%ux%u size=%u, "
-                      "destination is %ux%ux%u size=%u%s%s",
-                      grid->GetXDim(), grid->GetYDim(), grid->GetZDim(), grid->GetSize(),
-                      dest->GetXDim(), dest->GetYDim(), dest->GetZDim(), dest->GetSize(),
-                      detail.empty() ? "" : "; ", detail.c_str());
+        if (cell_failure) {
+            /* The dimensions match on this path -- reporting them would point
+               at a copy that did not fail. */
+            std::snprintf(errmsg, sizeof(errmsg), "%s", detail.c_str());
+        } else {
+            std::snprintf(errmsg, sizeof(errmsg),
+                          "Grid geometry copy failed: source is %ux%ux%u size=%u, "
+                          "destination is %ux%ux%u size=%u%s%s",
+                          grid->GetXDim(), grid->GetYDim(), grid->GetZDim(), grid->GetSize(),
+                          dest->GetXDim(), dest->GetYDim(), dest->GetZDim(), dest->GetSize(),
+                          detail.empty() ? "" : "; ", detail.c_str());
+        }
+        PyObject* error_class = cell_failure ? g_cell_error : g_grid_error;
+        if (!error_class) {
+            error_class = PyExc_RuntimeError;
+        }
         Py_DECREF(thisAttr);
         Py_DECREF(oe_grid);
         delete grid;
-        PyErr_SetString(PyExc_RuntimeError, errmsg);
+        PyErr_SetString(error_class, errmsg);
         return NULL;
     }
 
@@ -1522,6 +1547,8 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
     :raises TypeError: If ``path`` is neither a ``str`` nor an :class:`os.PathLike`.
         A ``bytes`` path is also rejected, by the ``std::string`` typemap rather than
         by ``os.fspath``.
+    :raises CellError: If the file's sampling is not axis-aligned. maptitude
+        requires an orthorhombic cell; a skewed one is rejected on read.
     :raises GridError: If the file cannot be read or its header cannot be
         parsed.
     :raises SymOpError: If the symmetry block is present and does not parse.

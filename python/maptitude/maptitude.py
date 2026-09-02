@@ -1680,6 +1680,8 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
     :raises TypeError: If ``path`` is neither a ``str`` nor an :class:`os.PathLike`.
         A ``bytes`` path is also rejected, by the ``std::string`` typemap rather than
         by ``os.fspath``.
+    :raises CellError: If the file's sampling is not axis-aligned. maptitude
+        requires an orthorhombic cell; a skewed one is rejected on read.
     :raises GridError: If the file cannot be read or its header cannot be
         parsed.
     :raises SymOpError: If the symmetry block is present and does not parse.

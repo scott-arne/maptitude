@@ -14,6 +14,7 @@ from pathlib import Path
 import maptitude
 import pytest
 from maptitude import (
+    CellError,
     GridError,
     MapFile,
     OriginSource,
@@ -76,10 +77,10 @@ def test_read_map_carries_the_unit_cell_on_the_grid():
     # the three -- goes red here where a tetragonal fixture would not.
     #
     # The three angle assertions are a completeness check, not a
-    # discriminating one: read_map rejects a nonorthogonal cell outright
-    # ("maptitude requires axis-aligned sampling"), so no fixture can carry a
-    # non-90 angle through this path and an implementation that hardcoded 90
-    # would pass.
+    # discriminating one: read_map rejects a nonorthogonal cell outright, so no
+    # fixture can carry a non-90 angle through this path and an implementation
+    # that hardcoded 90 would pass here.  That rejection is pinned separately,
+    # by test_read_map_rejects_a_skewed_cell_with_a_typed_error below.
     cell = get_unit_cell(read_map(_ASSET_DIR / "390_emd_30342_A_z4.mrc").grid)
     assert cell.a == pytest.approx(99.057, abs=1e-3)
     assert cell.b == pytest.approx(90.153, abs=1e-3)
@@ -87,6 +88,36 @@ def test_read_map_carries_the_unit_cell_on_the_grid():
     assert cell.alpha == pytest.approx(90.0, abs=1e-4)
     assert cell.beta == pytest.approx(90.0, abs=1e-4)
     assert cell.gamma == pytest.approx(90.0, abs=1e-4)
+
+
+def test_read_map_rejects_a_skewed_cell_with_a_typed_error(tmp_path):
+    # The rejection happens inside the out-typemap's grid-copy validation,
+    # after the %exception-protected C++ call has already returned, so the
+    # exception class is chosen by hand there.  Before this was fixed the
+    # failure arrived as builtins.RuntimeError and `except MaptitudeError`
+    # walked straight past it.
+    #
+    # The control half is what makes this a measurement rather than a
+    # tautology: the same six-float patch with every angle left at 90 reads
+    # back exactly, so the rejection is attributable to beta and not to the
+    # patching.
+    raw = bytearray((_ASSET_DIR / "1d26_2fofc.ccp4").read_bytes())
+    struct.pack_into("<6f", raw, (11 - 1) * 4, 30.0, 40.0, 50.0, 90.0, 105.0, 90.0)
+    skewed = tmp_path / "beta_105.ccp4"
+    skewed.write_bytes(bytes(raw))
+
+    with pytest.raises(CellError) as caught:
+        read_map(skewed)
+    assert "axis-aligned" in str(caught.value)
+    assert issubclass(CellError, maptitude.MaptitudeError)
+
+    struct.pack_into("<6f", raw, (11 - 1) * 4, 30.0, 40.0, 50.0, 90.0, 90.0, 90.0)
+    control = tmp_path / "beta_90.ccp4"
+    control.write_bytes(bytes(raw))
+    cell = get_unit_cell(read_map(control).grid)
+    assert cell.a == pytest.approx(30.0, abs=1e-4)
+    assert cell.b == pytest.approx(40.0, abs=1e-4)
+    assert cell.c == pytest.approx(50.0, abs=1e-4)
 
 
 def test_tiebreak_selects_which_record_wins(tmp_path):
