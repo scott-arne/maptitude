@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -1040,6 +1041,117 @@ TEST(MapIoWriteTest, RaisesSymOpErrorBeforeTouchingTheFilesystem) {
     EXPECT_FALSE(probe.good());
 }
 
+TEST(MapIoWriteTest, RaisesCellErrorOnSamplingThatIsNotAxisAligned) {
+    // The header documents CellError for this path. read_map can hand back a
+    // grid with a non-90 cell angle, and neither write_map nor
+    // compare_written_map can describe one: get_grid_params requires the
+    // sampling axes to line up with the cartesian axes. Pin the type and the
+    // clean refusal so the documented contract is not just prose.
+    OESystem::OESkewGrid grid;
+    ASSERT_TRUE(grid.SetDim(4u, 5u, 6u));
+    ASSERT_TRUE(grid.SetUnitCell(4.0f, 5.0f, 6.0f, 90.0f, 90.0f, 120.0f,
+                                 8u, 10u, 12u));
+    ASSERT_TRUE(grid.SetMid(0.0f, 0.0f, 0.0f));
+    ASSERT_TRUE(grid.SetSpaceGroup(1u));
+    std::vector<float> values(grid.GetSize(), 1.0f);
+    ASSERT_TRUE(grid.SetValues(values.data(),
+                               static_cast<unsigned int>(values.size())));
+
+    ScratchPath out(".ccp4");
+    try {
+        write_map(out.Str(), grid);
+        FAIL() << "expected CellError: the sampling is not axis-aligned";
+    } catch (const CellError& error) {
+        EXPECT_NE(std::string(error.what()).find("axis-aligned"),
+                  std::string::npos)
+            << "the message does not name the axis alignment requirement: "
+            << error.what();
+    }
+
+    std::ifstream probe(out.Str(), std::ios::binary);
+    EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
+    EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
+        << "a refused write left its hidden temporary behind";
+}
+
+TEST(MapIoWriteTest, RefusesACompressedDestination) {
+    // OEIsWriteableGrid accepts '.ccp4.gz' and OEWriteGrid really does emit a
+    // gzip stream. The header patch then reads compressed bytes as a header and
+    // blames NSYMBT, which describes neither the cause nor the remedy. The
+    // guard has to name compression instead.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath out(".ccp4.gz");
+    try {
+        write_map(out.Str(), *source.grid, source.symops);
+        FAIL() << "expected GridError: a compressed destination cannot carry "
+                  "the records this path patches in";
+    } catch (const GridError& error) {
+        const std::string message(error.what());
+        EXPECT_NE(message.find("compress"), std::string::npos)
+            << "the message does not name compression: " << message;
+        EXPECT_EQ(message.find("NSYMBT"), std::string::npos)
+            << "the message still blames NSYMBT: " << message;
+    }
+
+    std::ifstream probe(out.Str(), std::ios::binary);
+    EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
+}
+
+TEST(MapIoWriteTest, RefusesASymopRecordWiderThanTheOnDiskField) {
+    // The on-disk record is a fixed 80 bytes and the block builder pads to it
+    // with resize(), which truncates just as readily. Past 80 the record lost
+    // its tail, and the failure surfaced from the verify's own read_map as a
+    // component-count error -- blaming the caller's text for a shape ParseAll
+    // had already accepted.
+    std::string wide("x");
+    for (int i = 0; i < 38; ++i) {
+        wide += "+0";
+    }
+    wide += ",y,z";
+    ASSERT_EQ(wide.size(), 81u)
+        << "this record is no longer one byte over the 80-byte field, so it "
+           "tests nothing";
+    ASSERT_EQ(SymOp::ParseAll(wide).size(), 1u)
+        << "the parser rejects this record, so write_map would refuse it "
+           "before reaching the width guard";
+
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath out(".ccp4");
+    try {
+        write_map(out.Str(), *source.grid, wide);
+        FAIL() << "expected SymOpError: the record does not fit the 80-byte "
+                  "field";
+    } catch (const SymOpError& error) {
+        const std::string message(error.what());
+        EXPECT_NE(message.find("81"), std::string::npos)
+            << "the message does not name the record's length: " << message;
+        EXPECT_EQ(message.find("3 components"), std::string::npos)
+            << "the message still blames the component count: " << message;
+    }
+
+    std::ifstream probe(out.Str(), std::ios::binary);
+    EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
+}
+
+TEST(MapIoWriteTest, RoundTripsAGridCarryingANaNVoxel) {
+    // NaN compares unequal to itself, so a bytewise-faithful round trip of a
+    // masked voxel used to read as a difference and the write was refused.
+    MapFile source = read_map(DataPath("test_map.ccp4"));
+    float* values = source.grid->GetValues();
+    values[100] = std::numeric_limits<float>::quiet_NaN();
+    ASSERT_TRUE(std::isnan(source.grid->GetValues()[100]));
+
+    ScratchPath out(".ccp4");
+    write_map(out.Str(), *source.grid, source.symops);
+    ExpectRoundTrip(*source.grid, out.Str(), source.symops);
+
+    // Without this the verify could be passing because the NaN never reached
+    // the file, which is the opposite of what the fix is for.
+    const MapFile back = read_map(out.Str());
+    EXPECT_TRUE(std::isnan(back.grid->GetValues()[100]))
+        << "the NaN did not survive the round trip";
+}
+
 namespace {
 
 /// A small grid the seam tests mutate one quantity at a time.
@@ -1114,6 +1226,31 @@ TEST(MapIoVerifySeamTest, NamesAVoxelDifference) {
     OESystem::OESkewGrid actual = SeamGrid();
     std::vector<float> values(actual.GetSize(), 1.0f);
     values[7] = 2.0f;
+    ASSERT_TRUE(actual.SetValues(values.data(),
+                                 static_cast<unsigned int>(values.size())));
+    const std::string message = compare_written_map(expected, actual);
+    EXPECT_NE(message.find("voxel"), std::string::npos) << message;
+}
+
+TEST(MapIoVerifySeamTest, TreatsTwoNaNVoxelsAsAgreeing) {
+    OESystem::OESkewGrid expected = SeamGrid();
+    OESystem::OESkewGrid actual = SeamGrid();
+    std::vector<float> values(expected.GetSize(), 1.0f);
+    values[7] = std::numeric_limits<float>::quiet_NaN();
+    ASSERT_TRUE(expected.SetValues(values.data(),
+                                   static_cast<unsigned int>(values.size())));
+    ASSERT_TRUE(actual.SetValues(values.data(),
+                                 static_cast<unsigned int>(values.size())));
+    EXPECT_EQ(compare_written_map(expected, actual), "");
+}
+
+TEST(MapIoVerifySeamTest, StillNamesANaNAgainstAFiniteVoxel) {
+    // The NaN-tolerant comparison must stay one-sided: a masked voxel that came
+    // back as a number, or the reverse, is a real difference.
+    const OESystem::OESkewGrid expected = SeamGrid();
+    OESystem::OESkewGrid actual = SeamGrid();
+    std::vector<float> values(actual.GetSize(), 1.0f);
+    values[7] = std::numeric_limits<float>::quiet_NaN();
     ASSERT_TRUE(actual.SetValues(values.data(),
                                  static_cast<unsigned int>(values.size())));
     const std::string message = compare_written_map(expected, actual);

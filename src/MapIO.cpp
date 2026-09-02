@@ -8,6 +8,7 @@
 #include <oegrid.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -258,6 +259,26 @@ private:
     bool released_ = false;
 };
 
+/// Whether @p path names a file OpenEye would compress on the way out.
+///
+/// OEIsWriteableGrid accepts ".ccp4.gz" and OEWriteGrid honours it, emitting a
+/// real gzip stream. Everything this file does afterwards -- the NSYMBT and
+/// ORIGIN patch and the raw-header verify -- reads the result as a plain CCP4
+/// header, so it ends up blaming whatever the compressed bytes decode to
+/// instead of naming the format it cannot patch.
+///
+/// Only ".gz" is listed, because it is the only compression suffix measured to
+/// get past OEIsWriteableGrid; any other one is already refused there, with a
+/// message about the extension rather than about compression.
+bool IsCompressedPath(const std::string& path) {
+    std::string extension = std::filesystem::path(path).extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](const unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return extension == ".gz";
+}
+
 /// A hidden sibling of @p dest that keeps its extension and does not yet exist.
 ///
 /// Same directory, so the rename stays within one filesystem where POSIX
@@ -332,6 +353,19 @@ std::string SymopBlockBytes(const std::string& canonical) {
         const std::string record =
             end == std::string::npos ? canonical.substr(start)
                                      : canonical.substr(start, end - start);
+        // resize() truncates as readily as it pads, and the tail it drops is
+        // usually a whole component. The truncated block then fails the verify's
+        // own read_map with a component-count error against text ParseAll had
+        // already accepted, so the caller is told their symop is malformed when
+        // the real fault is that it does not fit the format's fixed field.
+        // Records that came from read_map cannot reach this: it strips them out
+        // of 80-byte fields to begin with. Hand-built symops can.
+        if (record.size() > SYMOP_RECORD_BYTES) {
+            throw SymOpError(
+                "Symmetry record is " + std::to_string(record.size()) +
+                " characters, over the " + std::to_string(SYMOP_RECORD_BYTES) +
+                "-character CCP4 record field: '" + record + "'");
+        }
         std::string padded = record;
         padded.resize(SYMOP_RECORD_BYTES, ' ');
         block += padded;
@@ -577,6 +611,13 @@ std::string compare_written_map(const OESystem::OESkewGrid& expected,
     const float* want_values = expected.GetValues();
     const float* got_values = actual.GetValues();
     for (unsigned int i = 0; i < expected.GetSize(); ++i) {
+        // NaN compares unequal to itself, so the exact comparison below reads a
+        // faithfully round-tripped masked voxel as a difference. Two NaNs are
+        // the same value for this purpose. The tolerance is one-sided: a NaN
+        // against a number, either way round, is still a difference.
+        if (std::isnan(want_values[i]) && std::isnan(got_values[i])) {
+            continue;
+        }
         if (want_values[i] != got_values[i]) {
             std::ostringstream out;
             out << "voxel " << i << " differs: wrote " << got_values[i]
@@ -592,6 +633,12 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
     // Step 1: validate both arguments before touching the filesystem, so a bad
     // call fails without leaving a partial file.
     SymOp::ParseAll(symops);
+    if (IsCompressedPath(path)) {
+        throw GridError("Cannot write '" + path +
+                        "': this names a compressed file, and the CCP4 header "
+                        "records this writer restores after OEWriteGrid cannot "
+                        "be spliced into a compressed stream");
+    }
     if (!OESystem::OEIsWriteableGrid(path)) {
         // Section 2.4 measures that OEWriteGrid on an extension OpenEye does
         // not recognize prints a fatal error and exits rather than returning

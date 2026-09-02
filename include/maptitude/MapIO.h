@@ -70,12 +70,23 @@ constexpr double MAP_VERIFY_TOL = 1e-6;
  * manufacture a file that fails on each quantity.
  *
  * Node counts and voxel values compare exactly; cell parameters, per-axis
- * spacing and the position of node 0 compare relatively at MAP_VERIFY_TOL.
+ * spacing and the position of node 0 compare relatively at MAP_VERIFY_TOL. Two
+ * NaN voxels count as agreeing, since a masked voxel that round-tripped
+ * faithfully is not a difference; a NaN against a number is.
+ *
+ * Two kinds of input are reported by throwing rather than by the return value,
+ * because they leave the function unable to describe either grid rather than
+ * describing a difference between them.
  *
  * @param expected The grid handed to write_map.
  * @param actual The grid read back from the written file.
  * @return An empty string when the two agree, otherwise a sentence naming the
  *         first quantity that differed and both of its values.
+ * @throws CellError if either grid's sampling is not axis-aligned, which a
+ *         cell angle away from 90 degrees produces. read_map can return such a
+ *         grid; this comparison cannot express one.
+ * @throws GridError if either grid has an axis with fewer than two nodes, so
+ *         its spacing is undefined.
  */
 std::string compare_written_map(const OESystem::OESkewGrid& expected,
                                 const OESystem::OESkewGrid& actual);
@@ -89,15 +100,22 @@ std::string compare_written_map(const OESystem::OESkewGrid& expected,
  *
  * @param path Destination. The format follows the extension, as OpenEye
  *        dispatches on it; an extension OpenEye does not recognize is
- *        rejected before anything is written.
+ *        rejected before anything is written, as is a compressed destination
+ *        such as ".ccp4.gz", whose stream has no place to splice the header
+ *        records this function restores.
  * @param grid Grid to write.
  * @param symops Symmetry text in the form read_map returns: one triplet per
  *        line, newline-separated. Empty writes no block.
  * @throws GridError if @p path's extension is not a grid format OpenEye
- *         writes, if the write fails, if the re-read map differs from the
- *         grid in dimensions, cell, per-axis spacing, node 0, or any voxel, or
- *         if the temporary file cannot be renamed onto @p path.
- * @throws SymOpError if symops is non-empty and does not parse.
+ *         writes or names a compressed file, if the write fails, if the re-read
+ *         map differs from the grid in dimensions, cell, per-axis spacing,
+ *         node 0, or any voxel, or if the temporary file cannot be renamed
+ *         onto @p path.
+ * @throws SymOpError if symops is non-empty and does not parse, or if any of
+ *         its records is longer than the format's 80-character field.
+ * @throws CellError if the grid's sampling is not axis-aligned, which a cell
+ *         angle away from 90 degrees produces. read_map can return such a grid;
+ *         this writer cannot express one.
  */
 void write_map(const std::string& path,
                const OESystem::OESkewGrid& grid,
