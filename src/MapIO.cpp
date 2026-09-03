@@ -12,11 +12,13 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <iterator>
+#include <locale>
 #include <random>
 #include <sstream>
 #include <string>
@@ -24,12 +26,17 @@
 #include <utility>
 #include <vector>
 
-// The only POSIX headers under src/ or include/. MakeTemporarySibling has to
-// take its temporary's name rather than test for it, and C++17 has no
-// exclusive-create open mode -- std::ios::noreplace is C++23 -- so
-// std::ofstream can only test for the name and then use it.
-#include <fcntl.h>
+// The exclusive create in MakeTemporarySibling takes no platform guard:
+// std::fopen's C11 "x" mode is standard C. getpid does take one -- MSVC has no
+// <unistd.h> and declares _getpid() in <process.h> -- and ProcessId below is
+// where it is settled. Both spellings are reached, because CMakeLists.txt
+// builds this file into libmaptitude unconditionally and the release workflow
+// builds a Windows wheel with MSVC.
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace Maptitude {
 
@@ -308,6 +315,20 @@ std::string MessageAgainstDestination(const std::string& message,
     return out;
 }
 
+/// This process's id, under the spelling its platform gives the call.
+///
+/// The temporary's name carries the pid, and this file is compiled for the
+/// MSVC wheel as well as the POSIX one: MSVC declares _getpid() in
+/// <process.h>, POSIX declares getpid() in <unistd.h>. Both are the caller's
+/// process, and neither has a failure return.
+long ProcessId() {
+#ifdef _WIN32
+    return static_cast<long>(::_getpid());
+#else
+    return static_cast<long>(::getpid());
+#endif
+}
+
 /// A hidden, empty sibling of @p dest that keeps its extension, created here
 /// and owned by the TemporaryFile returned.
 ///
@@ -331,15 +352,25 @@ std::string MessageAgainstDestination(const std::string& message,
 /// four measured; the ".gz.ccp4" and ".gzz.ccp4" write cases exercise the name
 /// that results.
 ///
+/// The classic locale on that stream is what holds the previous sentence true.
+/// num_put groups integers through the locale's numpunct, so a stream left on
+/// the global locale follows whatever separator the process installed:
+/// measured with this name built verbatim, en_US.UTF-8 gives
+/// ".maptitude-5,656-de,adb,eef.ccp4" and de_DE.UTF-8 gives
+/// ".maptitude-5.656-de.adb.eef.ccp4" -- three dot components in a shape
+/// measured without any. The test tree's leak counter builds its prefix with
+/// std::to_string, which never groups, so it would also stop matching and its
+/// assertions would pass on nothing.
+///
 /// The name is taken, not merely chosen. Two things keep concurrent writers
 /// off one another's temporary: the pid gives each process its own space of
-/// names, and O_CREAT | O_EXCL claims one of them in the same step that tests
-/// it. An exists() call ahead of the open cannot do that -- it is a filter, and
-/// a second writer can slip between the test and the use. A name already held
-/// comes back as EEXIST and the loop draws another; the GridError at the bottom
-/// is what a run of MAX_ATTEMPTS collisions raises. Any other errno is not a
-/// collision, so it is reported as itself instead of being retried into that
-/// message.
+/// names, and the C11 "x" mode claims one of them in the same step that tests
+/// it. An exists() call ahead of the create cannot do that -- it is a filter,
+/// and a second writer can slip between the test and the use. A name already
+/// held comes back as EEXIST, measured here and what POSIX specifies for that
+/// mode, and the loop draws another; the GridError at the bottom is what a run
+/// of MAX_ATTEMPTS collisions raises. Any other errno is not a collision, so it
+/// is reported as itself instead of being retried into that message.
 ///
 /// A temporary left behind by a crashed or killed run is covered by the same
 /// EEXIST -- skipped rather than truncated -- which is what the old existence
@@ -347,18 +378,19 @@ std::string MessageAgainstDestination(const std::string& message,
 /// does not retire with the process that made it; the exclusive create, not the
 /// pid, is what makes that harmless.
 ///
-/// The mode argument is 0666, so the process umask narrows the temporary as it
-/// narrows an ordinary create. That is why this reaches for open() rather than
-/// mkstemps, the obvious way to get an atomic create: mkstemps moves the
-/// permissions rather than fixing them. Neither scheme preserves the
-/// destination's mode, because the rename replaces its inode either way.
-/// Measured on this machine under umask 0022: an ordinary create lands at 0644,
-/// mkstemps at 0600, and the rename carries whichever one onto the destination.
-/// So mkstemps would publish every map readable only by its writer, while the
-/// scheme used here silently widens a destination the caller had narrowed --
-/// 0600 back to 0644 on rewrite. Trading a visible regression on every write
-/// for an invisible one on rewrites of a restricted file is the choice made,
-/// not a permissions-preserving option that mkstemps lacks; the caller-facing
+/// std::fopen creates at 0666 before the umask, so the process umask narrows
+/// the temporary as it narrows an ordinary create. That is why this reaches for
+/// the "x" mode rather than mkstemps, the obvious way to get an atomic create:
+/// mkstemps moves the permissions rather than fixing them. Neither scheme
+/// preserves the destination's mode, because the rename replaces its inode
+/// either way. Measured on this machine under umask 0022: this create and an
+/// ordinary one both land at 0644, mkstemps at 0600, and the rename carries
+/// whichever one onto the destination. So mkstemps would publish every map
+/// readable only by its writer, while the scheme used here silently widens a
+/// destination the caller had narrowed -- 0600 back to 0644 on rewrite.
+/// Trading a visible regression on every write for an invisible one on
+/// rewrites of a restricted file is the choice made, not a
+/// permissions-preserving option that mkstemps lacks; the caller-facing
 /// consequences are stated on write_map.
 ///
 /// OEWriteGrid is therefore handed a name that already exists. Measured against
@@ -380,20 +412,26 @@ TemporaryFile MakeTemporarySibling(const std::filesystem::path& dest) {
     std::random_device entropy;
     for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
         std::ostringstream name;
-        name << ".maptitude-" << static_cast<long>(::getpid()) << '-'
-             << std::hex << entropy() << dest.extension().string();
+        name.imbue(std::locale::classic());
+        name << ".maptitude-" << ProcessId() << '-' << std::hex << entropy()
+             << dest.extension().string();
         std::filesystem::path candidate = dest.parent_path() / name.str();
-        const int reserved =
-            ::open(candidate.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
-        if (reserved >= 0) {
-            ::close(reserved);
+        std::FILE* const reserved =
+            std::fopen(candidate.string().c_str(), "wx");
+        // errno is read once, into a local: the throw below builds its message
+        // with operator+, whose operands are evaluated in an unspecified order
+        // and whose allocations can overwrite errno before a second read of it
+        // reaches the message.
+        const int failure = errno;
+        if (reserved != nullptr) {
+            std::fclose(reserved);
             return TemporaryFile(std::move(candidate));
         }
-        if (errno != EEXIST) {
+        if (failure != EEXIST) {
             throw GridError(
                 "Cannot write '" + dest.string() +
                 "': cannot create a temporary beside it: " +
-                std::error_code(errno, std::generic_category()).message());
+                std::error_code(failure, std::generic_category()).message());
         }
     }
     throw GridError("Cannot write '" + dest.string() +
