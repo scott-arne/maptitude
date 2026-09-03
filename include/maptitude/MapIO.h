@@ -161,8 +161,13 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * lattice index cannot encode an off-lattice origin. The refusal is what makes
  * the bound a guarantee instead of an observation about one toolkit version.
  *
- * @param path Destination. The format follows the extension, as OpenEye
- *        dispatches on it, and this writer admits whatever OEGetGridFileType
+ * @param path Destination. The format follows the extension, though not
+ *        because OEWriteGrid reads the extension: it dispatches on the whole
+ *        filename, and a measured name carrying a "gz" dot-component ahead of
+ *        ".ccp4" came out as a gzip stream. The format follows the extension
+ *        because the gate here reads the extension, and the temporary handed
+ *        to OEWriteGrid carries a basename of this writer's own rather than
+ *        one built from @p path. This writer admits whatever OEGetGridFileType
  *        maps to CCP4. In a thirty-spelling sweep that class was every
  *        spelling whose first three characters are "ccp", "map" or "mrc",
  *        compared case-insensitively, and nothing else: ".ccp4junk" and
