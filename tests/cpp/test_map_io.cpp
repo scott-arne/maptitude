@@ -285,18 +285,25 @@ std::string ReadBytesAt(const std::string& path, const std::size_t offset,
 }
 
 /// Count the files beside @p destination whose names have the shape write_map's
-/// temporary takes: "." + stem + "-" + <hex> + extension, in the destination's
-/// own directory.
+/// temporary takes: ".maptitude-" + <hex> + extension, in the destination's own
+/// directory.
 ///
 /// The hex comes from std::random_device, so the name cannot be predicted and
 /// the shape has to be matched instead. Enumerating the parent and requiring it
 /// empty would not do: TempDir() is shared with the other scratch helpers in
-/// this file, and under `ctest -j 8` with other processes' files as well. The
-/// stem carries this process's pid and this ScratchPath's counter, so the
-/// pattern is narrow enough to be unaffected by any of them.
+/// this file, and under `ctest -j 8` with other processes' files as well.
+///
+/// The pattern no longer carries the destination's stem, because write_map's
+/// temporary no longer does, so this counts every temporary of the matching
+/// extension in the directory rather than only the ones belonging to
+/// @p destination. Within one process the two coincide: this file makes no
+/// concurrent write_map call, so no other destination's temporary is live when
+/// a count runs. Across processes they do not -- under `ctest -j 8` a
+/// temporary belonging to another process's write, live for the milliseconds
+/// between OEWriteGrid and the rename, is counted here.
 std::size_t CountTemporarySiblings(const std::string& destination) {
     const std::filesystem::path dest(destination);
-    const std::string prefix = "." + dest.stem().string() + "-";
+    const std::string prefix = ".maptitude-";
     const std::string suffix = dest.extension().string();
 
     std::error_code error;
@@ -319,12 +326,17 @@ std::size_t CountTemporarySiblings(const std::string& destination) {
 
 /// A file with the name shape CountTemporarySiblings looks for, planted beside
 /// a destination so a test can show that counter is capable of seeing one.
+///
+/// The pid is in the name because the shape is no longer destination-specific:
+/// two processes planting ".maptitude-decoy.ccp4" in a shared TempDir would
+/// remove it from under each other.
 class DecoySibling {
 public:
     explicit DecoySibling(const std::string& destination) {
         const std::filesystem::path dest(destination);
-        path_ = (dest.parent_path() / ("." + dest.stem().string() + "-decoy" +
-                                       dest.extension().string()))
+        path_ = (dest.parent_path() /
+                 (".maptitude-decoy" + std::to_string(::getpid()) +
+                  dest.extension().string()))
                     .string();
         std::ofstream out(path_, std::ios::binary);
         out << "decoy";
@@ -1147,11 +1159,12 @@ TEST(MapIoWriteTest, WritesADestinationWhoseStemEndsInACompressionSuffix) {
     // Measured on four temporary-shaped names carrying the same grid,
     // '.x.gz-<hex>.ccp4' came out gzipped while '.x-<hex>.ccp4',
     // '.x.GZ-<hex>.ccp4' and '.x.y-<hex>.ccp4' came out plain. A temporary
-    // that embedded the destination's stem therefore got gzipped for both of
-    // the stems below, and PatchHeaderRecords then read the compressed bytes
-    // as a CCP4 header and refused the write against a garbage NSYMBT. Both
-    // stems, because '.gzz' shows the trigger is the dot-delimited component
-    // starting with "gz" rather than an exact '.gz' component.
+    // that embedded the destination's stem therefore came out gzipped for both
+    // of the stems below, and PatchHeaderRecords then read the compressed
+    // bytes as a CCP4 header and refused the write against a garbage NSYMBT.
+    // Both stems, because 'x.gzz.ccp4' was refused for the same reason as
+    // 'x.gz.ccp4': the component that provokes this does not have to be
+    // exactly 'gz'.
     const MapFile source = read_map(DataPath("test_map.ccp4"));
     for (const char* extension : {".gz.ccp4", ".gzz.ccp4"}) {
         SCOPED_TRACE(extension);

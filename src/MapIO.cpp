@@ -307,6 +307,18 @@ std::string MessageAgainstDestination(const std::string& message,
 /// the name it is handed: a ".tmp" or ".ccp4.tmp" temporary is the case that
 /// aborts the process, and the check on the caller's path would not cover it.
 ///
+/// The basename is fixed rather than built from the destination's stem,
+/// because that dispatch reads the whole name and not only the final suffix.
+/// Measured with bare OEWriteGrid over four temporary-shaped names carrying
+/// one grid: ".x.gz-<hex>.ccp4" came out gzipped, while ".x-<hex>.ccp4",
+/// ".x.GZ-<hex>.ccp4" and ".x.y-<hex>.ccp4" came out plain. So a destination
+/// named "x.gz.ccp4" -- a plain CCP4 file by its own extension, and one the
+/// compression guard on the caller's path passes -- got a gzipped temporary
+/// out of the old scheme, and PatchHeaderRecords then read those compressed
+/// bytes as a CCP4 header and refused the write against a garbage NSYMBT.
+/// ".maptitude-<hex>.ccp4" was measured plain for that same destination, and
+/// the file it produced read back through read_map.
+///
 /// The existence check is a filter, not a reservation. It closes the case that
 /// actually happens -- a temporary left behind by a crashed or killed run,
 /// which would otherwise be silently truncated and could collide again on the
@@ -325,16 +337,29 @@ std::string MessageAgainstDestination(const std::string& message,
 /// file is the choice made, not a permissions-preserving option that mkstemps
 /// lacks; the caller-facing consequences are stated on write_map.
 ///
-/// The race itself stays open deliberately. Two concurrent write_map calls to
-/// the same destination are already unsafe at the rename regardless of how the
-/// temporary is named, so a reservation would buy nothing the caller can rely
-/// on.
+/// The race itself stays open deliberately, and the fixed basename widens what
+/// it leaves open. Two concurrent write_map calls to the same destination are
+/// already unsafe at the rename regardless of how the temporary is named, so a
+/// reservation would buy nothing the caller can rely on there. What the stem
+/// added was that calls to *different* destinations in one directory drew
+/// their temporaries from disjoint name spaces; they now draw from one shared
+/// space, narrowed only by the entropy and the extension, so two of them can
+/// select the same name and write one file between them. An overwrite that
+/// lands while write_map still has verifying left to do is the case its verify
+/// catches: that verify compares dimensions, cell, spacing, node 0, every
+/// voxel, the symmetry block as both text and bytes, and the two placement
+/// records, against what this call meant to write, so an overwrite differing
+/// in any of those refuses the write rather than publishing it. An overwrite
+/// landing after the last of those checks and before the rename is checked by
+/// nothing, and puts the other call's bytes at this call's destination. The
+/// tradeoff is recorded here, not closed: closing it wants the atomic create
+/// the paragraph above declines.
 std::filesystem::path MakeTemporarySibling(const std::filesystem::path& dest) {
     constexpr int MAX_ATTEMPTS = 8;
     std::random_device entropy;
     for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
         std::ostringstream name;
-        name << "." << dest.stem().string() << "-" << std::hex << entropy()
+        name << ".maptitude-" << std::hex << entropy()
              << dest.extension().string();
         std::filesystem::path candidate = dest.parent_path() / name.str();
         std::error_code ignored;
