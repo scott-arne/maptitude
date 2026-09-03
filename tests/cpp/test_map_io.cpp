@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <locale>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -377,6 +378,40 @@ public:
 
 private:
     std::string path_;
+};
+
+/// A numpunct that groups every digit and separates the groups with '/'.
+///
+/// Grouping is what a global locale does to an integer written through an
+/// ostream, and '/' is the one separator that cannot survive in a filename. A
+/// name built through a stream carrying this facet therefore resolves under a
+/// directory component that does not exist, which is what turns "the name was
+/// formatted through the global locale" from an odd but usable filename into a
+/// create that fails.
+///
+/// Built here rather than taken from the system, so the case using it does not
+/// depend on which locales the runner has generated.
+class SlashGrouping : public std::numpunct<char> {
+protected:
+    char do_thousands_sep() const override { return '/'; }
+    std::string do_grouping() const override { return "\1"; }
+};
+
+/// Installs a global locale for a scope and puts the previous one back.
+///
+/// The restore runs from a destructor because a failing gtest assertion returns
+/// out of the case, and a global locale left installed would follow every case
+/// that runs after it in the same process.
+class ScopedGlobalLocale {
+public:
+    explicit ScopedGlobalLocale(const std::locale& locale)
+        : previous_(std::locale::global(locale)) {}
+    ~ScopedGlobalLocale() { std::locale::global(previous_); }
+    ScopedGlobalLocale(const ScopedGlobalLocale&) = delete;
+    ScopedGlobalLocale& operator=(const ScopedGlobalLocale&) = delete;
+
+private:
+    std::locale previous_;
 };
 
 }  // namespace
@@ -1208,6 +1243,61 @@ TEST(MapIoWriteTest, ReservesTheTemporaryBeforeHandingTheNameToOEWriteGrid) {
 
     EXPECT_FALSE(std::filesystem::exists(absent))
         << "a refused write created the destination's parent directory";
+}
+
+TEST(MapIoWriteTest, BuildsTheTemporarysNameOutsideTheGlobalLocale) {
+    // write_map builds its temporary's name in an ostringstream, where num_put
+    // groups integers through the locale's numpunct. A stream left on the
+    // global locale therefore follows whatever separator the process has
+    // installed. Measured with that name built verbatim: en_US.UTF-8 gives
+    // '.maptitude-5,656-de,adb,eef.ccp4' and de_DE.UTF-8 gives
+    // '.maptitude-5.656-de.adb.eef.ccp4', against '.maptitude-5656-deadbeef'
+    // under C.
+    //
+    // Both halves of that matter. The de_DE name carries three dot components
+    // into a shape MakeTemporarySibling measured without any, and neither name
+    // is one CountTemporarySiblings above matches -- it builds its prefix with
+    // std::to_string, which never groups -- so under such a locale every
+    // EXPECT_EQ(CountTemporarySiblings(...), 0u) in this file matches nothing
+    // and passes without having looked at a temporary.
+    //
+    // A real grouping locale would not make that visible from here: the write
+    // still succeeds and the vacuous count still reads zero. The facet
+    // installed below groups with '/' instead, so the grouped name resolves
+    // under a directory that does not exist and the create refuses it -- errno
+    // 2, measured, against the errno 17 a taken name gives. That refusal is
+    // what this case asserts the absence of.
+    ASSERT_GT(::getpid(), 9)
+        << "a single-digit pid is one group, so the facet below would not "
+           "reach the name and this case would pass on nothing";
+
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath out(".ccp4");
+
+    // The refusal is carried out of the scope rather than reported inside it,
+    // because gtest formats its own file and line through the global locale
+    // too: reported in place, the failure names 'test_map_io.cpp:1/2/8/3'.
+    std::string refusal;
+    {
+        const ScopedGlobalLocale grouping(
+            std::locale(std::locale::classic(), new SlashGrouping));
+        try {
+            write_map(out.Str(), *source.grid, source.symops);
+        } catch (const GridError& error) {
+            refusal = error.what();
+        }
+    }
+    if (!refusal.empty()) {
+        FAIL() << "the temporary's name was formatted through the global "
+                  "locale, so its grouping separator reached the name: "
+               << refusal;
+    }
+
+    // Read back outside the scope, so the locale under test is not also the
+    // one this verification runs under.
+    ExpectRoundTrip(*source.grid, out.Str(), source.symops);
+    EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
+        << "the write left a temporary beside " << out.Str();
 }
 
 TEST(MapIoWriteTest, RoundTripsAPermutedAxisOrder) {
