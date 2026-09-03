@@ -383,11 +383,11 @@ private:
 /// A numpunct that groups every digit and separates the groups with '/'.
 ///
 /// Grouping is what a global locale does to an integer written through an
-/// ostream, and '/' is the one separator that cannot survive in a filename. A
-/// name built through a stream carrying this facet therefore resolves under a
-/// directory component that does not exist, which is what turns "the name was
-/// formatted through the global locale" from an odd but usable filename into a
-/// create that fails.
+/// ostream, and '/' is a separator no path component can carry. A name built
+/// through a stream carrying this facet therefore resolves under a directory
+/// that does not exist, which is what turns "the name was formatted through
+/// the global locale" from an odd but usable filename into a create that
+/// fails.
 ///
 /// Built here rather than taken from the system, so the case using it does not
 /// depend on which locales the runner has generated.
@@ -1251,15 +1251,18 @@ TEST(MapIoWriteTest, BuildsTheTemporarysNameOutsideTheGlobalLocale) {
     // global locale therefore follows whatever separator the process has
     // installed. Measured with that name built verbatim: en_US.UTF-8 gives
     // '.maptitude-5,656-de,adb,eef.ccp4' and de_DE.UTF-8 gives
-    // '.maptitude-5.656-de.adb.eef.ccp4', against '.maptitude-5656-deadbeef'
-    // under C.
+    // '.maptitude-5.656-de.adb.eef.ccp4', against
+    // '.maptitude-5656-deadbeef.ccp4' under C.
     //
     // Both halves of that matter. The de_DE name carries three dot components
     // into a shape MakeTemporarySibling measured without any, and neither name
     // is one CountTemporarySiblings above matches -- it builds its prefix with
     // std::to_string, which never groups -- so under such a locale every
-    // EXPECT_EQ(CountTemporarySiblings(...), 0u) in this file matches nothing
-    // and passes without having looked at a temporary.
+    // EXPECT_EQ(CountTemporarySiblings(...), 0u) in this file matches no
+    // temporary the library made and passes without having looked at one. The
+    // decoys planted in this file are still matched, because they are built
+    // with std::to_string too, so the probes those cases run to show the
+    // counter can see something keep reporting that it can.
     //
     // A real grouping locale would not make that visible from here: the write
     // still succeeds and the vacuous count still reads zero. The facet
@@ -1267,9 +1270,14 @@ TEST(MapIoWriteTest, BuildsTheTemporarysNameOutsideTheGlobalLocale) {
     // under a directory that does not exist and the create refuses it -- errno
     // 2, measured, against the errno 17 a taken name gives. That refusal is
     // what this case asserts the absence of.
+    //
+    // A pid of two digits or more takes a separator of its own, and the hex
+    // beside it takes one per digit past its first. The assertion is on the
+    // pid because the hex is drawn from random_device: a run that drew a
+    // one-digit value would leave the name ungrouped without it.
     ASSERT_GT(::getpid(), 9)
-        << "a single-digit pid is one group, so the facet below would not "
-           "reach the name and this case would pass on nothing";
+        << "a single-digit pid takes no separator, so this case would have "
+           "nothing certain for the facet to group";
 
     const MapFile source = read_map(DataPath("test_map.ccp4"));
     ScratchPath out(".ccp4");

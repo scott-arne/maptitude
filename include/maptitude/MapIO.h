@@ -166,8 +166,9 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  *        filename, and a measured name carrying a "gz" dot-component ahead of
  *        ".ccp4" came out as a gzip stream. The format follows the extension
  *        because the gate here reads the extension, and the temporary handed
- *        to OEWriteGrid carries a basename of this writer's own rather than
- *        one built from @p path. This writer admits whatever OEGetGridFileType
+ *        to OEWriteGrid keeps @p path's extension and takes nothing else of
+ *        its name, so that whole-filename dispatch lands on the format the
+ *        gate already admitted. This writer admits whatever OEGetGridFileType
  *        maps to CCP4. In a thirty-spelling sweep that class was every
  *        spelling whose first three characters are "ccp", "map" or "mrc",
  *        compared case-insensitively, and nothing else: ".ccp4junk" and
