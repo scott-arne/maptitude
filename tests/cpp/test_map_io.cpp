@@ -1138,6 +1138,33 @@ TEST(MapIoWriteTest, RefusesACompressedDestination) {
     EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
 }
 
+TEST(MapIoWriteTest, WritesADestinationWhoseStemEndsInACompressionSuffix) {
+    // The other side of RefusesACompressedDestination. '.ccp4.gz' names a
+    // compressed file and is refused; 'x.gz.ccp4' names a plain CCP4 file and
+    // has to be written.
+    //
+    // OEWriteGrid reads the whole filename, not just the final suffix.
+    // Measured on four temporary-shaped names carrying the same grid,
+    // '.x.gz-<hex>.ccp4' came out gzipped while '.x-<hex>.ccp4',
+    // '.x.GZ-<hex>.ccp4' and '.x.y-<hex>.ccp4' came out plain. A temporary
+    // that embedded the destination's stem therefore got gzipped for both of
+    // the stems below, and PatchHeaderRecords then read the compressed bytes
+    // as a CCP4 header and refused the write against a garbage NSYMBT. Both
+    // stems, because '.gzz' shows the trigger is the dot-delimited component
+    // starting with "gz" rather than an exact '.gz' component.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    for (const char* extension : {".gz.ccp4", ".gzz.ccp4"}) {
+        SCOPED_TRACE(extension);
+        ScratchPath out(extension);
+        write_map(out.Str(), *source.grid, source.symops);
+        ASSERT_TRUE(std::filesystem::exists(out.Str()))
+            << "the write returned without producing " << out.Str();
+        ExpectRoundTrip(*source.grid, out.Str(), source.symops);
+        EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
+            << "the write left its hidden temporary beside " << out.Str();
+    }
+}
+
 TEST(MapIoWriteTest, RefusesAGridFormatOpenEyeWritesButThisPathCannotPatch) {
     // '.grd' is a format OpenEye writes -- OEGetGridFileType("grd") is GRD and
     // OEIsWriteableGrid accepts it -- but not one whose header holds the CCP4
