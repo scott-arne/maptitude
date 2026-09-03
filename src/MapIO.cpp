@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -22,6 +23,13 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+// The only POSIX headers under src/ or include/. MakeTemporarySibling has to
+// take its temporary's name rather than test for it, and C++17 has no
+// exclusive-create open mode -- std::ios::noreplace is C++23 -- so
+// std::ofstream can only test for the name and then use it.
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace Maptitude {
 
@@ -300,71 +308,92 @@ std::string MessageAgainstDestination(const std::string& message,
     return out;
 }
 
-/// A hidden sibling of @p dest that keeps its extension and does not yet exist.
+/// A hidden, empty sibling of @p dest that keeps its extension, created here
+/// and owned by the TemporaryFile returned.
 ///
 /// Same directory, so the rename stays within one filesystem where POSIX
 /// rename is atomic. Same extension, because OpenEye's format dispatch reads
 /// the name it is handed: a ".tmp" or ".ccp4.tmp" temporary is the case that
 /// aborts the process, and the check on the caller's path would not cover it.
 ///
-/// The basename is fixed rather than built from the destination's stem,
-/// because that dispatch reads the whole name and not only the final suffix.
-/// Measured with bare OEWriteGrid over four temporary-shaped names carrying
-/// one grid: ".x.gz-<hex>.ccp4" came out gzipped, while ".x-<hex>.ccp4",
+/// The basename is not built from the destination's stem, because that
+/// dispatch reads the whole name and not only the final suffix. Measured with
+/// bare OEWriteGrid over four temporary-shaped names carrying one grid:
+/// ".x.gz-<hex>.ccp4" came out gzipped, while ".x-<hex>.ccp4",
 /// ".x.GZ-<hex>.ccp4" and ".x.y-<hex>.ccp4" came out plain. So a destination
 /// named "x.gz.ccp4" -- a plain CCP4 file by its own extension, and one the
 /// compression guard on the caller's path passes -- got a gzipped temporary
 /// out of the old scheme, and PatchHeaderRecords then read those compressed
 /// bytes as a CCP4 header and refused the write against a garbage NSYMBT.
 /// ".maptitude-<hex>.ccp4" was measured plain for that same destination, and
-/// the file it produced read back through read_map.
+/// the file it produced read back through read_map. The pid this name now also
+/// carries is decimal digits, so it adds no dot component to the shape those
+/// four measured; the ".gz.ccp4" and ".gzz.ccp4" write cases exercise the name
+/// that results.
 ///
-/// The existence check is a filter, not a reservation. It closes the case that
-/// actually happens -- a temporary left behind by a crashed or killed run,
-/// which would otherwise be silently truncated and could collide again on the
-/// next call if std::random_device degrades to a deterministic sequence. It
-/// does not close a TOCTOU race against a concurrent writer; nothing short of
-/// an atomic create would, and mkstemps -- the obvious way to get one -- moves
-/// the permissions rather than fixing them.
+/// The name is taken, not merely chosen. Two things keep concurrent writers
+/// off one another's temporary: the pid gives each process its own space of
+/// names, and O_CREAT | O_EXCL claims one of them in the same step that tests
+/// it. An exists() call ahead of the open cannot do that -- it is a filter, and
+/// a second writer can slip between the test and the use. A name already held
+/// comes back as EEXIST and the loop draws another; the GridError at the bottom
+/// is what a run of MAX_ATTEMPTS collisions raises. Any other errno is not a
+/// collision, so it is reported as itself instead of being retried into that
+/// message.
 ///
-/// Neither scheme preserves the destination's mode, because the rename replaces
-/// its inode either way. Measured on this machine under umask 0022: an ordinary
-/// create lands at 0644, mkstemps at 0600, and the rename carries whichever one
-/// onto the destination. So mkstemps would publish every map readable only by
-/// its writer, while the scheme used here silently widens a destination the
-/// caller had narrowed -- 0600 back to 0644 on rewrite. Trading a visible
-/// regression on every write for an invisible one on rewrites of a restricted
-/// file is the choice made, not a permissions-preserving option that mkstemps
-/// lacks; the caller-facing consequences are stated on write_map.
+/// A temporary left behind by a crashed or killed run is covered by the same
+/// EEXIST -- skipped rather than truncated -- which is what the old existence
+/// check was there for. Pids are reused, so the name space a leftover sits in
+/// does not retire with the process that made it; the exclusive create, not the
+/// pid, is what makes that harmless.
 ///
-/// The race itself stays open deliberately, and the fixed basename widens what
-/// it leaves open. Two concurrent write_map calls to the same destination are
-/// already unsafe at the rename regardless of how the temporary is named, so a
-/// reservation would buy nothing the caller can rely on there. What the stem
-/// added was that calls to *different* destinations in one directory drew
-/// their temporaries from disjoint name spaces; they now draw from one shared
-/// space, narrowed only by the entropy and the extension, so two of them can
-/// select the same name and write one file between them. An overwrite that
-/// lands while write_map still has verifying left to do is the case its verify
-/// catches: that verify compares dimensions, cell, spacing, node 0, every
-/// voxel, the symmetry block as both text and bytes, and the two placement
-/// records, against what this call meant to write, so an overwrite differing
-/// in any of those refuses the write rather than publishing it. An overwrite
-/// landing after the last of those checks and before the rename is checked by
-/// nothing, and puts the other call's bytes at this call's destination. The
-/// tradeoff is recorded here, not closed: closing it wants the atomic create
-/// the paragraph above declines.
-std::filesystem::path MakeTemporarySibling(const std::filesystem::path& dest) {
+/// The mode argument is 0666, so the process umask narrows the temporary as it
+/// narrows an ordinary create. That is why this reaches for open() rather than
+/// mkstemps, the obvious way to get an atomic create: mkstemps moves the
+/// permissions rather than fixing them. Neither scheme preserves the
+/// destination's mode, because the rename replaces its inode either way.
+/// Measured on this machine under umask 0022: an ordinary create lands at 0644,
+/// mkstemps at 0600, and the rename carries whichever one onto the destination.
+/// So mkstemps would publish every map readable only by its writer, while the
+/// scheme used here silently widens a destination the caller had narrowed --
+/// 0600 back to 0644 on rewrite. Trading a visible regression on every write
+/// for an invisible one on rewrites of a restricted file is the choice made,
+/// not a permissions-preserving option that mkstemps lacks; the caller-facing
+/// consequences are stated on write_map.
+///
+/// OEWriteGrid is therefore handed a name that already exists. Measured against
+/// this reservation on tests/data/test_map.ccp4 under umask 0022: it returned
+/// true, filled the empty file, left the mode at the 0644 the create had
+/// produced, and the result read back through read_map as the grid written.
+/// The destination that rename published carried the same 0644 an unreserved
+/// OEWriteGrid create produced at a destination beside it.
+///
+/// What the reservation does not close is two write_map calls naming one
+/// destination. Each now holds a temporary no concurrent writer holds, so the
+/// exposure recorded here before is gone: two calls selecting one name, writing
+/// one file between them, and one of them publishing the other's bytes at this
+/// call's destination. The two renames still land in some order, and the
+/// destination keeps whichever went last. The temporary's name has no bearing
+/// on that; the contention there is over the destination.
+TemporaryFile MakeTemporarySibling(const std::filesystem::path& dest) {
     constexpr int MAX_ATTEMPTS = 8;
     std::random_device entropy;
     for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
         std::ostringstream name;
-        name << ".maptitude-" << std::hex << entropy()
-             << dest.extension().string();
+        name << ".maptitude-" << static_cast<long>(::getpid()) << '-'
+             << std::hex << entropy() << dest.extension().string();
         std::filesystem::path candidate = dest.parent_path() / name.str();
-        std::error_code ignored;
-        if (!std::filesystem::exists(candidate, ignored)) {
-            return candidate;
+        const int reserved =
+            ::open(candidate.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+        if (reserved >= 0) {
+            ::close(reserved);
+            return TemporaryFile(std::move(candidate));
+        }
+        if (errno != EEXIST) {
+            throw GridError(
+                "Cannot write '" + dest.string() +
+                "': cannot create a temporary beside it: " +
+                std::error_code(errno, std::generic_category()).message());
         }
     }
     throw GridError("Cannot write '" + dest.string() +
@@ -794,7 +823,9 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
     }
 
     const std::filesystem::path dest(path);
-    TemporaryFile temporary(MakeTemporarySibling(dest));
+    // MakeTemporarySibling creates the file it names, so it hands back the
+    // owner rather than a path a caller has to remember to wrap.
+    TemporaryFile temporary = MakeTemporarySibling(dest);
 
     // Step 3.
     if (!OESystem::OEWriteGrid(temporary.Path().string(), out)) {

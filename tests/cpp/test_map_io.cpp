@@ -286,25 +286,30 @@ std::string ReadBytesAt(const std::string& path, const std::size_t offset,
 }
 
 /// Count the files beside @p destination whose names have the shape write_map's
-/// temporary takes: ".maptitude-" + <hex> + extension, in the destination's own
-/// directory.
+/// temporary takes in *this* process: ".maptitude-" + <pid> + "-" + <hex> +
+/// extension, in the destination's own directory.
 ///
 /// The hex comes from std::random_device, so the name cannot be predicted and
 /// the shape has to be matched instead. Enumerating the parent and requiring it
 /// empty would not do: TempDir() is shared with the other scratch helpers in
 /// this file, and under `ctest -j 8` with other processes' files as well.
 ///
-/// The pattern no longer carries the destination's stem, because write_map's
-/// temporary no longer does, so this counts every temporary of the matching
-/// extension in the directory rather than only the ones belonging to
-/// @p destination. Within one process the two coincide: this file makes no
-/// concurrent write_map call, so no other destination's temporary is live when
-/// a count runs. Across processes they do not -- under `ctest -j 8` a
-/// temporary belonging to another process's write, live for the milliseconds
-/// between OEWriteGrid and the rename, is counted here.
+/// The pattern carries no destination stem, because write_map's temporary
+/// carries none either, so this counts every temporary of this process and of
+/// the matching extension in the directory rather than only the ones belonging
+/// to @p destination. Those coincide here: this file makes no concurrent
+/// write_map call, so no other destination's temporary of this process is live
+/// when a count runs.
+///
+/// The pid in the pattern is what keeps another process's temporary out. A
+/// leftover from a run that was killed or that crashed does not disappear when
+/// its process does, so without the pid it would be counted by every later
+/// assertion whose destination carried the same extension, in a serial run as
+/// readily as under `ctest -j 8`.
 std::size_t CountTemporarySiblings(const std::string& destination) {
     const std::filesystem::path dest(destination);
-    const std::string prefix = ".maptitude-";
+    const std::string prefix =
+        ".maptitude-" + std::to_string(::getpid()) + "-";
     const std::string suffix = dest.extension().string();
 
     std::error_code error;
