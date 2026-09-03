@@ -24,6 +24,7 @@
 #include <system_error>
 #include <vector>
 
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <oegrid.h>
@@ -327,21 +328,46 @@ std::size_t CountTemporarySiblings(const std::string& destination) {
 /// A file with the name shape CountTemporarySiblings looks for, planted beside
 /// a destination so a test can show that counter is capable of seeing one.
 ///
-/// The pid is in the name because the shape is no longer destination-specific:
-/// two processes planting ".maptitude-decoy.ccp4" in a shared TempDir would
-/// remove it from under each other.
+/// The pid sits where write_map's temporary carries it, so the decoy is of the
+/// shape this process's own temporary takes. That also keeps two processes
+/// planting a decoy in a shared TempDir from removing it from under each other.
 class DecoySibling {
 public:
     explicit DecoySibling(const std::string& destination) {
         const std::filesystem::path dest(destination);
         path_ = (dest.parent_path() /
-                 (".maptitude-decoy" + std::to_string(::getpid()) +
+                 (".maptitude-" + std::to_string(::getpid()) + "-decoy" +
                   dest.extension().string()))
                     .string();
         std::ofstream out(path_, std::ios::binary);
         out << "decoy";
     }
     ~DecoySibling() { std::remove(path_.c_str()); }
+    const std::string& Str() const { return path_; }
+
+private:
+    std::string path_;
+};
+
+/// A file of the shape write_map's temporary takes in a *different* process,
+/// planted beside a destination so a test can show this process's leak count
+/// does not attribute it here.
+///
+/// The pid written into the name is 0, which no test process holds. That is
+/// what makes the file safe to plant in a TempDir shared under `ctest -j`: a
+/// concurrent test process scoping its own count to its own pid cannot match
+/// it, so this file's presence cannot fail somebody else's leak assertion.
+class StaleSibling {
+public:
+    explicit StaleSibling(const std::string& destination) {
+        const std::filesystem::path dest(destination);
+        path_ = (dest.parent_path() /
+                 (".maptitude-0-stale" + dest.extension().string()))
+                    .string();
+        std::ofstream out(path_, std::ios::binary);
+        out << "stale";
+    }
+    ~StaleSibling() { std::remove(path_.c_str()); }
     const std::string& Str() const { return path_; }
 
 private:
@@ -1049,6 +1075,134 @@ TEST(MapIoWriteTest, ARefusedWriteLeavesNoHiddenTemporaryBehind) {
     EXPECT_THROW(write_map(out.Str(), doomed), GridError);
     EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
         << "a refused write left its temporary beside " << out.Str();
+}
+
+TEST(MapIoWriteTest, WritesPastASiblingOfTheTemporaryNameShape) {
+    // write_map reserves its temporary's name with an exclusive create, so a
+    // name already taken is skipped rather than truncated. This case does not
+    // force that skip and does not claim to: the name carries 32 bits of
+    // std::random_device, which is not injectable, so a decoy cannot be made to
+    // collide with it. What it pins is the reachable half -- a file of the shape
+    // the reservation draws from, sitting beside the destination, neither blocks
+    // the write nor is written through.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath out(".ccp4");
+    const DecoySibling decoy(out.Str());
+
+    write_map(out.Str(), *source.grid, source.symops);
+    ExpectRoundTrip(*source.grid, out.Str(), source.symops);
+
+    EXPECT_EQ(ReadBytesAt(decoy.Str(), 0, 5), "decoy")
+        << "the write went through " << decoy.Str();
+    EXPECT_EQ(CountTemporarySiblings(out.Str()), 1u)
+        << "the count beside " << out.Str()
+        << " is not the planted decoy alone, so the write left a temporary";
+}
+
+TEST(MapIoWriteTest, LeavesTheDestinationAtTheModeAnOrdinaryCreateGives) {
+    // The destination is published by renaming the temporary onto it, so the
+    // mode the caller sees is the temporary's. write_map creates that temporary
+    // with 0666 and lets the umask narrow it, which is what puts it where an
+    // ordinary create lands. Creating it 0600 -- what mkstemps does -- would
+    // publish every map readable only by its writer. That decision was recorded
+    // in a comment on MakeTemporarySibling and asserted nowhere.
+    //
+    // The reference is an ordinary create in the same directory rather than a
+    // hardcoded 0644, so the case says the same thing under whatever umask the
+    // suite runs.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+
+    ScratchPath reference(".reference");
+    {
+        std::ofstream ordinary(reference.Str(), std::ios::binary);
+        ASSERT_TRUE(ordinary.good()) << "cannot create " << reference.Str();
+        ordinary << "reference";
+    }
+    struct ::stat reference_info {};
+    ASSERT_EQ(::stat(reference.Str().c_str(), &reference_info), 0)
+        << "cannot stat " << reference.Str();
+
+    ScratchPath out(".ccp4");
+    write_map(out.Str(), *source.grid, source.symops);
+    struct ::stat written_info {};
+    ASSERT_EQ(::stat(out.Str().c_str(), &written_info), 0)
+        << "cannot stat " << out.Str();
+
+    EXPECT_EQ(written_info.st_mode & 07777u, reference_info.st_mode & 07777u)
+        << "the written map's mode is not the one an ordinary create gives in "
+           "this directory under this umask";
+}
+
+TEST(MapIoWriteTest, DoesNotAttributeAnotherProcessesTemporaryToThisWrite) {
+    // Measured, not argued. With the temporary's name carrying no pid, a serial
+    // run whose TemporaryFile cleanup had been neutered left four
+    // '.maptitude-<hex>.ccp4' files behind, one per test process that threw
+    // after creating one; a later test's leak assertion then reported 4 against
+    // 0. Those four processes had already exited, so `ctest -j` was not what
+    // exposed it and the window was not the milliseconds between OEWriteGrid
+    // and the rename. A temporary that outlives its run is counted from then on
+    // by every assertion whose destination carries the same extension.
+    //
+    // The pid in the name is what scopes the count to this process. The stale
+    // file below is of exactly the counted shape apart from that pid.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath out(".ccp4");
+    const StaleSibling stale(out.Str());
+
+    // A count of zero at the end says nothing if the counter matches nothing at
+    // all. Show it still sees this process's own shape in this directory.
+    const std::size_t baseline = CountTemporarySiblings(out.Str());
+    {
+        const DecoySibling decoy(out.Str());
+        ASSERT_EQ(CountTemporarySiblings(out.Str()), baseline + 1u)
+            << "the sibling probe cannot see " << decoy.Str()
+            << ", so its count below would say nothing";
+    }
+
+    write_map(out.Str(), *source.grid, source.symops);
+    EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
+        << "the count attributed " << stale.Str()
+        << " to this write, though its name carries another process's pid";
+}
+
+TEST(MapIoWriteTest, ReservesTheTemporaryBeforeHandingTheNameToOEWriteGrid) {
+    // The reservation is an exclusive create, so a directory that cannot hold
+    // the temporary fails at that create and the message names it. Without the
+    // reservation the same call carried an unwritable name all the way to
+    // OEWriteGrid, which reported only that it had failed -- so this separates
+    // "the name was taken first" from "the name was merely chosen first".
+    //
+    // A parent directory that does not exist is the cheapest way to make the
+    // create fail. OEWriteGrid returns false rather than aborting on such a
+    // path, measured for a '.ccp4' name, so the pre-reservation behavior this
+    // discriminates against is a catchable GridError and not a killed process.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    const std::filesystem::path absent =
+        std::filesystem::path(::testing::TempDir()) /
+        ("maptitude_absent_reserve_" + std::to_string(::getpid()));
+    ASSERT_FALSE(std::filesystem::exists(absent))
+        << "the parent directory exists, so the temporary's create would "
+           "succeed: " << absent.string();
+    const std::string out = (absent / "out.ccp4").string();
+
+    try {
+        write_map(out, *source.grid, source.symops);
+        FAIL() << "expected GridError: the temporary cannot be created in a "
+                  "directory that does not exist";
+    } catch (const GridError& error) {
+        const std::string message(error.what());
+        EXPECT_NE(message.find(out), std::string::npos)
+            << "the message does not name the destination: " << message;
+        EXPECT_NE(message.find("temporary"), std::string::npos)
+            << "the message does not name the temporary whose create failed: "
+            << message;
+        EXPECT_EQ(message.find("OEWriteGrid"), std::string::npos)
+            << "the name reached OEWriteGrid, so it was not reserved ahead of "
+               "it: " << message;
+    }
+
+    EXPECT_FALSE(std::filesystem::exists(absent))
+        << "a refused write created the destination's parent directory";
 }
 
 TEST(MapIoWriteTest, RoundTripsAPermutedAxisOrder) {
