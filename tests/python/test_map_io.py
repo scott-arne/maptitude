@@ -410,19 +410,36 @@ def test_a_refused_write_leaves_the_destination_alone(tmp_path):
     assert out.read_bytes() == before
 
 
-def test_write_map_rejects_invalid_path_types(tmp_path):
-    """Correction 1 test: os.fspath contract pins None and pathlib.Path."""
+def test_write_map_accepts_a_string_path(tmp_path):
+    # Every other write case here passes a pathlib.Path, so str is the spelling
+    # nothing else covers.
     source = read_map(_DATA_DIR / "test_map.ccp4")
-
-    # None should raise TypeError from os.fspath
-    with pytest.raises(TypeError):
-        maptitude.write_map(None, source.grid)
-
-    # Verify no file was created (None becomes "None" with str())
-    assert not (tmp_path / "None").exists()
-
-    # pathlib.Path should be accepted
-    out = tmp_path / "from_pathlib.ccp4"
-    maptitude.write_map(out, source.grid, source.symops)
-    assert out.exists()
+    out = tmp_path / "from_str.ccp4"
+    maptitude.write_map(str(out), source.grid)
     assert read_map(out).grid.GetSize() == 9261
+
+
+@pytest.mark.parametrize(
+    "bad", [None, 3, ["m.ccp4"], b"tests/data/test_map.ccp4"])
+def test_write_map_rejects_arguments_that_are_not_paths(bad, tmp_path,
+                                                        monkeypatch):
+    # Task 3's read_map case in write form, where a str(path) body costs more
+    # than a misleading error: str(["m.ccp4"]) is "['m.ccp4']", whose extension
+    # std::filesystem reports as ".ccp4']", which the extension gate admits, so
+    # that argument writes a real map under a name the caller never gave.  The
+    # chdir puts that name inside tmp_path, which is what gives the directory
+    # check a place to look, and the refusal is caught rather than wrapped in
+    # pytest.raises so the check runs for an argument the call accepts too.
+    # os.fspath rejects the first three; the std::string typemap rejects the
+    # bytes, which os.fspath passes through unchanged.
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    monkeypatch.chdir(tmp_path)
+
+    refusal = None
+    try:
+        maptitude.write_map(bad, source.grid)
+    except TypeError as error:
+        refusal = error
+
+    assert list(tmp_path.iterdir()) == []
+    assert refusal is not None
