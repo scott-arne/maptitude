@@ -150,10 +150,11 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  *
  * A successful write replaces the destination's inode rather than rewriting it
  * in place, so three properties of an existing destination do not survive. Its
- * mode resets to whatever an ordinary create gives, which under POSIX is the
- * process umask, widening a permission the caller had narrowed. Hard links to
- * it keep the old contents under their own names. A destination that was a
- * symlink becomes a regular file, with its former target left untouched.
+ * mode resets to whatever an ordinary create gives, which under POSIX is 0666
+ * narrowed by the process umask, widening a permission the caller had
+ * narrowed. Hard links to it keep the old contents under their own names. A
+ * destination that was a symlink becomes a regular file, with its former
+ * target left untouched.
  *
  * The verification covers the bytes this function wrote, not the bytes that
  * arrive at @p path. It writes and checks a temporary beside the destination
