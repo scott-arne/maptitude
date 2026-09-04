@@ -1628,6 +1628,8 @@ def combine_maps(lhs, rhs, op):
     :param rhs: Right-hand side grid.
     :param op: MapOp enum value (ADD, SUBTRACT, MIN, MAX).
     :returns: New OESkewGrid with combined values.
+    :raises TypeError: When op is not an integer.
+    :raises ValueError: When op is outside the range of declared MapOp enumerators.
     """
     return _cpp_combine_maps(lhs, rhs, op)
 
@@ -1683,7 +1685,7 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
     :returns: A :class:`MapFile` of ``(grid, symops)``.
     :raises TypeError: If ``path`` is neither a ``str`` nor an :class:`os.PathLike`.
         A ``bytes`` path is also rejected, by the ``std::string`` typemap rather than
-        by ``os.fspath``.
+        by ``os.fspath``. Also if ``tiebreak`` is not an integer.
     :raises CellError: If the file's sampling is not axis-aligned. maptitude
         requires an orthorhombic cell; a skewed one is rejected on read.
     :raises GridError: If the file cannot be read, its header cannot be
@@ -1693,6 +1695,7 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
         unchanged: the calls that open the file stop at the NUL, so the name
         given and the name opened are not the same name.
     :raises SymOpError: If the symmetry block is present and does not parse.
+    :raises ValueError: When tiebreak is outside the range of declared OriginSource enumerators.
 
     Example::
 

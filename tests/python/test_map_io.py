@@ -501,3 +501,36 @@ def test_read_map_scores_the_same_as_the_retired_loader():
         pytest.approx(_EXPECTED_RSR, abs=1e-9))
     assert maptitude.qscore(mol, grid, 1.60).overall == (
         pytest.approx(_EXPECTED_QSCORE, abs=1e-9))
+
+
+def test_combine_maps_rejects_an_out_of_range_op():
+    """An out-of-range op used to return an all-zero grid with no error."""
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    other = read_map(_DATA_DIR / "test_map.ccp4")
+    with pytest.raises(ValueError):
+        maptitude.combine_maps(source.grid, other.grid, 99)
+
+
+def test_combine_maps_rejects_a_non_integer_op():
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    other = read_map(_DATA_DIR / "test_map.ccp4")
+    with pytest.raises(TypeError):
+        maptitude.combine_maps(source.grid, other.grid, "ADD")
+
+
+def test_combine_maps_still_accepts_every_valid_op():
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    other = read_map(_DATA_DIR / "test_map.ccp4")
+    for op in (maptitude.MapOp.ADD, maptitude.MapOp.SUBTRACT,
+               maptitude.MapOp.MIN, maptitude.MapOp.MAX):
+        assert maptitude.combine_maps(source.grid, other.grid, op) is not None
+
+
+def test_read_map_rejects_an_out_of_range_tiebreak():
+    with pytest.raises(ValueError):
+        read_map(_DATA_DIR / "test_map.ccp4", 99)
+
+
+def test_read_map_still_accepts_both_tiebreaks():
+    for tiebreak in (OriginSource.ORIGIN_RECORD, OriginSource.NXSTART):
+        assert read_map(_DATA_DIR / "test_map.ccp4", tiebreak).grid is not None

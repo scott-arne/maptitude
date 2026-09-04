@@ -692,6 +692,43 @@ enum class OriginSource {
     NXSTART
 };
 
+// SWIG's default scoped-enum conversion accepts any integer and casts it, so an
+// out-of-range op reached the C++ switch and fell through to an all-zero grid
+// with no error. These narrow the boundary to the declared enumerators.
+%typemap(in) Maptitude::MapOp {
+    if (!PyLong_Check($input)) {
+        SWIG_exception_fail(SWIG_TypeError,
+                            "op must be one of maptitude.MapOp.ADD, "
+                            ".SUBTRACT, .MIN or .MAX");
+    }
+    const long op_value = PyLong_AsLong($input);
+    if (op_value == -1 && PyErr_Occurred()) SWIG_fail;
+    if (op_value < 0 || op_value > 3) {
+        PyErr_Format(PyExc_ValueError,
+                     "MapOp value %ld is out of range; expected 0-3 "
+                     "(ADD, SUBTRACT, MIN, MAX)", op_value);
+        SWIG_fail;
+    }
+    $1 = static_cast<Maptitude::MapOp>(op_value);
+}
+
+%typemap(in) Maptitude::OriginSource {
+    if (!PyLong_Check($input)) {
+        SWIG_exception_fail(SWIG_TypeError,
+                            "tiebreak must be maptitude.OriginSource."
+                            "ORIGIN_RECORD or .NXSTART");
+    }
+    const long source_value = PyLong_AsLong($input);
+    if (source_value == -1 && PyErr_Occurred()) SWIG_fail;
+    if (source_value < 0 || source_value > 1) {
+        PyErr_Format(PyExc_ValueError,
+                     "OriginSource value %ld is out of range; expected 0-1 "
+                     "(ORIGIN_RECORD, NXSTART)", source_value);
+        SWIG_fail;
+    }
+    $1 = static_cast<Maptitude::OriginSource>(source_value);
+}
+
 // ============================================================================
 // Residue struct
 // ============================================================================
@@ -1496,6 +1533,8 @@ def combine_maps(lhs, rhs, op):
     :param rhs: Right-hand side grid.
     :param op: MapOp enum value (ADD, SUBTRACT, MIN, MAX).
     :returns: New OESkewGrid with combined values.
+    :raises TypeError: When op is not an integer.
+    :raises ValueError: When op is outside the range of declared MapOp enumerators.
     """
     return _cpp_combine_maps(lhs, rhs, op)
 
@@ -1551,7 +1590,7 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
     :returns: A :class:`MapFile` of ``(grid, symops)``.
     :raises TypeError: If ``path`` is neither a ``str`` nor an :class:`os.PathLike`.
         A ``bytes`` path is also rejected, by the ``std::string`` typemap rather than
-        by ``os.fspath``.
+        by ``os.fspath``. Also if ``tiebreak`` is not an integer.
     :raises CellError: If the file's sampling is not axis-aligned. maptitude
         requires an orthorhombic cell; a skewed one is rejected on read.
     :raises GridError: If the file cannot be read, its header cannot be
@@ -1561,6 +1600,7 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
         unchanged: the calls that open the file stop at the NUL, so the name
         given and the name opened are not the same name.
     :raises SymOpError: If the symmetry block is present and does not parse.
+    :raises ValueError: When tiebreak is outside the range of declared OriginSource enumerators.
 
     Example::
 
