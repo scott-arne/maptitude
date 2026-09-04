@@ -8,10 +8,12 @@ typed exceptions still land as their Python classes.
 
 from __future__ import annotations
 
+import ctypes
 import struct
 from pathlib import Path
 
 import maptitude
+import numpy as np
 import pytest
 from maptitude import (
     CellError,
@@ -518,6 +520,14 @@ def test_combine_maps_rejects_a_non_integer_op():
         maptitude.combine_maps(source.grid, other.grid, "ADD")
 
 
+def test_combine_maps_rejects_a_bool_op():
+    """True would otherwise be SUBTRACT and False would be ADD, silently."""
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    for value in (True, False):
+        with pytest.raises(TypeError, match="op must be one of"):
+            maptitude.combine_maps(source.grid, source.grid, value)
+
+
 def test_combine_maps_still_accepts_every_valid_op():
     source = read_map(_DATA_DIR / "test_map.ccp4")
     other = read_map(_DATA_DIR / "test_map.ccp4")
@@ -541,16 +551,42 @@ def test_read_map_rejects_a_non_integer_tiebreak():
         read_map(_DATA_DIR / "test_map.ccp4", "ORIGIN_RECORD")
 
 
+def test_read_map_rejects_a_bool_tiebreak():
+    for value in (True, False):
+        with pytest.raises(TypeError, match="tiebreak must be"):
+            read_map(_DATA_DIR / "test_map.ccp4", value)
+
+
 def test_the_enum_boundary_is_the_width_of_a_c_long():
-    """The docstrings promise ValueError inside a C long and OverflowError past it."""
+    """The docstrings promise ValueError inside a C long and OverflowError past it.
+
+    The limits are derived rather than written out: a C ``long`` is 64-bit on LP64
+    platforms and 32-bit on Windows, and the documented claim is about the type, not
+    about either width.
+    """
+    long_max = 2 ** (8 * ctypes.sizeof(ctypes.c_long) - 1) - 1
+    long_min = -long_max - 1
     source = read_map(_DATA_DIR / "test_map.ccp4")
-    for value in (2**63 - 1, -(2**63)):
+    for value in (long_max, long_min):
         with pytest.raises(ValueError):
             maptitude.combine_maps(source.grid, source.grid, value)
         with pytest.raises(ValueError):
             read_map(_DATA_DIR / "test_map.ccp4", value)
-    for value in (2**63, -(2**63) - 1):
+    for value in (long_max + 1, long_min - 1):
         with pytest.raises(OverflowError):
             maptitude.combine_maps(source.grid, source.grid, value)
         with pytest.raises(OverflowError):
             read_map(_DATA_DIR / "test_map.ccp4", value)
+
+
+@pytest.mark.parametrize(
+    "scalar",
+    [np.int8(0), np.int32(0), np.int64(0), np.uint64(0), np.longlong(0)],
+)
+def test_the_enum_boundary_rejects_numpy_integer_scalars(scalar):
+    """The docstrings promise the check is on the Python type, not on integer-ness."""
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    with pytest.raises(TypeError, match="op must be one of"):
+        maptitude.combine_maps(source.grid, source.grid, scalar)
+    with pytest.raises(TypeError, match="tiebreak must be"):
+        read_map(_DATA_DIR / "test_map.ccp4", scalar)

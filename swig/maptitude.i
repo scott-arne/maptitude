@@ -696,7 +696,7 @@ enum class OriginSource {
 // out-of-range op reached the C++ switch and fell through to an all-zero grid
 // with no error. These narrow the boundary to the declared enumerators.
 %typemap(in) Maptitude::MapOp {
-    if (!PyLong_Check($input)) {
+    if (PyBool_Check($input) || !PyLong_Check($input)) {
         SWIG_exception_fail(SWIG_TypeError,
                             "op must be one of maptitude.MapOp.ADD, "
                             ".SUBTRACT, .MIN or .MAX");
@@ -713,7 +713,7 @@ enum class OriginSource {
 }
 
 %typemap(in) Maptitude::OriginSource {
-    if (!PyLong_Check($input)) {
+    if (PyBool_Check($input) || !PyLong_Check($input)) {
         SWIG_exception_fail(SWIG_TypeError,
                             "tiebreak must be maptitude.OriginSource."
                             "ORIGIN_RECORD or .NXSTART");
@@ -1533,8 +1533,10 @@ def combine_maps(lhs, rhs, op):
     :param rhs: Right-hand side grid.
     :param op: MapOp enum value (ADD, SUBTRACT, MIN, MAX).
     :returns: New OESkewGrid with combined values.
-    :raises TypeError: When ``op`` is not a Python ``int``. A NumPy integer
-        scalar is rejected here too, since the check is on the Python type.
+    :raises TypeError: When ``op`` is not a Python ``int``, or is a ``bool``.
+        ``bool`` subclasses ``int``, but neither ``True`` nor ``False`` names an
+        operation, so both are rejected. A NumPy integer scalar is rejected here
+        too, since the check is on the Python type.
     :raises ValueError: When ``op`` is an ``int`` outside 0-3 that fits in a C
         ``long``. One too large to fit raises ``OverflowError`` instead.
     """
@@ -1593,8 +1595,10 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
     :raises TypeError: If ``path`` is neither a ``str`` nor an
         :class:`os.PathLike`. A ``bytes`` path is also rejected, by the
         ``std::string`` typemap rather than by ``os.fspath``. Also when
-        ``tiebreak`` is not a Python ``int``. A NumPy integer scalar is
-        rejected here too, since the check is on the Python type.
+        ``tiebreak`` is not a Python ``int``, or is a ``bool``. ``bool``
+        subclasses ``int``, but neither ``True`` nor ``False`` names a tiebreak
+        rule, so both are rejected. A NumPy integer scalar is rejected here
+        too, since the check is on the Python type.
     :raises CellError: If the file's sampling is not axis-aligned. maptitude
         requires an orthorhombic cell; a skewed one is rejected on read.
     :raises GridError: If the file cannot be read, its header cannot be
