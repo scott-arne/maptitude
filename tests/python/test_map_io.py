@@ -586,11 +586,15 @@ def test_the_enum_boundary_rejects_minus_one_as_a_value_not_a_sentinel():
     conjunct would send a real -1 to SWIG_fail with no exception set; this test is what
     notices. Its pair is the OverflowError assertion above, which is what notices if the
     sentinel check is dropped altogether.
+
+    The patterns are anchored and carry the trailing text because ``match=`` is an
+    unanchored ``re.search``: a bare ``MapOp value -1`` also matches the message for
+    ``-10``, ``-100`` and every other value whose digits begin with ``1``.
     """
     source = read_map(_DATA_DIR / "test_map.ccp4")
-    with pytest.raises(ValueError, match="MapOp value -1"):
+    with pytest.raises(ValueError, match=r"^MapOp value -1 is out of range;"):
         maptitude.combine_maps(source.grid, source.grid, -1)
-    with pytest.raises(ValueError, match="OriginSource value -1"):
+    with pytest.raises(ValueError, match=r"^OriginSource value -1 is out of range;"):
         read_map(_DATA_DIR / "test_map.ccp4", -1)
 
 
