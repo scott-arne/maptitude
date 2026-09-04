@@ -149,8 +149,8 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * than leaving a silently wrong map on disk or destroying a good one.
  *
  * A successful write replaces the destination's inode rather than rewriting it
- * in place, so three properties of an existing destination do not survive.
- * Under POSIX, its mode resets to whatever an ordinary create gives under the
+ * in place, so three properties of an existing destination do not survive. Its
+ * mode resets to whatever an ordinary create gives, which under POSIX is the
  * process umask, widening a permission the caller had narrowed. Hard links to
  * it keep the old contents under their own names. A destination that was a
  * symlink becomes a regular file, with its former target left untouched.

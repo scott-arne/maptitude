@@ -1581,8 +1581,8 @@ def write_map(path, grid, symops=""):
 
     A successful write replaces the destination's inode rather than rewriting
     it in place, so three properties of an existing destination do not survive.
-    Under POSIX, its mode resets to whatever an ordinary create gives under the
-    process umask. Hard links to it keep the old contents under their own
+    Its mode resets to whatever an ordinary create gives, which under POSIX is
+    the process umask. Hard links to it keep the old contents under their own
     names. A destination that was a symlink becomes a regular file, with its
     former target left untouched.
 
