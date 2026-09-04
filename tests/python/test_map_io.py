@@ -270,7 +270,7 @@ def test_write_map_carries_the_em_origin(tmp_path):
     assert after.z_origin == pytest.approx(120.517, abs=1e-3)
 
 
-def test_write_map_accepts_both_writable_extensions(tmp_path):
+def test_write_map_accepts_the_ccp4_and_mrc_spellings(tmp_path):
     source = read_map(_DATA_DIR / "test_map.ccp4")
     for name in ("out.ccp4", "out.mrc"):
         out = tmp_path / name
@@ -380,9 +380,9 @@ def _padded_sub_box(source):
 
     cell = get_unit_cell(source.grid)
     padded = wrap_and_pad_grid(source.grid, mol, cell.a, cell.b, cell.c)
-    assert padded is not None, (
-        "wrap_and_pad_grid returned None, so the ligand already fits and there "
-        "is no sub-box to refuse"
+    assert padded is not source.grid, (
+        "wrap_and_pad_grid returned the grid it was given, so the ligand already "
+        "fits and there is no sub-box to refuse"
     )
     return padded
 
@@ -411,8 +411,8 @@ def test_a_refused_write_leaves_the_destination_alone(tmp_path):
 
 
 def test_write_map_accepts_a_string_path(tmp_path):
-    # Every other write case here passes a pathlib.Path, so str is the spelling
-    # nothing else covers.
+    # Every other case that writes successfully passes a pathlib.Path, so str
+    # is the spelling nothing else covers.
     source = read_map(_DATA_DIR / "test_map.ccp4")
     out = tmp_path / "from_str.ccp4"
     maptitude.write_map(str(out), source.grid)
@@ -426,10 +426,11 @@ def test_write_map_rejects_arguments_that_are_not_paths(bad, tmp_path,
     # Task 3's read_map case in write form, where a str(path) body costs more
     # than a misleading error: str(["m.ccp4"]) is "['m.ccp4']", whose extension
     # std::filesystem reports as ".ccp4']", which the extension gate admits, so
-    # that argument writes a real map under a name the caller never gave.  The
-    # chdir puts that name inside tmp_path, which is what gives the directory
-    # check a place to look, and the refusal is caught rather than wrapped in
-    # pytest.raises so the check runs for an argument the call accepts too.
+    # under a str(path) body that argument writes a real map under a name the
+    # caller never gave. The chdir puts that name inside tmp_path, which is what
+    # gives the directory check a place to look, and the refusal is caught
+    # rather than wrapped in pytest.raises so the directory check runs even for
+    # the list argument, which is the one a str(path) body does not refuse.
     # os.fspath rejects the first three; the std::string typemap rejects the
     # bytes, which os.fspath passes through unchanged.
     source = read_map(_DATA_DIR / "test_map.ccp4")
