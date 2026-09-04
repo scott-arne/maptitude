@@ -51,8 +51,8 @@ gone.
 - **`write_map` defaults an absent space group to P1,** so an EM map written
   from a grid with no space group lands with `ISPG` 1 rather than 0. An unset
   space group is what makes `OEWriteGrid` double the cell and regrid the
-  payload, and it does so silently: the call returns success and leaves a
-  self-consistent header describing a different grid.
+  payload, and it does so silently: the `OEWriteGrid` call returns success and
+  leaves a self-consistent header describing a different grid.
 - **The scoped enums are checked at the Python boundary.** `combine_maps`'s `op` and
   `read_map`'s `tiebreak` previously accepted any integer and cast it, so an
   out-of-range op reached the C++ `switch`, matched no case, and returned an all-zero
@@ -91,8 +91,8 @@ gone.
   the call that produced it: any grid whose declared cell equals its sampled
   extent is refused the same way. A box that needed no padding is handed
   straight back — the C++ function returns null and the Python wrapper
-  substitutes the caller's own grid — so it is refused only if its own geometry
-  trips the same condition.
+  substitutes the caller's own grid — and `write_map` then judges it exactly as
+  it would any other grid it is handed.
 
 ## [0.4.0]
 
