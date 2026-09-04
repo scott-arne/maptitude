@@ -514,7 +514,7 @@ def test_combine_maps_rejects_an_out_of_range_op():
 def test_combine_maps_rejects_a_non_integer_op():
     source = read_map(_DATA_DIR / "test_map.ccp4")
     other = read_map(_DATA_DIR / "test_map.ccp4")
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="op must be one of"):
         maptitude.combine_maps(source.grid, other.grid, "ADD")
 
 
@@ -537,5 +537,20 @@ def test_read_map_still_accepts_both_tiebreaks():
 
 
 def test_read_map_rejects_a_non_integer_tiebreak():
-    with pytest.raises(TypeError, match="OriginSource"):
+    with pytest.raises(TypeError, match="tiebreak must be"):
         read_map(_DATA_DIR / "test_map.ccp4", "ORIGIN_RECORD")
+
+
+def test_the_enum_boundary_is_the_width_of_a_c_long():
+    """The docstrings promise ValueError inside a C long and OverflowError past it."""
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    for value in (2**63 - 1, -(2**63)):
+        with pytest.raises(ValueError):
+            maptitude.combine_maps(source.grid, source.grid, value)
+        with pytest.raises(ValueError):
+            read_map(_DATA_DIR / "test_map.ccp4", value)
+    for value in (2**63, -(2**63) - 1):
+        with pytest.raises(OverflowError):
+            maptitude.combine_maps(source.grid, source.grid, value)
+        with pytest.raises(OverflowError):
+            read_map(_DATA_DIR / "test_map.ccp4", value)
