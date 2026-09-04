@@ -719,12 +719,18 @@ TEST(MapIoErrorTest, RaisesOnAPathWithAnEmbeddedNul) {
         read_map(path);
         FAIL() << "expected GridError: the path carries an embedded NUL";
     } catch (const GridError& error) {
+        // This also pins that the message does not interpolate the raw path.
+        // A message built that way would carry the NUL, and what() hands back
+        // c_str(), so the text would stop there and this substring -- which
+        // sits after the path -- would be gone. Measured: interpolating path
+        // instead of path.substr(0, nul) fails here with
+        // "Cannot read '<...>/test_map.ccp4" and no closing quote. Asserting
+        // the absence of a NUL directly cannot work; what() truncates at one,
+        // so the assertion would hold whether or not the message carried it.
         const std::string message(error.what());
         EXPECT_NE(message.find("embedded NUL"), std::string::npos)
-            << "refused by the wrong branch: " << message;
-        EXPECT_EQ(message.find('\0'), std::string::npos)
-            << "the message carries the NUL it is refusing, so whatever prints "
-               "it will stop there";
+            << "refused by the wrong branch, or truncated at the NUL: "
+            << message;
     }
 }
 
@@ -1427,11 +1433,11 @@ TEST(MapIoWriteTest, RefusesADestinationWithAnEmbeddedNul) {
         << victim.Str() << " was written through the NUL";
 
     ASSERT_FALSE(refusal.empty()) << "the write was not refused";
+    // As in the read case above, this substring also pins that the message
+    // names only the pre-NUL prefix: interpolating the raw path would cut the
+    // text off at the NUL, taking this clause with it.
     EXPECT_NE(refusal.find("embedded NUL"), std::string::npos)
-        << "refused by the wrong branch: " << refusal;
-    EXPECT_EQ(refusal.find('\0'), std::string::npos)
-        << "the message carries the NUL it is refusing, so whatever prints it "
-           "will stop there";
+        << "refused by the wrong branch, or truncated at the NUL: " << refusal;
 }
 
 TEST(MapIoWriteTest, RaisesSymOpErrorBeforeTouchingTheFilesystem) {
