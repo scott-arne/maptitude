@@ -80,8 +80,9 @@ def load_xray_dataset(pdb: str):
 
     Reads ``<pdb>.cif`` and ``<pdb>_2fofc.ccp4`` from :data:`ASSET_DIR`, takes
     the cell edges from the map's own skew carrier, and pads the grid around
-    the molecule. Shared by all three benchmarks so the map-loading path they
-    measure against is one path, exercised by one test.
+    the molecule. Shared by all three benchmarks so the X-ray loading path they
+    measure against is one path, exercised by one test. The EM asset that two
+    of them also load does not come through here.
 
     :param pdb: PDB code naming both assets, e.g. ``"340d"``.
     :returns: Tuple ``(mol, grid, cell_dims, symops_text)``, where ``cell_dims``

@@ -10,27 +10,26 @@ import sys
 from pathlib import Path
 
 import pytest
+from maptitude import get_unit_cell, parse_symops, read_map
 
-pytest.importorskip("openeye.oechem", reason="OpenEye toolkit not installed")
-
-from openeye import oechem  # noqa: E402
-
-import maptitude  # noqa: E402
-from maptitude import get_unit_cell, parse_symops, read_map  # noqa: E402
+oechem = pytest.importorskip("openeye.oechem", reason="OpenEye toolkit not installed")
 
 _BENCH_DIR = Path(__file__).resolve().parents[2] / "benchmarks"
 if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
 
-from helpers import ASSET_DIR, load_xray_dataset  # noqa: E402
+from helpers import ASSET_DIR, load_xray_dataset
 
 
 def test_load_xray_dataset_threads_the_map_into_every_return_value():
     """Each value must come from the map named by the argument.
 
     The failure this guards is silent: the loader hands a cell triple and a
-    grid to the padding helper, and a swapped, transposed or stale value there
-    changes every benchmark number without raising.
+    grid to the padding helper, and a stale or misordered value there shifts
+    the scores computed from that dataset without raising. 340d's a and b
+    edges are equal, so an a/b transposition is invisible here -- what this
+    pins is that each value tracks the map, not that every permutation of the
+    triple is distinguishable.
     """
     mol, grid, cell_dims, symops_text = load_xray_dataset("340d")
 
@@ -43,8 +42,8 @@ def test_load_xray_dataset_threads_the_map_into_every_return_value():
 
     assert sum(1 for _ in mol.GetAtoms(oechem.OEIsHeavy())) > 0
 
-    # wrap_and_pad creates a sub-box around the molecule, so the returned grid
-    # may be smaller than, equal to, or larger than the reference grid depending
-    # on the molecule's extent. Comparing sizes catches a loader that forgot to
-    # call wrap_and_pad at all (which would return the reference grid unchanged).
-    assert grid.GetSize() <= reference.grid.GetSize()
+    # Skipping the padding step would hand back the map's own grid, so the
+    # inequality has to be strict to catch it -- `<=` admits that exact case.
+    # For 340d the box cut around the molecule is 36x53x35 against the map's
+    # 61x61x37; this pins that the step ran, not the size it produced.
+    assert grid.GetSize() < reference.grid.GetSize()
