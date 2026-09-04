@@ -579,6 +579,21 @@ def test_the_enum_boundary_is_the_width_of_a_c_long():
             read_map(_DATA_DIR / "test_map.ccp4", value)
 
 
+def test_the_enum_boundary_rejects_minus_one_as_a_value_not_a_sentinel():
+    """-1 is what PyLong_AsLong returns on failure, so it is the one colliding input.
+
+    The typemaps separate the two meanings with ``&& PyErr_Occurred()``. Dropping that
+    conjunct would send a real -1 to SWIG_fail with no exception set; this test is what
+    notices. Its pair is the OverflowError assertion above, which is what notices if the
+    sentinel check is dropped altogether.
+    """
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    with pytest.raises(ValueError, match="MapOp value -1"):
+        maptitude.combine_maps(source.grid, source.grid, -1)
+    with pytest.raises(ValueError, match="OriginSource value -1"):
+        read_map(_DATA_DIR / "test_map.ccp4", -1)
+
+
 @pytest.mark.parametrize(
     "scalar",
     [np.int8(0), np.int32(0), np.int64(0), np.uint64(0), np.longlong(0)],
