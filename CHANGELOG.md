@@ -40,11 +40,14 @@ gone.
 ### Changed
 
 - **EM density moves.** `read_map` places a map where its `ORIGIN` record says
-  it belongs. On the one EM asset in the test suite that is 145 A from where the
-  bare `OEReadGrid` puts it, so every score reads density from a different place
-  than it did before.
-- **A malformed symmetry block now raises `SymOpError`** where `OEReadGrid` did
-  not read the block at all.
+  it belongs. On the one EM asset in the test suite that is 220 A from where the
+  bare `OEReadGrid` puts it — the full `ORIGIN` vector, since that file's
+  `NxSTART` is zero — so every score reads density from a different place than
+  it did before.
+- **A symmetry record that does not parse now raises `SymOpError`** where
+  `OEReadGrid` did not read the block at all. A block whose framing is broken —
+  `NSYMBT` negative or not a multiple of 80, or a file that ends before the
+  block does — raises `GridError`.
 - **`write_map` defaults an absent space group to P1,** so an EM map written
   from a grid with no space group lands with `ISPG` 1 rather than 0. An unset
   space group is what makes `OEWriteGrid` double the cell and regrid the
@@ -56,6 +59,14 @@ gone.
   raises `ValueError`; one too large to fit raises `OverflowError`; a non-`int` raises
   `TypeError`, and so does a `bool`, which subclasses `int` but names no enumerator —
   `combine_maps(lhs, rhs, True)` used to perform `SUBTRACT` silently.
+- **The grid return path raises `GridError` or `CellError` where it raised
+  `RuntimeError`.** The typemap that hands a C++ grid back to Python covers four
+  pre-existing functions, not only the new `read_map`:
+  `DensityCalculator.Calculate`, `combine_maps`, `diff_to_calc` and
+  `wrap_and_pad_grid`. `GridError` and `CellError` derive from `MaptitudeError`,
+  which derives from `Exception` and **not** from `RuntimeError`, so a handler
+  catching `RuntimeError` around any of those four no longer catches this
+  failure.
 
 ### Removed
 
@@ -67,15 +78,16 @@ gone.
   on the test path. The only test that used it imported exactly the two loaders
   now retired.
 
-### Known limits
+### Known limitations
 
-- `write_map` refuses `wrap_and_pad_grid` output. The padded box declares a
-  cell equal to its full sampled extent, which forces the written `NX` to equal
-  `NC` and inflates the node count by one per axis on the way back in. The
-  refusal is a `GridError` naming the dimensions it wrote against the ones it
-  expected; the destination is left untouched. Lifting it means rewriting the
-  declared cell, which would stop the written box comparing same-geometry with
-  the box in memory.
+- `write_map` refuses a box that `wrap_and_pad_grid` actually padded — when no
+  padding is needed it hands back the caller's own grid, which writes normally.
+  The padded box declares a cell equal to its full sampled extent, which forces
+  the written `NX` to equal `NC` and inflates the node count by one per axis on
+  the way back in. The refusal is a `GridError` naming the dimensions it wrote
+  against the ones it expected; the destination is left untouched. Lifting it
+  means rewriting the declared cell, which would stop the written box comparing
+  same-geometry with the box in memory.
 
 ## [0.4.0]
 

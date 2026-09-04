@@ -503,7 +503,7 @@ TEST(MapIoReadTest, PinsTheFiveFixtures) {
 
 TEST(MapIoReadTest, PlacesTheEmMapAtItsOriginRecord) {
     // The one fixture with a nonzero ORIGIN. OEReadGrid never consults that
-    // record (section 2.1), so a bare read lands 145 A away; this is the whole
+    // record (section 2.1), so a bare read lands 220 A away; this is the whole
     // reason read_map exists.
     OESystem::OESkewGrid bare;
     ASSERT_TRUE(OESystem::OEReadGrid(AssetPath("390_emd_30342_A_z4.mrc"), bare));
