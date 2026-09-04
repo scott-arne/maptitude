@@ -534,3 +534,8 @@ def test_read_map_rejects_an_out_of_range_tiebreak():
 def test_read_map_still_accepts_both_tiebreaks():
     for tiebreak in (OriginSource.ORIGIN_RECORD, OriginSource.NXSTART):
         assert read_map(_DATA_DIR / "test_map.ccp4", tiebreak).grid is not None
+
+
+def test_read_map_rejects_a_non_integer_tiebreak():
+    with pytest.raises(TypeError, match="OriginSource"):
+        read_map(_DATA_DIR / "test_map.ccp4", "ORIGIN_RECORD")
