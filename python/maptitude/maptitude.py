@@ -1688,7 +1688,10 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
         requires an orthorhombic cell; a skewed one is rejected on read.
     :raises GridError: If the file cannot be read, its header cannot be
         parsed, or the copy that returns the grid to Python did not preserve
-        the source geometry -- a degenerate cell edge reaches this.
+        the source geometry -- a degenerate cell edge reaches this. Also if
+        ``path`` contains an embedded NUL, which ``os.fspath`` passes through
+        unchanged: the calls that open the file stop at the NUL, so the name
+        given and the name opened are not the same name.
     :raises SymOpError: If the symmetry block is present and does not parse.
 
     Example::
@@ -1709,10 +1712,11 @@ def write_map(path, grid, symops=""):
     leaving a wrong map on disk or destroying a good one.
 
     A successful write replaces the destination's inode rather than rewriting
-    it in place: its mode resets to whatever an ordinary create gives under the
-    process umask, hard links to it keep the old contents under their own
-    names, and a destination that was a symlink becomes a regular file, with
-    its former target left untouched.
+    it in place, so three properties of an existing destination do not survive.
+    Under POSIX, its mode resets to whatever an ordinary create gives under the
+    process umask. Hard links to it keep the old contents under their own
+    names. A destination that was a symlink becomes a regular file, with its
+    former target left untouched.
 
     The verification covers the bytes this function wrote, not the bytes that
     arrive at ``path``. It writes and checks a temporary beside the destination
@@ -1730,8 +1734,11 @@ def write_map(path, grid, symops=""):
     interval under ``OriginSource.NXSTART``, and the write is refused unless
     the two records agree to within that bound.
 
-    A grid produced by :func:`wrap_and_pad_grid` is refused: its declared cell
-    forces the written node count one higher per axis than the grid carries.
+    The padded grid :func:`wrap_and_pad_grid` allocates when padding is needed
+    is refused: its declared cell forces the written node count one higher per
+    axis than the grid carries. That is a property of the newly allocated grid,
+    not of every value that function returns: when no padding is needed it
+    hands back the grid it was given.
 
     :param path: Destination. The format follows the extension; the admitted
         class is every spelling whose first three characters are ``ccp``,
@@ -1756,7 +1763,11 @@ def write_map(path, grid, symops=""):
         node 0 or any voxel, if either the grid or the re-read map has an axis
         with fewer than two nodes, so its spacing is undefined, if the ORIGIN
         and NxSTART records place node 0 more than half a node interval apart,
-        or if the verified temporary file cannot be renamed onto ``path``.
+        or if the verified temporary file cannot be renamed onto ``path``. Also
+        if ``path`` contains an embedded NUL, which ``os.fspath`` passes through
+        unchanged: the extension gate reads the whole string while the calls
+        that write and publish the file stop at the NUL, so the name checked and
+        the name written are not the same name.
     :raises SymOpError: If ``symops`` is non-empty and does not parse, or if
         any of its records is longer than the format's 80-character field.
     """

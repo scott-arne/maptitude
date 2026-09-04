@@ -274,6 +274,33 @@ private:
     bool released_ = false;
 };
 
+/// Refuse a path carrying an embedded NUL, before anything opens it.
+///
+/// std::filesystem reads the whole std::string, while the calls that open,
+/// write and rename the file take it as a NUL-terminated name and stop at the
+/// first NUL. So "victim.dat\0.ccp4" reaches write_map's extension gate as a
+/// ".ccp4" name and is then written through as "victim.dat": the name the gate
+/// admitted and the name the rename published are different names, so passing
+/// the gate says nothing about the file that is replaced. Measured before this
+/// guard, a write to that name returned successfully having replaced an
+/// existing victim.dat with a 38068-byte map. read_map has no gate to escalate
+/// past, but the same split reaches it: measured before this guard, reading a
+/// real map's path with "\0.ccp4" appended returned that map, under a name the
+/// caller never gave.
+///
+/// The message names only the prefix: one interpolating the raw path would
+/// carry the NUL too, and whatever printed it would stop there.
+void RejectEmbeddedNul(const std::string& path, const std::string& verb) {
+    const std::size_t nul = path.find('\0');
+    if (nul == std::string::npos) {
+        return;
+    }
+    throw GridError("Cannot " + verb + " '" + path.substr(0, nul) +
+                    "...': the path contains an embedded NUL, so the name "
+                    "checked here and the name the operating system would open "
+                    "are not the same name");
+}
+
 /// Whether @p path names a file OpenEye would compress on the way out.
 ///
 /// OEIsWriteableGrid accepts ".ccp4.gz" and OEWriteGrid honours it, emitting a
@@ -681,6 +708,7 @@ MapFile& MapFile::operator=(MapFile&& other) noexcept = default;
 MapFile::~MapFile() = default;
 
 MapFile read_map(const std::string& path, const OriginSource tiebreak) {
+    RejectEmbeddedNul(path, "read");
     MapFile result;
     result.grid.reset(new OESystem::OESkewGrid());
     if (!OESystem::OEReadGrid(path, *result.grid)) {
@@ -846,6 +874,7 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
                const std::string& symops) {
     // Step 1: validate both arguments before touching the filesystem, so a bad
     // call fails without leaving a partial file.
+    RejectEmbeddedNul(path, "write");
     SymOp::ParseAll(symops);
     if (IsCompressedPath(path)) {
         throw GridError("Cannot write '" + path +

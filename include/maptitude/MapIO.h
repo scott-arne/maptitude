@@ -47,7 +47,10 @@ struct MapFile {
  * @param tiebreak Which record wins when ORIGIN and NxSTART both encode a
  *        nonzero, differing origin. Ignored when at most one is nonzero.
  * @return The grid, positioned at the file's origin, and its symmetry text.
- * @throws GridError if the file cannot be read or its header cannot be parsed.
+ * @throws GridError if the file cannot be read, if its header cannot be parsed,
+ *         or if @p path contains an embedded NUL, since the calls that open the
+ *         file stop at the NUL, so the name this function is given and the name
+ *         it would open are not the same name.
  * @throws SymOpError if the symmetry block is present and does not parse.
  */
 MapFile read_map(const std::string& path,
@@ -146,11 +149,11 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * than leaving a silently wrong map on disk or destroying a good one.
  *
  * A successful write replaces the destination's inode rather than rewriting it
- * in place, so three properties of an existing destination do not survive. Its
- * mode resets to whatever an ordinary create gives under the process umask,
- * widening a permission the caller had narrowed. Hard links to it keep the old
- * contents under their own names. A destination that was a symlink becomes a
- * regular file, with its former target left untouched.
+ * in place, so three properties of an existing destination do not survive.
+ * Under POSIX, its mode resets to whatever an ordinary create gives under the
+ * process umask, widening a permission the caller had narrowed. Hard links to
+ * it keep the old contents under their own names. A destination that was a
+ * symlink becomes a regular file, with its former target left untouched.
  *
  * The verification covers the bytes this function wrote, not the bytes that
  * arrive at @p path. It writes and checks a temporary beside the destination
@@ -204,13 +207,16 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  *        the operator set survives the round trip but that spelling does not:
  *        writing "a;b" reads back as "a\nb".
  * @throws GridError if @p path's extension is not one OpenEye maps to the CCP4
- *         format or names a compressed file, if the write fails, if the re-read
- *         map differs from the grid in dimensions, cell, per-axis spacing,
- *         node 0, or any voxel, if either the grid or the re-read map has an
- *         axis with fewer than two nodes, so its spacing is undefined, if its
- *         ORIGIN and NxSTART records place node 0 more than half a node
- *         interval apart, or if the temporary file cannot be renamed onto
- *         @p path.
+ *         format or names a compressed file, if @p path contains an embedded
+ *         NUL, since std::filesystem reads the whole string while the calls
+ *         that write and publish the file stop at the NUL, so the name checked
+ *         here and the name written are not the same name, if the write fails,
+ *         if the re-read map differs from the grid in dimensions, cell,
+ *         per-axis spacing, node 0, or any voxel, if either the grid or the
+ *         re-read map has an axis with fewer than two nodes, so its spacing is
+ *         undefined, if its ORIGIN and NxSTART records place node 0 more than
+ *         half a node interval apart, or if the temporary file cannot be
+ *         renamed onto @p path.
  * @throws SymOpError if symops is non-empty and does not parse, or if any of
  *         its records is longer than the format's 80-character field.
  * @throws CellError if the grid's sampling is not axis-aligned, which a cell

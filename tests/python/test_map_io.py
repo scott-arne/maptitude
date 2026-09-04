@@ -419,6 +419,30 @@ def test_write_map_accepts_a_string_path(tmp_path):
     assert read_map(out).grid.GetSize() == 9261
 
 
+def test_write_map_refuses_a_path_with_an_embedded_nul(tmp_path):
+    # os.fspath passes an embedded NUL through unchanged, and the std::string
+    # typemap carries it across with its length, so the whole name reaches C++.
+    # There a NUL splits it in two: std::filesystem reports the extension of
+    # "victim.dat\0.ccp4" as ".ccp4", which the extension gate admits, while
+    # every filesystem call downstream goes through c_str() and stops at the
+    # NUL. Measured before the guard, this returned successfully having
+    # overwritten victim.dat with a 38068-byte map, so the bytes are what this
+    # pins; the refusal is caught rather than required, so that check runs
+    # either way.
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    victim = tmp_path / "victim.dat"
+    victim.write_bytes(b"ORIGINAL CONTENTS\n")
+
+    refusal = None
+    try:
+        maptitude.write_map(str(victim) + "\0.ccp4", source.grid)
+    except GridError as error:
+        refusal = error
+
+    assert victim.read_bytes() == b"ORIGINAL CONTENTS\n"
+    assert refusal is not None
+
+
 @pytest.mark.parametrize(
     "bad", [None, 3, ["m.ccp4"], b"tests/data/test_map.ccp4"])
 def test_write_map_rejects_arguments_that_are_not_paths(bad, tmp_path,

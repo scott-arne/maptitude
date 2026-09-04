@@ -706,6 +706,28 @@ TEST(MapIoErrorTest, RaisesOnATruncatedFile) {
     EXPECT_THROW(read_map(truncated.Path()), GridError);
 }
 
+TEST(MapIoErrorTest, RaisesOnAPathWithAnEmbeddedNul) {
+    // read_map has no gate to escalate past the way write_map does, so this is
+    // not the security case; it is the path contract. The prefix here names a
+    // file that reads perfectly and the calls that open it stop at the NUL, so
+    // this call returned that file under a name the caller never gave: with
+    // the guard commented out it does not throw at all. The same split reached
+    // the diagnostic. Against a prefix OpenEye refuses, the message named the
+    // text up to the NUL and was cut off there, losing even its closing quote.
+    const std::string path = DataPath("test_map.ccp4") + '\0' + ".ccp4";
+    try {
+        read_map(path);
+        FAIL() << "expected GridError: the path carries an embedded NUL";
+    } catch (const GridError& error) {
+        const std::string message(error.what());
+        EXPECT_NE(message.find("embedded NUL"), std::string::npos)
+            << "refused by the wrong branch: " << message;
+        EXPECT_EQ(message.find('\0'), std::string::npos)
+            << "the message carries the NUL it is refusing, so whatever prints "
+               "it will stop there";
+    }
+}
+
 TEST(MapIoErrorTest, RaisesWhenNsymbtIsNotAMultipleOfEighty) {
     HeaderVariant variant(DataPath("test_map.ccp4"));
     variant.SetInt(24, 37);
@@ -1362,6 +1384,54 @@ TEST(MapIoWriteTest, RaisesOnAnExtensionOpenEyeDoesNotWrite) {
         std::ifstream probe(out.Str(), std::ios::binary);
         EXPECT_FALSE(probe.good()) << "a refused write left a file behind";
     }
+}
+
+TEST(MapIoWriteTest, RefusesADestinationWithAnEmbeddedNul) {
+    // The other side of the extension gate above. That gate reads
+    // std::filesystem's view of the whole string, which reports the extension
+    // of "victim.dat\0.ccp4" as ".ccp4" and admits it, while every filesystem
+    // call downstream stops at the NUL. So the name the gate admitted and the
+    // name the rename published were different names: measured before the
+    // guard, this call returned successfully having replaced victim.dat with a
+    // 38068-byte map. The defect's signature is that successful return, so the
+    // bytes are what discriminates here and the refusal is recorded rather
+    // than required, to keep the byte check running when the call does not
+    // throw.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath victim(".dat");
+    {
+        std::ofstream out(victim.Str(), std::ios::binary);
+        ASSERT_TRUE(out.good()) << "cannot create " << victim.Str();
+        out << "ORIGINAL CONTENTS\n";
+    }
+
+    const std::string destination = victim.Str() + '\0' + ".ccp4";
+    std::string refusal;
+    try {
+        write_map(destination, *source.grid, source.symops);
+    } catch (const GridError& error) {
+        refusal = error.what();
+    }
+
+    const std::string original = "ORIGINAL CONTENTS\n";
+    std::ifstream probe(victim.Str(), std::ios::binary);
+    ASSERT_TRUE(probe.good()) << "the write removed " << victim.Str();
+    const std::string after((std::istreambuf_iterator<char>(probe)),
+                            std::istreambuf_iterator<char>());
+    // The size is asserted first only to keep the report readable: a map
+    // written through the NUL differs in length, and comparing the contents
+    // outright prints the whole 38068 bytes of it.
+    ASSERT_EQ(after.size(), original.size())
+        << victim.Str() << " was written through the NUL";
+    EXPECT_EQ(after, original)
+        << victim.Str() << " was written through the NUL";
+
+    ASSERT_FALSE(refusal.empty()) << "the write was not refused";
+    EXPECT_NE(refusal.find("embedded NUL"), std::string::npos)
+        << "refused by the wrong branch: " << refusal;
+    EXPECT_EQ(refusal.find('\0'), std::string::npos)
+        << "the message carries the NUL it is refusing, so whatever prints it "
+           "will stop there";
 }
 
 TEST(MapIoWriteTest, RaisesSymOpErrorBeforeTouchingTheFilesystem) {
