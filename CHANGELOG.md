@@ -5,6 +5,77 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
+## [0.5.0]
+
+The map I/O release. Maptitude now reads and writes CCP4/MRC files through its
+own `read_map` and `write_map`, which preserve the two header records the
+OpenEye grid I/O discards: the MRC2000 `ORIGIN` placement and the symmetry
+block. The Python loaders that stood in for this in the benchmark suite are
+gone.
+
+### Added
+
+- `read_map(path, tiebreak=OriginSource.ORIGIN_RECORD)`, returning a `MapFile`
+  of `(grid, symops)`. The grid arrives positioned at the origin the file
+  declares, and the symmetry text arrives in the newline-delimited form
+  `parse_symops` accepts. Available from C++ and Python.
+- `write_map(path, grid, symops="")`. It writes and verifies a temporary
+  sibling of the destination and renames it only once the file reads back as
+  the grid it came from, so a grid that cannot be written faithfully raises
+  with the destination untouched. Available from C++ and Python.
+- `OriginSource`, the tiebreak selecting which record places a map when both
+  `ORIGIN` and `NxSTART` are nonzero. `ORIGIN_RECORD` is the default.
+- `compare_written_map` and `MAP_VERIFY_TOL` in `MapIO.h`, the predicate behind
+  `write_map`'s verification and its relative tolerance; `compare_placement_records`
+  and `MAP_PLACEMENT_SLACK`, the predicate behind `read_map`'s placement
+  verification and its absolute tolerance. Public so a test can drive the
+  comparison directly rather than having to manufacture a file that fails on
+  each quantity. C++ only.
+- Both `read_map` and `write_map` reject a path containing an embedded NUL, so a
+  caller cannot write through a truncated path. Pinned at
+  `RaisesOnAPathWithAnEmbeddedNul` and `RefusesADestinationWithAnEmbeddedNul` in
+  the C++ suite, `test_write_map_refuses_a_path_with_an_embedded_nul` in Python.
+- `MapFile` is importable from the `maptitude` package.
+
+### Changed
+
+- **EM density moves.** `read_map` places a map where its `ORIGIN` record says
+  it belongs. On the one EM asset in the test suite that is 145 A from where the
+  bare `OEReadGrid` puts it, so every score reads density from a different place
+  than it did before.
+- **A malformed symmetry block now raises `SymOpError`** where `OEReadGrid` did
+  not read the block at all.
+- **`write_map` defaults an absent space group to P1,** so an EM map written
+  from a grid with no space group lands with `ISPG` 1 rather than 0. An unset
+  space group is what makes `OEWriteGrid` double the cell and regrid the
+  payload, so the alternative is a corrupted file.
+- **The scoped enums are checked at the Python boundary.** `combine_maps`'s `op` and
+  `read_map`'s `tiebreak` previously accepted any integer and cast it, so an
+  out-of-range op reached the C++ `switch`, matched no case, and returned an all-zero
+  grid with no error. Now an `int` outside the declared range that fits in a C `long`
+  raises `ValueError`; one too large to fit raises `OverflowError`; a non-`int` raises
+  `TypeError`, and so does a `bool`, which subclasses `int` but names no enumerator —
+  `combine_maps(lhs, rhs, True)` used to perform `SUBTRACT` silently.
+
+### Removed
+
+- `benchmarks/helpers.py`'s `load_mrc_grid`, `load_ccp4_grid` and
+  `extract_ccp4_symops`, replaced by `read_map`. `load_ccp4_grid` returned the
+  three cell edges as a tuple; the skew carrier holds them, so call
+  `get_unit_cell(grid)` instead.
+- The `sys.path` inversion in `tests/python/conftest.py` that put `benchmarks/`
+  on the test path. The only test that used it imported exactly the two loaders
+  now retired.
+
+### Known limits
+
+- `write_map` refuses `wrap_and_pad_grid` output. The padded box declares a
+  cell equal to its full sampled extent, which forces the written `NX` to equal
+  `NC` and inflates the node count by one per axis on the way back in. The
+  refusal is a `GridError` naming the node count; the destination is left
+  untouched. Lifting it means rewriting the declared cell, which would stop the
+  written box comparing same-geometry with the box in memory.
+
 ## [0.4.0]
 
 The anisotropic-carrier release. Every density grid maptitude accepts, returns or
