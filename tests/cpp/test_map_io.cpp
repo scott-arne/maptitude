@@ -1257,12 +1257,17 @@ TEST(MapIoWriteTest, BuildsTheTemporarysNameOutsideTheGlobalLocale) {
     // Both halves of that matter. The de_DE name carries three dot components
     // into a shape MakeTemporarySibling measured without any, and neither name
     // is one CountTemporarySiblings above matches -- it builds its prefix with
-    // std::to_string, which never groups -- so under such a locale every
-    // EXPECT_EQ(CountTemporarySiblings(...), 0u) in this file matches no
-    // temporary the library made and passes without having looked at one. The
-    // decoys planted in this file are still matched, because they are built
-    // with std::to_string too, so the probes those cases run to show the
-    // counter can see something keep reporting that it can.
+    // std::to_string, which never groups. So under such a locale the counter
+    // stops seeing the temporary a write made while still seeing the decoys
+    // these cases plant, which carry a std::to_string pid too. Every one of the
+    // eleven CountTemporarySiblings assertions in this file then passes without
+    // having looked at a temporary the library made, in all three of the shapes
+    // they take: the eight expecting 0 read zero having matched nothing, the
+    // two decoy cases expecting 1 read the decoy alone, and the reservation
+    // case's baseline + 1 still holds because both of its terms count decoys.
+    // That last one is the trap -- it is the positive control those cases run
+    // to show the counter can see something, and it keeps reporting success
+    // while the counter is blind to the only file it exists to catch.
     //
     // A real grouping locale would not make that visible from here: the write
     // still succeeds and the vacuous count still reads zero. The facet
@@ -1281,6 +1286,22 @@ TEST(MapIoWriteTest, BuildsTheTemporarysNameOutsideTheGlobalLocale) {
 
     const MapFile source = read_map(DataPath("test_map.ccp4"));
     ScratchPath out(".ccp4");
+
+    // The case discriminates over two links: grouping reaches the name, and a
+    // grouped name cannot be created. The ASSERT above arms the first. This
+    // arms the second, which otherwise holds only by inference -- if the
+    // candidate stopped being composed as parent_path() / name, or if this
+    // directory came to hold the chain a slash-bearing name resolves under, the
+    // grouped create would succeed and this case would stay green with the
+    // imbue deleted. Checked before the locale scope, because gtest formats its
+    // own file and line through the global locale too.
+    const std::filesystem::path slash_bearing =
+        std::filesystem::path(out.Str()).parent_path() / ".maptitude-1/2-x.ccp4";
+    std::ofstream probe(slash_bearing);
+    ASSERT_FALSE(probe.is_open())
+        << "a slash-bearing sibling can be created beside " << out.Str()
+        << ", so a grouped name would not be refused there and this case would "
+           "pass with the imbue removed";
 
     // The refusal is carried out of the scope rather than reported inside it,
     // because gtest formats its own file and line through the global locale

@@ -359,8 +359,12 @@ long ProcessId() {
 /// ".maptitude-5,656-de,adb,eef.ccp4" and de_DE.UTF-8 gives
 /// ".maptitude-5.656-de.adb.eef.ccp4" -- three dot components in a shape
 /// measured without any. The test tree's leak counter builds its prefix with
-/// std::to_string, which never groups, so it would also stop matching and its
-/// assertions would pass on nothing.
+/// std::to_string, which never groups, so it would stop matching the temporary
+/// this function made while still matching the decoys those cases plant. Every
+/// assertion it backs would then pass without having seen the file it is there
+/// to catch -- including the positive control those cases run to show the
+/// counter can see something, which counts only decoys and so keeps reporting
+/// success.
 ///
 /// The name is taken, not merely chosen. Two things keep concurrent writers
 /// off one another's temporary: the pid gives each process its own space of
@@ -378,20 +382,21 @@ long ProcessId() {
 /// does not retire with the process that made it; the exclusive create, not the
 /// pid, is what makes that harmless.
 ///
-/// std::fopen creates at 0666 before the umask, so the process umask narrows
-/// the temporary as it narrows an ordinary create. That is why this reaches for
-/// the "x" mode rather than mkstemps, the obvious way to get an atomic create:
-/// mkstemps moves the permissions rather than fixing them. Neither scheme
-/// preserves the destination's mode, because the rename replaces its inode
-/// either way. Measured on this machine under umask 0022: this create and an
-/// ordinary one both land at 0644, mkstemps at 0600, and the rename carries
-/// whichever one onto the destination. So mkstemps would publish every map
-/// readable only by its writer, while the scheme used here silently widens a
-/// destination the caller had narrowed -- 0600 back to 0644 on rewrite.
-/// Trading a visible regression on every write for an invisible one on
-/// rewrites of a restricted file is the choice made, not a
-/// permissions-preserving option that mkstemps lacks; the caller-facing
-/// consequences are stated on write_map.
+/// Under POSIX, std::fopen creates at 0666 before the umask, so the process
+/// umask narrows the temporary as it narrows an ordinary create. ISO C fixes no
+/// permissions for fopen, and Windows has no 0666 to create at: the permission
+/// bits it documents for a created file are _S_IREAD and _S_IWRITE. That is why
+/// this reaches for the "x" mode rather than mkstemps, the obvious way to get
+/// an atomic create: mkstemps moves the permissions rather than fixing them.
+/// Neither scheme preserves the destination's mode, because the rename replaces
+/// its inode either way. Measured on this machine under umask 0022: this create
+/// and an ordinary one both land at 0644, mkstemps at 0600, and the rename
+/// carries whichever one onto the destination. So mkstemps would publish every
+/// map readable only by its writer, while the scheme used here silently widens
+/// a destination the caller had narrowed -- 0600 back to 0644 on rewrite.
+/// Trading a visible regression on every write for an invisible one on rewrites
+/// of a restricted file is the choice made, not a permissions-preserving option
+/// that mkstemps lacks; the caller-facing consequences are stated on write_map.
 ///
 /// OEWriteGrid is therefore handed a name that already exists. Measured against
 /// this reservation on tests/data/test_map.ccp4 under umask 0022: it returned
@@ -416,8 +421,11 @@ TemporaryFile MakeTemporarySibling(const std::filesystem::path& dest) {
         name << ".maptitude-" << ProcessId() << '-' << std::hex << entropy()
              << dest.extension().string();
         std::filesystem::path candidate = dest.parent_path() / name.str();
-        std::FILE* const reserved =
-            std::fopen(candidate.string().c_str(), "wx");
+        // Narrowed into a named local rather than a temporary, so that no
+        // destructor -- and so no deallocation, of exactly the class the next
+        // comment is about -- runs between the create and the errno read.
+        const std::string candidate_name = candidate.string();
+        std::FILE* const reserved = std::fopen(candidate_name.c_str(), "wx");
         // errno is read once, into a local: the throw below builds its message
         // with operator+, whose operands are evaluated in an unspecified order
         // and whose allocations can overwrite errno before a second read of it
