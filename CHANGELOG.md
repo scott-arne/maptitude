@@ -45,9 +45,9 @@ gone.
   `NxSTART` is zero — so every score reads density from a different place than
   it did before.
 - **A symmetry record that does not parse now raises `SymOpError`** where
-  `OEReadGrid` did not read the block at all. A block whose framing is broken —
-  `NSYMBT` negative or not a multiple of 80, or a file that ends before the
-  block does — raises `GridError`.
+  `OEReadGrid` did not read the block at all. A block whose framing is broken
+  raises `GridError` instead: `NSYMBT` negative or not a multiple of 80, a
+  record count above the 4096 cap, or a file that ends before the block does.
 - **`write_map` defaults an absent space group to P1,** so an EM map written
   from a grid with no space group lands with `ISPG` 1 rather than 0. An unset
   space group is what makes `OEWriteGrid` double the cell and regrid the
@@ -60,13 +60,13 @@ gone.
   `TypeError`, and so does a `bool`, which subclasses `int` but names no enumerator —
   `combine_maps(lhs, rhs, True)` used to perform `SUBTRACT` silently.
 - **The grid return path raises `GridError` or `CellError` where it raised
-  `RuntimeError`.** The typemap that hands a C++ grid back to Python covers four
-  pre-existing functions, not only the new `read_map`:
-  `DensityCalculator.Calculate`, `combine_maps`, `diff_to_calc` and
-  `wrap_and_pad_grid`. `GridError` and `CellError` derive from `MaptitudeError`,
-  which derives from `Exception` and **not** from `RuntimeError`, so a handler
-  catching `RuntimeError` around any of those four no longer catches this
-  failure.
+  `RuntimeError`.** The code that hands a C++ grid back to Python is shared by
+  `read_map` and four pre-existing functions — `DensityCalculator.Calculate`,
+  `combine_maps`, `diff_to_calc` and `wrap_and_pad_grid` — so the change reaches
+  well past the new function. `GridError` and `CellError` derive from
+  `MaptitudeError`, which derives from `Exception` and **not** from
+  `RuntimeError`, so a handler catching `RuntimeError` around any of those four
+  no longer catches this failure.
 
 ### Removed
 
