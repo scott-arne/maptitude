@@ -366,15 +366,22 @@ long ProcessId() {
 /// counter can see something, which counts only decoys and so keeps reporting
 /// success.
 ///
-/// The name is taken, not merely chosen. Two things keep concurrent writers
-/// off one another's temporary: the pid gives each process its own space of
-/// names, and the C11 "x" mode claims one of them in the same step that tests
-/// it. An exists() call ahead of the create cannot do that -- it is a filter,
-/// and a second writer can slip between the test and the use. A name already
-/// held comes back as EEXIST, measured here and what POSIX specifies for that
-/// mode, and the loop draws another; the GridError at the bottom is what a run
-/// of MAX_ATTEMPTS collisions raises. Any other errno is not a collision, so it
-/// is reported as itself instead of being retried into that message.
+/// The name is taken, not merely chosen. The C11 "x" mode claims a name in the
+/// same step that tests it, and the pid gives each process its own space of
+/// names to draw from. An exists() call ahead of the create cannot do that --
+/// it is a filter, and a second writer can slip between the test and the use.
+/// A name already held comes back as EEXIST, measured here and what POSIX
+/// specifies for that mode, and the loop draws another; the GridError at the
+/// bottom is what a run of MAX_ATTEMPTS collisions raises. Any other errno is
+/// not a collision, so it is reported as itself instead of being retried into
+/// that message.
+///
+/// A symlink sitting at the candidate name does not redirect the create. POSIX
+/// specifies that O_CREAT|O_EXCL fails on an existing path even where that path
+/// is a symbolic link, whatever the link resolves to, so the attempt comes back
+/// EEXIST and the loop draws a different name. Measured under both shapes: a
+/// dangling link and a link resolving onto an existing file are each refused
+/// with errno 17, and the file the second pointed at is not truncated.
 ///
 /// A temporary left behind by a crashed or killed run is covered by the same
 /// EEXIST -- skipped rather than truncated -- which is what the old existence
@@ -405,13 +412,29 @@ long ProcessId() {
 /// The destination that rename published carried the same 0644 an unreserved
 /// OEWriteGrid create produced at a destination beside it.
 ///
-/// What the reservation does not close is two write_map calls naming one
-/// destination. Each now holds a temporary no concurrent writer holds, so the
-/// exposure recorded here before is gone: two calls selecting one name, writing
-/// one file between them, and one of them publishing the other's bytes at this
-/// call's destination. The two renames still land in some order, and the
-/// destination keeps whichever went last. The temporary's name has no bearing
-/// on that; the contention there is over the destination.
+/// Two things the reservation does not close.
+///
+/// The first is two write_map calls naming one destination. Each now draws a
+/// temporary the other's exclusive create is refused at, so the exposure
+/// recorded here before is gone: two calls selecting one name, writing one file
+/// between them, and one of them publishing the other's bytes at this call's
+/// destination. The two renames still land in some order, and the destination
+/// keeps whichever went last. The temporary's name has no bearing on that; the
+/// contention there is over the destination.
+///
+/// The second is substitution at the temporary's own name. The create claims
+/// the name; the fclose gives up the file. Every step after it -- OEWriteGrid,
+/// the header patch, each verification re-read, the rename -- addresses the
+/// temporary by path, because OEWriteGrid takes a path and not a descriptor, so
+/// nothing holds the file across them. A process able to write the
+/// destination's directory can therefore unlink the entry this function
+/// verified, put its own file at that name, and have the rename publish those
+/// bytes while write_map returns success. Refusing a second exclusive create is
+/// what the reservation buys; it does not keep the name bound to the file it
+/// created. Such a process can already create, replace and remove the
+/// destination itself, so what the window adds is the success return on bytes
+/// the verification never saw -- which is a statement about what write_map
+/// promises its caller, and is made there.
 TemporaryFile MakeTemporarySibling(const std::filesystem::path& dest) {
     constexpr int MAX_ATTEMPTS = 8;
     std::random_device entropy;

@@ -152,6 +152,22 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * contents under their own names. A destination that was a symlink becomes a
  * regular file, with its former target left untouched.
  *
+ * The verification covers the bytes this function wrote, not the bytes that
+ * arrive at @p path. It writes and checks a temporary beside the destination
+ * and then renames that onto @p path, and every step addresses the temporary by
+ * path: the toolkit's writer takes a path rather than a descriptor, and the
+ * rename that publishes it takes one too. So a process able to write the
+ * destination's directory can replace the temporary between the last check and
+ * the rename, and this function will publish its bytes and return successfully.
+ * Such a process can already create, replace and remove @p path itself; what
+ * this adds is that a successful return stops implying the published bytes are
+ * the ones that were verified.
+ *
+ * A destination directory only the caller can write closes that. Confining the
+ * temporary to a directory only the caller can enter would narrow it to the
+ * same set, and is not what this function does. Nothing closes it outright: the
+ * publication step is a rename, and rename names its source by path.
+ *
  * Node 0 is written twice, into the MRC2000 ORIGIN record exactly and into
  * NxSTART as an integer node count, and the write is refused unless the two
  * agree on every axis to within half a node interval. So a map this function
