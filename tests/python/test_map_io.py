@@ -509,7 +509,7 @@ def test_combine_maps_rejects_an_out_of_range_op():
     """An out-of-range op used to return an all-zero grid with no error."""
     source = read_map(_DATA_DIR / "test_map.ccp4")
     other = read_map(_DATA_DIR / "test_map.ccp4")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="MapOp value"):
         maptitude.combine_maps(source.grid, other.grid, 99)
 
 
@@ -537,7 +537,7 @@ def test_combine_maps_still_accepts_every_valid_op():
 
 
 def test_read_map_rejects_an_out_of_range_tiebreak():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="OriginSource value"):
         read_map(_DATA_DIR / "test_map.ccp4", 99)
 
 
@@ -568,9 +568,9 @@ def test_the_enum_boundary_is_the_width_of_a_c_long():
     long_min = -long_max - 1
     source = read_map(_DATA_DIR / "test_map.ccp4")
     for value in (long_max, long_min):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="MapOp value"):
             maptitude.combine_maps(source.grid, source.grid, value)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="OriginSource value"):
             read_map(_DATA_DIR / "test_map.ccp4", value)
     for value in (long_max + 1, long_min - 1):
         with pytest.raises(OverflowError):
