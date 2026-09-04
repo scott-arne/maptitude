@@ -16,10 +16,10 @@ from openeye import oechem
 import maptitude as mpt
 from bms_bio.grid import create as bms_create
 from bms_bio.grid import score as bms_score
-from maptitude import get_unit_cell, read_map
+from maptitude import read_map
 
 from helpers import (
-    ASSET_DIR, RESOLUTIONS, load_mol, wrap_and_pad, bench,
+    ASSET_DIR, RESOLUTIONS, load_mol, load_xray_dataset, bench,
 )
 
 
@@ -152,12 +152,7 @@ def run():
         mol_em, grid_em, RESOLUTIONS["7cec"])
 
     # X-ray dataset (340d)
-    mol_xr = load_mol(ASSET_DIR / "340d.cif")
-    xr_map = read_map(ASSET_DIR / "340d_2fofc.ccp4")
-    cell_xr_params = get_unit_cell(xr_map.grid)
-    cell_xr = (cell_xr_params.a, cell_xr_params.b, cell_xr_params.c)
-    sym_xr = xr_map.symops
-    grid_xr = wrap_and_pad(xr_map.grid, mol_xr, cell_xr)
+    mol_xr, grid_xr, cell_xr, sym_xr = load_xray_dataset("340d")
     n_xr = sum(1 for _ in mol_xr.GetAtoms(oechem.OEIsHeavy()))
     print(f"X-ray: 340d, {n_xr} atoms, res={RESOLUTIONS['340d']} A")
 

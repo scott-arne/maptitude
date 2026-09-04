@@ -4,6 +4,7 @@ import pathlib
 import time
 
 import maptitude
+from maptitude import get_unit_cell, read_map
 from openeye import oechem
 
 # ---------------------------------------------------------------------------
@@ -74,11 +75,32 @@ def load_mol(path: pathlib.Path):
     return mol
 
 
+def load_xray_dataset(pdb: str):
+    """Load one X-ray asset as the benchmarks consume it.
+
+    Reads ``<pdb>.cif`` and ``<pdb>_2fofc.ccp4`` from :data:`ASSET_DIR`, takes
+    the cell edges from the map's own skew carrier, and pads the grid around
+    the molecule. Shared by all three benchmarks so the map-loading path they
+    measure against is one path, exercised by one test.
+
+    :param pdb: PDB code naming both assets, e.g. ``"340d"``.
+    :returns: Tuple ``(mol, grid, cell_dims, symops_text)``, where ``cell_dims``
+        is ``(a, b, c)`` in Angstroms and ``symops_text`` is the map's raw
+        symmetry records, empty when it carries none.
+    """
+    mol = load_mol(ASSET_DIR / f"{pdb}.cif")
+    result = read_map(ASSET_DIR / f"{pdb}_2fofc.ccp4")
+    cell = get_unit_cell(result.grid)
+    cell_dims = (cell.a, cell.b, cell.c)
+    grid = wrap_and_pad(result.grid, mol, cell_dims)
+    return mol, grid, cell_dims, result.symops
+
+
 def wrap_and_pad(grid, mol, cell, padding: float = 3.0):
     """Translate molecule into the unit cell and pad the grid if needed.
 
     An adapter over :func:`maptitude.wrap_and_pad_grid`, which takes the three
-    cell edges separately where the loaders here return them as a tuple. The
+    cell edges separately where callers here hold them as a tuple. The
     benchmarks measure the shipped padding path, so this must not grow a second
     implementation of it: an earlier Python copy that filled the padded grid by
     sampling the non-periodic entry point produced the better wwPDB agreement
