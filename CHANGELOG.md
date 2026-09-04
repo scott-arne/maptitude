@@ -27,8 +27,8 @@ gone.
   `ORIGIN` and `NxSTART` are nonzero. `ORIGIN_RECORD` is the default.
 - `compare_written_map` and `MAP_VERIFY_TOL` in `MapIO.h`, the predicate behind
   `write_map`'s verification and its relative tolerance; `compare_placement_records`
-  and `MAP_PLACEMENT_SLACK`, the predicate behind `read_map`'s placement
-  verification and its absolute tolerance. Public so a test can drive the
+  and `MAP_PLACEMENT_SLACK`, the predicate behind `write_map`'s placement
+  verification and its fractional slack. Public so a test can drive the
   comparison directly rather than having to manufacture a file that fails on
   each quantity. C++ only.
 - Both `read_map` and `write_map` reject a path containing an embedded NUL, so a
@@ -72,9 +72,10 @@ gone.
 - `write_map` refuses `wrap_and_pad_grid` output. The padded box declares a
   cell equal to its full sampled extent, which forces the written `NX` to equal
   `NC` and inflates the node count by one per axis on the way back in. The
-  refusal is a `GridError` naming the node count; the destination is left
-  untouched. Lifting it means rewriting the declared cell, which would stop the
-  written box comparing same-geometry with the box in memory.
+  refusal is a `GridError` naming the dimensions it wrote against the ones it
+  expected; the destination is left untouched. Lifting it means rewriting the
+  declared cell, which would stop the written box comparing same-geometry with
+  the box in memory.
 
 ## [0.4.0]
 
