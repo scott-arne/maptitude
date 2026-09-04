@@ -1051,6 +1051,10 @@ struct MapFile;
 MapFile read_map(const std::string& path,
                  OriginSource tiebreak = OriginSource::ORIGIN_RECORD);
 
+void write_map(const std::string& path,
+               const OESystem::OESkewGrid& grid,
+               const std::string& symops = "");
+
 }  // namespace Maptitude
 
 // ============================================================================
@@ -1180,6 +1184,7 @@ _cpp_combine_maps = combine_maps
 _cpp_diff_to_calc = diff_to_calc
 _cpp_wrap_and_pad_grid = wrap_and_pad_grid
 _cpp_read_map = read_map
+_cpp_write_map = write_map
 
 
 def _lookup_atom_radius(metric, radius_map, name):
@@ -1561,6 +1566,49 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
     """
     grid, symops = _cpp_read_map(os.fspath(path), tiebreak)
     return MapFile(grid, symops)
+
+
+def write_map(path, grid, symops=""):
+    """Write a grid as CCP4 or MRC, restoring the records OEWriteGrid drops.
+
+    The file is written and verified under a temporary name and renamed onto
+    ``path`` only once it reads back as the grid it came from, so a grid that
+    cannot be written faithfully raises with ``path`` untouched rather than
+    leaving a wrong map on disk or destroying a good one.
+
+    The verification covers the bytes this function wrote, not the bytes that
+    arrive at ``path``. It writes and checks a temporary beside the destination
+    and then renames that onto ``path``, and every step addresses the temporary
+    by path. So a process able to write the destination's directory can replace
+    the temporary between the last check and the rename, and this function will
+    publish its bytes and return successfully. Such a process can already
+    create, replace and remove ``path`` itself.
+
+    A grid produced by :func:`wrap_and_pad_grid` is refused: its declared cell
+    forces the written node count one higher per axis than the grid carries.
+
+    :param path: Destination. The format follows the extension; this writer
+        admits whatever ``OEGetGridFileType`` maps to the CCP4 format.
+        ``.ccp4``, ``.mrc`` and ``.map`` are the spellings this writer is
+        tested on, not the accepted set. A compressed destination such as
+        ``.ccp4.gz`` is refused, as is a filename that is nothing but an
+        extension. A ``str`` or any :class:`os.PathLike`.
+    :param grid: Grid to write, an ``OESkewGrid``.
+    :param symops: Symmetry text in the form :func:`read_map` returns, one
+        triplet per line. Empty writes no symmetry block. The semicolon
+        separator is normalized to a newline, so the operator set survives
+        a round trip but that spelling does not.
+    :raises TypeError: If ``path`` is neither a ``str`` nor an :class:`os.PathLike`.
+        A ``bytes`` path is also rejected, by the ``std::string`` typemap rather than
+        by ``os.fspath``.
+    :raises GridError: If the extension is not one OpenEye maps to the CCP4
+        format or names a compressed file, if the write fails, if the re-read
+        map differs from the grid in dimensions, cell, per-axis spacing,
+        node 0 or any voxel, or if the verified temporary file cannot be
+        renamed onto ``path``.
+    :raises SymOpError: If ``symops`` is non-empty and does not parse.
+    """
+    _cpp_write_map(os.fspath(path), grid, symops)
 
 
 def wrap_and_pad_grid(grid, mol, cell_a, cell_b, cell_c, padding=3.0):

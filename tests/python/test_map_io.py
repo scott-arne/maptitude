@@ -19,12 +19,15 @@ from maptitude import (
     MapFile,
     OriginSource,
     SymOpError,
+    UnitCell,
+    fc_density,
     get_grid_params,
     get_unit_cell,
     parse_symops,
     read_map,
+    wrap_and_pad_grid,
 )
-from openeye import oegrid
+from openeye import oechem, oegrid
 
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "mapq"
 _DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -227,3 +230,199 @@ def test_read_map_raises_the_typed_symop_error(tmp_path, record):
 
     with pytest.raises(SymOpError):
         read_map(variant)
+
+
+def test_write_map_round_trips_a_crystallographic_asset(tmp_path):
+    source = read_map(_ASSET_DIR / "1d26_2fofc.ccp4")
+    out = tmp_path / "round_trip.ccp4"
+
+    maptitude.write_map(out, source.grid, source.symops)
+
+    back = read_map(out)
+    assert (back.grid.GetXDim(), back.grid.GetYDim(),
+            back.grid.GetZDim()) == (49, 49, 25)
+    assert back.grid.GetSpaceGroup() == 96
+    assert back.symops == source.symops
+
+    before = get_grid_params(source.grid)
+    after = get_grid_params(back.grid)
+    assert after.x_spacing == pytest.approx(before.x_spacing, rel=1e-6)
+    assert after.y_spacing == pytest.approx(before.y_spacing, rel=1e-6)
+    assert after.z_spacing == pytest.approx(before.z_spacing, rel=1e-6)
+    assert after.x_origin == pytest.approx(before.x_origin, abs=1e-6)
+
+    original = source.grid.GetValues()
+    written = back.grid.GetValues()
+    assert [written[i] for i in range(back.grid.GetSize())] == [
+        original[i] for i in range(source.grid.GetSize())
+    ]
+
+
+def test_write_map_carries_the_em_origin(tmp_path):
+    source = read_map(_ASSET_DIR / "390_emd_30342_A_z4.mrc")
+    out = tmp_path / "em.mrc"
+
+    maptitude.write_map(out, source.grid)
+
+    after = get_grid_params(read_map(out).grid)
+    assert after.x_origin == pytest.approx(145.825, abs=1e-3)
+    assert after.y_origin == pytest.approx(112.825, abs=1e-3)
+    assert after.z_origin == pytest.approx(120.517, abs=1e-3)
+
+
+def test_write_map_accepts_both_writable_extensions(tmp_path):
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    for name in ("out.ccp4", "out.mrc"):
+        out = tmp_path / name
+        maptitude.write_map(out, source.grid)
+        assert read_map(out).grid.GetSize() == 9261
+
+
+def test_write_map_defaults_an_absent_space_group_to_p1(tmp_path):
+    source = read_map(_ASSET_DIR / "390_emd_30342_A_z4.mrc")
+    assert source.grid.GetSpaceGroup() == 0
+    out = tmp_path / "p1.mrc"
+    maptitude.write_map(out, source.grid)
+    assert read_map(out).grid.GetSpaceGroup() == 1
+
+
+def test_write_map_raises_on_an_unwritable_extension(tmp_path):
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    out = tmp_path / "density.dat"
+    with pytest.raises(GridError):
+        maptitude.write_map(out, source.grid)
+    assert not out.exists()
+
+
+def test_write_map_raises_on_unparseable_symops(tmp_path):
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+    out = tmp_path / "bad_symops.ccp4"
+    with pytest.raises(SymOpError):
+        maptitude.write_map(out, source.grid, "not a symop")
+    assert not out.exists()
+
+
+# pdb, resolution, node count. The resolutions are the ones
+# tests/python/test_validation.py already pins in _PDB_RESOLUTIONS:113-117; the
+# node counts are what read_map returns for the observed map, which fc_density
+# copies onto its output.
+_FC_CASES = [
+    ("1d26", 2.12, (49, 49, 25)),
+    ("3q9g", 2.05, (37, 37, 61)),
+    ("340d", 1.60, (61, 61, 37)),
+]
+
+
+@pytest.mark.parametrize(("pdb", "resolution", "dim"), _FC_CASES)
+def test_write_map_round_trips_fc_density_output(pdb, resolution, dim, tmp_path):
+    """Section 6's fc_density case, on all three crystallographic assets.
+
+    Distinct from the read-fixture round trips above in what produced the
+    carrier: fc_density built this grid and computed its payload, where those
+    cases write back a grid read_map constructed from a header. The geometry is
+    inherited from the observed map, which is what keeps it writable -- it is
+    the contrast case for the sub-box refusal below, since fc_density leaves the
+    observed map's cell-to-spacing ratio alone and wrap_and_pad_grid does not.
+    It is also the shape a caller most wants to write: a model map they just
+    computed.
+    """
+    mol = oechem.OEGraphMol()
+    ifs = oechem.oemolistream(str(_ASSET_DIR / f"{pdb}.cif"))
+    assert oechem.OEReadMolecule(ifs, mol)
+    ifs.close()
+
+    source = read_map(_ASSET_DIR / f"{pdb}_2fofc.ccp4")
+    cell = get_unit_cell(source.grid)
+    # 90-degree angles, as test_validation.py:395 does for the same three
+    # structures. DensityCalculator refuses any other angle outright
+    # (src/DensityCalculator.cpp:43), so this is not a rounding convenience.
+    fc = fc_density(
+        mol, source.grid, resolution,
+        UnitCell(cell.a, cell.b, cell.c, 90.0, 90.0, 90.0),
+        symops=parse_symops(source.symops) or None,
+    )
+
+    out = tmp_path / f"{pdb}_fc.ccp4"
+    maptitude.write_map(out, fc, source.symops)
+
+    back = read_map(out)
+    assert (back.grid.GetXDim(), back.grid.GetYDim(),
+            back.grid.GetZDim()) == dim
+    assert back.grid.GetSpaceGroup() == fc.GetSpaceGroup()
+    assert back.symops == source.symops
+
+    before = get_grid_params(fc)
+    after = get_grid_params(back.grid)
+    assert after.x_spacing == pytest.approx(before.x_spacing, rel=1e-6)
+    assert after.y_spacing == pytest.approx(before.y_spacing, rel=1e-6)
+    assert after.z_spacing == pytest.approx(before.z_spacing, rel=1e-6)
+    assert after.x_origin == pytest.approx(before.x_origin, abs=1e-6)
+
+    original = fc.GetValues()
+    written = back.grid.GetValues()
+    assert [written[i] for i in range(back.grid.GetSize())] == [
+        original[i] for i in range(fc.GetSize())
+    ]
+
+
+def _padded_sub_box(source):
+    """The wrap_and_pad_grid box around 1d26's ligand: the one refused shape.
+
+    Lives in Python because the C++ suite has no molecule-from-file loader.
+    Its C++ counterpart reaches the same branch with a hand-built grid, which
+    reproduces the geometric condition but is not the call section 2.4 measured
+    the refusal on -- so this is where that measurement is actually pinned.
+    """
+    mol = oechem.OEGraphMol()
+    ifs = oechem.oemolistream(str(_ASSET_DIR / "1d26.cif"))
+    assert oechem.OEReadMolecule(ifs, mol)
+    ifs.close()
+
+    cell = get_unit_cell(source.grid)
+    padded = wrap_and_pad_grid(source.grid, mol, cell.a, cell.b, cell.c)
+    assert padded is not None, (
+        "wrap_and_pad_grid returned None, so the ligand already fits and there "
+        "is no sub-box to refuse"
+    )
+    return padded
+
+
+def test_write_map_refuses_a_wrap_and_pad_sub_box(tmp_path):
+    source = read_map(_ASSET_DIR / "1d26_2fofc.ccp4")
+    out = tmp_path / "sub_box.ccp4"
+
+    with pytest.raises(GridError) as excinfo:
+        maptitude.write_map(out, _padded_sub_box(source))
+
+    assert "dimensions differ" in str(excinfo.value)
+    assert not out.exists()
+
+
+def test_a_refused_write_leaves_the_destination_alone(tmp_path):
+    source = read_map(_ASSET_DIR / "1d26_2fofc.ccp4")
+    out = tmp_path / "existing.ccp4"
+    maptitude.write_map(out, source.grid, source.symops)
+    before = out.read_bytes()
+
+    with pytest.raises(GridError):
+        maptitude.write_map(out, _padded_sub_box(source))
+
+    assert out.read_bytes() == before
+
+
+def test_write_map_rejects_invalid_path_types(tmp_path):
+    """Correction 1 test: os.fspath contract pins None and pathlib.Path."""
+    source = read_map(_DATA_DIR / "test_map.ccp4")
+
+    # None should raise TypeError from os.fspath
+    with pytest.raises(TypeError):
+        maptitude.write_map(None, source.grid)
+
+    # Verify no file was created (None becomes "None" with str())
+    assert not (tmp_path / "None").exists()
+
+    # pathlib.Path should be accepted
+    out = tmp_path / "from_pathlib.ccp4"
+    maptitude.write_map(out, source.grid, source.symops)
+    assert out.exists()
+    assert read_map(out).grid.GetSize() == 9261

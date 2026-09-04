@@ -627,6 +627,7 @@ from .maptitude import (
     parse_symops,
     MapFile,
     read_map,
+    write_map,
 
     # Container types
     DoubleVector,
@@ -719,6 +720,7 @@ __all__ = [
     "parse_symops",
     "MapFile",
     "read_map",
+    "write_map",
     # Exceptions
     "MaptitudeError",
     "StructureError",
