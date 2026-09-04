@@ -121,13 +121,6 @@ _PDB_RESOLUTIONS = {
 # Helpers
 # ---------------------------------------------------------------------------
 
-# MRC/CCP4 map loading and symmetry-operator extraction are shared with the
-# benchmark suite; import the single canonical implementation (see conftest.py
-# for the sys.path wiring) instead of duplicating the header parsing here.
-# Padding is not imported from there either: it belongs to the library, and
-# these tests call maptitude.wrap_and_pad_grid directly.
-from helpers import load_ccp4_grid, load_mrc_grid
-
 
 class _HasResidueName:
     """Atom predicate matching a specific residue name (for mask building)."""
@@ -185,14 +178,14 @@ class TestQScoreMapqComparison:
     @classmethod
     def setup_class(cls):
         from openeye import oechem
-        from maptitude import qscore
+        from maptitude import qscore, read_map
 
         cls.mol = oechem.OEGraphMol()
         ifs = oechem.oemolistream(str(_ASSET_DIR / "390_7cec_A100.cif"))
         oechem.OEReadMolecule(ifs, cls.mol)
         ifs.close()
 
-        cls.grid = load_mrc_grid(_ASSET_DIR / "390_emd_30342_A_z4.mrc")
+        cls.grid = read_map(_ASSET_DIR / "390_emd_30342_A_z4.mrc").grid
 
         cls.result = qscore(cls.mol, cls.grid, resolution=cls._RESOLUTION)
 
@@ -298,14 +291,14 @@ class TestIntegration:
     @classmethod
     def setup_class(cls):
         from openeye import oechem
-        from maptitude import qscore, ediam, coverage
+        from maptitude import qscore, ediam, coverage, read_map
 
         cls.mol = oechem.OEGraphMol()
         ifs = oechem.oemolistream(str(_ASSET_DIR / "390_7cec_A100.cif"))
         oechem.OEReadMolecule(ifs, cls.mol)
         ifs.close()
 
-        cls.grid = load_mrc_grid(_ASSET_DIR / "390_emd_30342_A_z4.mrc")
+        cls.grid = read_map(_ASSET_DIR / "390_emd_30342_A_z4.mrc").grid
 
         cls.qscore_result = qscore(cls.mol, cls.grid, resolution=cls._RESOLUTION)
         cls.ediam_result = ediam(cls.mol, cls.grid, resolution=cls._RESOLUTION)
@@ -360,6 +353,7 @@ class TestRSCCRSRBenchmark:
         from openeye import oechem, oegrid
         from maptitude import (
             rscc, rsr, fc_density, UnitCell, parse_symops, wrap_and_pad_grid,
+            get_unit_cell, read_map,
         )
 
         cls.mols = {}
@@ -378,11 +372,11 @@ class TestRSCCRSRBenchmark:
             oechem.OEReadMolecule(ifs, mol)
             ifs.close()
 
-            grid, cell_dims, symops_text = load_ccp4_grid(
-                _ASSET_DIR / f"{pdb}_2fofc.ccp4"
-            )
-            symops_list = parse_symops(symops_text) if symops_text else None
-            grid = wrap_and_pad_grid(grid, mol, *cell_dims)
+            result = read_map(_ASSET_DIR / f"{pdb}_2fofc.ccp4")
+            cell = get_unit_cell(result.grid)
+            cell_dims = (cell.a, cell.b, cell.c)
+            symops_list = parse_symops(result.symops) if result.symops else None
+            grid = wrap_and_pad_grid(result.grid, mol, *cell_dims)
 
             cls.mols[pdb] = mol
             cls.grids[pdb] = grid

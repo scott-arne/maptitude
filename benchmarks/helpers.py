@@ -1,12 +1,10 @@
 """Shared utilities for maptitude vs bms-bio benchmarks."""
 
 import pathlib
-import re
-import struct
 import time
 
 import maptitude
-from openeye import oechem, oegrid
+from openeye import oechem
 
 # ---------------------------------------------------------------------------
 # Paths and constants
@@ -74,112 +72,6 @@ def load_mol(path: pathlib.Path):
     oechem.OEReadMolecule(ifs, mol)
     ifs.close()
     return mol
-
-
-def load_mrc_grid(mrc_path: pathlib.Path):
-    """Load an MRC grid and fix the origin from header bytes 196-207.
-
-    :param mrc_path: Path to the MRC file.
-    :returns: OESkewGrid with corrected origin.
-    """
-    with open(mrc_path, "rb") as f:
-        header = f.read(1024)
-    origin_x, origin_y, origin_z = struct.unpack_from("3f", header, 196)
-
-    grid = oegrid.OESkewGrid()
-    ifs = oechem.oeifstream(str(mrc_path))
-    oegrid.OEReadGrid(ifs, grid, oegrid.OEGridFileType_CCP4)
-    ifs.close()
-
-    # The header origin is the first node on each axis, so each midpoint is half
-    # a span along that axis's own node interval, which is why the per-axis
-    # get_grid_params spacings are used below. OpenEye's single scalar spacing
-    # accessor would hand back the smallest of the three for all of them.
-    gp = maptitude.get_grid_params(grid)
-    grid.SetMid(
-        origin_x + (gp.x_dim - 1) * gp.x_spacing / 2.0,
-        origin_y + (gp.y_dim - 1) * gp.y_spacing / 2.0,
-        origin_z + (gp.z_dim - 1) * gp.z_spacing / 2.0,
-    )
-    return grid
-
-
-# A symmetry-operator component is a signed sum of the axis symbols x/y/z and
-# rational translations (e.g. "-X", "1/2+Y", "Z"). It must contain at least one
-# axis symbol and only the characters legal in a triplet.
-_SYMOP_COMPONENT = re.compile(r"^[+\-0-9./]*[xyzXYZ][+\-0-9./xyzXYZ]*$")
-
-
-def _is_symop_triplet(record: str) -> bool:
-    """Return True if *record* looks like an ``x,y,z`` symmetry triplet.
-
-    :param record: A single stripped extended-header record.
-    :returns: True if the record parses as exactly three valid triplet
-        components.
-    """
-    parts = record.split(",")
-    if len(parts) != 3:
-        return False
-    return all(_SYMOP_COMPONENT.match(part.replace(" ", "")) for part in parts)
-
-
-def extract_ccp4_symops(raw: bytes) -> str:
-    """Extract validated symmetry-operator triplets from CCP4 extended-header bytes.
-
-    Crystallographic CCP4 maps store symmetry operators in the extended header
-    (the ``NSYMBT`` bytes following the 1024-byte main header) as 80-character
-    fixed-width ASCII records. EM/MRC maps reuse the same ``NSYMBT`` field for a
-    *binary* extended header (instrument metadata), so the bytes must be
-    validated as genuine triplets before they are trusted — otherwise binary
-    metadata is misread as crystal symmetry.
-
-    Two guards enforce this:
-
-    1. A strict ASCII decode rejects binary EM headers (non-ASCII bytes raise
-       ``UnicodeDecodeError``, handled by returning no symmetry).
-    2. Each 80-char record is kept only if it parses as an ``x,y,z`` triplet;
-       a lossy ``errors="ignore"`` decode is deliberately *not* used because it
-       could forge a triplet by silently dropping bytes.
-
-    :param raw: Raw extended-header bytes (``NSYMBT`` bytes).
-    :returns: Newline-joined validated triplets, or "" if none are valid.
-    """
-    try:
-        text = raw.decode("ascii")
-    except UnicodeDecodeError:
-        return ""
-    records = (text[i:i + 80].strip() for i in range(0, len(text), 80))
-    return "\n".join(r for r in records if _is_symop_triplet(r))
-
-
-def load_ccp4_grid(ccp4_path: pathlib.Path):
-    """Load a CCP4 map with cell dimensions and symmetry operators.
-
-    Symmetry operators are extracted from the extended header and validated as
-    ``x,y,z`` triplets (see :func:`extract_ccp4_symops`) so that a non-CCP4 or
-    corrupt header does not contribute spurious symmetry.
-
-    :param ccp4_path: Path to the CCP4 map file.
-    :returns: Tuple of (grid, (a, b, c) cell dimensions, symops_text).
-    """
-    with open(ccp4_path, "rb") as f:
-        header = f.read(1024)
-    a, b, c = struct.unpack_from("3f", header, 40)
-    nsymbt = struct.unpack_from("<i", header, 92)[0]
-
-    symops_text = ""
-    if nsymbt > 0:
-        with open(ccp4_path, "rb") as f:
-            f.seek(1024)
-            raw = f.read(nsymbt)
-        symops_text = extract_ccp4_symops(raw)
-
-    grid = oegrid.OESkewGrid()
-    ifs = oechem.oeifstream(str(ccp4_path))
-    oegrid.OEReadGrid(ifs, grid, oegrid.OEGridFileType_CCP4)
-    ifs.close()
-
-    return grid, (a, b, c), symops_text
 
 
 def wrap_and_pad(grid, mol, cell, padding: float = 3.0):

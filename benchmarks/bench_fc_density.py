@@ -12,9 +12,10 @@ from openeye import oechem
 
 import maptitude as mpt
 from bms_bio.grid import create as bms_create
+from maptitude import get_unit_cell, read_map
 
 from helpers import (
-    ASSET_DIR, RESOLUTIONS, load_mol, load_ccp4_grid, wrap_and_pad, bench,
+    ASSET_DIR, RESOLUTIONS, load_mol, wrap_and_pad, bench,
 )
 
 
@@ -41,9 +42,11 @@ def run():
     datasets = {}
     for pdb in ["1d26", "3q9g", "340d"]:
         mol = load_mol(ASSET_DIR / f"{pdb}.cif")
-        grid, cell_dims, symops_text = load_ccp4_grid(
-            ASSET_DIR / f"{pdb}_2fofc.ccp4")
-        grid = wrap_and_pad(grid, mol, cell_dims)
+        result = read_map(ASSET_DIR / f"{pdb}_2fofc.ccp4")
+        cell = get_unit_cell(result.grid)
+        cell_dims = (cell.a, cell.b, cell.c)
+        grid = wrap_and_pad(result.grid, mol, cell_dims)
+        symops_text = result.symops
         n_heavy = sum(1 for _ in mol.GetAtoms(oechem.OEIsHeavy()))
         datasets[pdb] = {
             "mol": mol, "grid": grid, "cell": cell_dims,

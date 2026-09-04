@@ -32,6 +32,10 @@ from openeye import oechem, oegrid
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "mapq"
 _DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
+_EXPECTED_RSCC = 0.9688422977346897
+_EXPECTED_RSR = 0.09819888286522681
+_EXPECTED_QSCORE = 0.9052790577235651
+
 _CCP4_HEADER_BYTES = 1024
 _SYMOP_RECORD_BYTES = 80
 
@@ -468,3 +472,31 @@ def test_write_map_rejects_arguments_that_are_not_paths(bad, tmp_path,
 
     assert list(tmp_path.iterdir()) == []
     assert refusal is not None
+
+
+def test_read_map_scores_the_same_as_the_retired_loader():
+    """RSCC, RSR and Q on one asset must not move when the loader changes.
+
+    Pinned against values computed through the loader being retired, so a
+    difference here means the swap moved a score rather than just a call site.
+    """
+    mol = oechem.OEGraphMol()
+    ifs = oechem.oemolistream(str(_ASSET_DIR / "340d.cif"))
+    assert oechem.OEReadMolecule(ifs, mol)
+
+    result = read_map(_ASSET_DIR / "340d_2fofc.ccp4")
+    cell = get_unit_cell(result.grid)
+    symops = parse_symops(result.symops) if result.symops else None
+    grid = maptitude.wrap_and_pad_grid(result.grid, mol, cell.a, cell.b, cell.c)
+
+    calc = maptitude.fc_density(
+        mol, grid, 1.60,
+        maptitude.UnitCell(cell.a, cell.b, cell.c, 90.0, 90.0, 90.0),
+        symops=symops)
+
+    assert maptitude.rscc(mol, grid, 1.60, calc_grid=calc).overall == (
+        pytest.approx(_EXPECTED_RSCC, abs=1e-9))
+    assert maptitude.rsr(mol, grid, 1.60, calc_grid=calc).overall == (
+        pytest.approx(_EXPECTED_RSR, abs=1e-9))
+    assert maptitude.qscore(mol, grid, 1.60).overall == (
+        pytest.approx(_EXPECTED_QSCORE, abs=1e-9))

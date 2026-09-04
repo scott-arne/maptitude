@@ -19,10 +19,11 @@ from openeye import oechem
 import maptitude as mpt
 from bms_bio.grid import create as bms_create
 from bms_bio.grid import score as bms_score
+from maptitude import get_unit_cell, read_map
 
 from helpers import (
     ASSET_DIR, RESOLUTIONS, PUBLISHED_RSCC_RSR, MAPQ_QSCORES,
-    load_mol, load_mrc_grid, load_ccp4_grid, wrap_and_pad, ligand_mask,
+    load_mol, wrap_and_pad, ligand_mask,
 )
 
 
@@ -39,9 +40,11 @@ def _part_a():
     data = {}
     for pdb in ["1d26", "3q9g", "340d"]:
         mol = load_mol(ASSET_DIR / f"{pdb}.cif")
-        grid, cell_dims, symops_text = load_ccp4_grid(
-            ASSET_DIR / f"{pdb}_2fofc.ccp4")
-        grid = wrap_and_pad(grid, mol, cell_dims)
+        result = read_map(ASSET_DIR / f"{pdb}_2fofc.ccp4")
+        cell = get_unit_cell(result.grid)
+        cell_dims = (cell.a, cell.b, cell.c)
+        grid = wrap_and_pad(result.grid, mol, cell_dims)
+        symops_text = result.symops
         data[pdb] = {
             "mol": mol, "grid": grid, "cell": cell_dims,
             "symops_text": symops_text,
@@ -156,7 +159,7 @@ def _part_b():
     print("=" * 72)
 
     mol = load_mol(ASSET_DIR / "390_7cec_A100.cif")
-    grid = load_mrc_grid(ASSET_DIR / "390_emd_30342_A_z4.mrc")
+    grid = read_map(ASSET_DIR / "390_emd_30342_A_z4.mrc").grid
     resolution = RESOLUTIONS["7cec"]
 
     result = mpt.qscore(mol, grid, resolution)
