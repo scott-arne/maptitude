@@ -483,6 +483,7 @@ def test_read_map_scores_the_same_as_the_retired_loader():
     mol = oechem.OEGraphMol()
     ifs = oechem.oemolistream(str(_ASSET_DIR / "340d.cif"))
     assert oechem.OEReadMolecule(ifs, mol)
+    ifs.close()
 
     result = read_map(_ASSET_DIR / "340d_2fofc.ccp4")
     cell = get_unit_cell(result.grid)
