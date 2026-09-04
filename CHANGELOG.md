@@ -80,14 +80,16 @@ gone.
 
 ### Known limitations
 
-- `write_map` refuses a box that `wrap_and_pad_grid` actually padded — when no
-  padding is needed it hands back the caller's own grid, which writes normally.
-  The padded box declares a cell equal to its full sampled extent, which forces
-  the written `NX` to equal `NC` and inflates the node count by one per axis on
-  the way back in. The refusal is a `GridError` naming the dimensions it wrote
-  against the ones it expected; the destination is left untouched. Lifting it
-  means rewriting the declared cell, which would stop the written box comparing
-  same-geometry with the box in memory.
+- `write_map` refuses a box that `wrap_and_pad_grid` actually padded. The padded
+  box declares a cell equal to its full sampled extent, which forces the written
+  `NX` to equal `NC` and inflates the node count by one per axis on the way back
+  in. The refusal is a `GridError` naming the dimensions it wrote against the
+  ones it expected; the destination is left untouched. Lifting it means
+  rewriting the declared cell, which would stop the written box comparing
+  same-geometry with the box in memory. Only a padded box is affected: when no
+  padding is needed the C++ function returns null, and the Python wrapper
+  substitutes the caller's own grid, which is not a padded box and so is not
+  refused.
 
 ## [0.4.0]
 

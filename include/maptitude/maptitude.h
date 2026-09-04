@@ -63,6 +63,7 @@ class CoverageOptions;
 #include "maptitude/DensityCalculator.h"
 #include "maptitude/Metric.h"
 #include "maptitude/GridOps.h"
+#include "maptitude/MapIO.h"
 #include "maptitude/SpatialIndex.h"
 
 #endif  // MAPTITUDE_MAPTITUDE_H
