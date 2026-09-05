@@ -240,13 +240,14 @@ std::string ReadSymopBlock(const std::string& path, const MapHeader& header) {
         // as one between records. Measured on tests/assets/mapq/1d26_2fofc.ccp4
         // with record 0 respliced as "x,y,z;-x,-y,z" and NSYMBT left at 640,
         // read_map returned that text verbatim as one of eight operators and
-        // ParseAll passed it; the pristine file returns eight operators from
-        // the same eight records, so the accepted record is the splice's doing.
+        // ParseAll passed it; the pristine file returns one operator per record
+        // over those same eight records, so what the spliced read returned is
+        // the splice's doing.
         //
         // Splitting the record here instead of refusing it would not close
         // that: CanonicalSymops splits on ';' too, so that spliced file round
         // trips as nine records whichever place does the splitting -- NSYMBT
-        // 640 in, 720 out. Only refusing leaves the record count alone.
+        // 640 in, 720 out. Only refusing leaves that file's record count alone.
         // Refusing is also the read half of the position CanonicalSymops states
         // for the write half: a consumer reading the fixed-width records
         // literally gets one malformed operator out of a record holding two
