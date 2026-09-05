@@ -1683,9 +1683,9 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
 
     :param path: Map file to read. A ``str`` or any :class:`os.PathLike`.
     :param tiebreak: Which record wins when ORIGIN and NxSTART both encode a
-        nonzero, differing origin. One of ``OriginSource.ORIGIN_RECORD`` (the
-        default) or ``OriginSource.NXSTART``. Ignored when at most one is
-        nonzero.
+        nonzero origin, whether or not the two agree -- nothing here compares
+        them. One of ``OriginSource.ORIGIN_RECORD`` (the default) or
+        ``OriginSource.NXSTART``. Ignored when at most one is nonzero.
     :returns: A :class:`MapFile` of ``(grid, symops)``.
     :raises TypeError: If ``path`` is neither a ``str`` nor an
         :class:`os.PathLike`. A ``bytes`` path is also rejected, by the

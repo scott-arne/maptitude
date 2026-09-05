@@ -47,7 +47,8 @@ struct MapFile {
  *
  * @param path Map file to read.
  * @param tiebreak Which record wins when ORIGIN and NxSTART both encode a
- *        nonzero, differing origin. Ignored when at most one is nonzero.
+ *        nonzero origin, whether or not the two agree -- nothing here compares
+ *        them. Ignored when at most one is nonzero.
  * @return The grid, positioned at the file's origin, and its symmetry text.
  * @throws GridError if the file cannot be read, if its header cannot be parsed,
  *         or if @p path contains an embedded NUL, since the calls that open the
