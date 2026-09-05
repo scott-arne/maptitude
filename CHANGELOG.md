@@ -8,10 +8,11 @@ This project is pre-1.0: breaking changes may land in a minor release.
 ## [0.5.0]
 
 The map I/O release. Maptitude now reads and writes CCP4/MRC files through its
-own `read_map` and `write_map`, which preserve the two header records the
-OpenEye grid I/O discards: the MRC2000 `ORIGIN` placement and the symmetry
-block. The Python loaders that stood in for this in the benchmark suite are
-gone.
+own `read_map` and `write_map`, which restore two header records the OpenEye
+grid I/O drops: the MRC2000 `ORIGIN` placement and the symmetry block. Those
+two are what this release set out to keep, not everything a round trip drops —
+the text labels go too, and are listed under Known limitations. The Python
+loaders that stood in for this in the benchmark suite are gone.
 
 ### Added
 
@@ -93,6 +94,14 @@ gone.
   straight back — the C++ function returns null and the Python wrapper
   substitutes the caller's own grid — and `write_map` then judges it exactly as
   it would any other grid it is handed.
+- **A round trip drops the file's text labels.** After `OEWriteGrid` returns,
+  `write_map` splices back exactly three things — the symmetry block, `NSYMBT`,
+  and `ORIGIN` when node 0 is not already at the origin (`PatchHeaderRecords` in
+  `src/MapIO.cpp`) — and the label block is not among them. Reading
+  `tests/assets/mapq/1d26_2fofc.ccp4` and writing it back turns `NLABL` 1 and the
+  label `written by GEMMI` into `NLABL` 0 and an empty block. The header
+  statistics `AMIN`, `AMAX`, `AMEAN` and `ARMS` came through that same round trip
+  bit-identically.
 
 ## [0.4.0]
 
