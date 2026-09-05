@@ -1,7 +1,8 @@
 /**
  * @file MapIO.h
- * @brief CCP4/MRC map reading and writing that preserves the header records
- *        the OpenEye grid I/O discards.
+ * @brief CCP4/MRC map reading and writing that preserves two header records
+ *        the OpenEye grid I/O discards: the MRC2000 ORIGIN placement and the
+ *        symmetry block.
  *
  * OEReadGrid returns the payload and the cell but drops the MRC2000 ORIGIN
  * record and the symmetry block; OEWriteGrid emits neither. Both are needed to
@@ -41,7 +42,8 @@ struct MapFile {
 };
 
 /**
- * @brief Read a CCP4 or MRC map, preserving the records OEReadGrid drops.
+ * @brief Read a CCP4 or MRC map, preserving the ORIGIN record and symmetry
+ *        block OEReadGrid drops.
  *
  * @param path Map file to read.
  * @param tiebreak Which record wins when ORIGIN and NxSTART both encode a
@@ -142,7 +144,8 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
                                       const OESystem::OESkewGrid& by_nxstart);
 
 /**
- * @brief Write a grid as CCP4/MRC, restoring the records OEWriteGrid drops.
+ * @brief Write a grid as CCP4/MRC, restoring the ORIGIN record and symmetry
+ *        block OEWriteGrid drops.
  *
  * Writes and verifies a temporary file, then renames it onto @p path. A grid
  * this function cannot write faithfully raises with @p path untouched, rather

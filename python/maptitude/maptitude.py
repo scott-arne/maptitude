@@ -1675,7 +1675,7 @@ class MapFile(tuple):
 
 
 def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
-    """Read a CCP4 or MRC map, preserving the records OEReadGrid discards.
+    """Read a CCP4 or MRC map, preserving its ORIGIN record and symmetry block.
 
     OEReadGrid returns the payload, the cell and the space group but never
     consults the MRC2000 ORIGIN record and does not expose the symmetry block.
@@ -1716,7 +1716,7 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
 
 
 def write_map(path, grid, symops=""):
-    """Write a grid as CCP4 or MRC, restoring the records OEWriteGrid drops.
+    """Write a grid as CCP4 or MRC, restoring the ORIGIN and symmetry records.
 
     The file is written and verified under a temporary name and renamed onto
     ``path`` only once it reads back as the grid it came from, so a grid that
