@@ -232,10 +232,10 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  *         nodes, so its spacing is undefined, if on any axis its ORIGIN and
  *         NxSTART records place node 0 more than half that axis's node interval
  *         apart, or if the temporary file cannot be renamed onto @p path. That
- *         list is what a caller can predict from @p path, @p grid and the state
- *         of the destination. Steps this function drives internally raise
- *         GridError too when they do not produce a usable file, so catch the
- *         class rather than switching on the list.
+ *         list is not closed: this function raises GridError from further
+ *         internal checks, among them the header re-reads and the NSYMBT and
+ *         symop-block byte comparisons. Catch the class rather than switching
+ *         on the list.
  * @throws SymOpError if symops is non-empty and does not parse, or if any of
  *         its records is longer than the format's 80-character field.
  * @throws CellError if the grid's sampling is not axis-aligned, which a cell

@@ -1791,10 +1791,10 @@ def write_map(path, grid, symops=""):
         NUL, which ``os.fspath`` passes through unchanged: the extension gate
         reads the whole string while the calls that write and publish the file
         stop at the NUL, so the name checked and the name written are not the
-        same name. That list is what a caller can predict from ``path``,
-        ``grid`` and the state of the destination. Steps this function drives
-        internally raise ``GridError`` too when they do not produce a usable
-        file, so catch the class rather than switching on the list.
+        same name. That list is not closed: this function raises ``GridError``
+        from further internal checks, among them the header re-reads and the
+        NSYMBT and symop-block byte comparisons. Catch the class rather than
+        switching on the list.
     :raises SymOpError: If ``symops`` is non-empty and does not parse, or if
         any of its records is longer than the format's 80-character field.
     """

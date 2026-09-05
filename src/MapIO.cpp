@@ -699,8 +699,11 @@ void PatchHeaderRecords(const std::filesystem::path& file,
     // comes back with those words filled with spaces, while a bare
     // copy-construct of that same grid, with no maptitude code involved, shows
     // the drift -- and write_map copies the caller's grid to default its space
-    // group. Zero is the correct SKWTRN and is what the assets read here carry,
-    // so writing it also makes the words survive a round trip unchanged.
+    // group. Zero is the semantically correct SKWTRN and is what the four
+    // source assets under tests/assets/mapq carry, so a map read from one of
+    // them and written back keeps those words unchanged. tests/data/test_map.ccp4
+    // carries the same junk pattern at those words and is normalized to zero on
+    // the way through.
     //
     // Guarded on LSKFLG rather than unconditional, so a future path that does
     // write a real skew translation does not have it silently erased. The guard
