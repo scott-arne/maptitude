@@ -799,16 +799,24 @@ MapFile read_map(const std::string& path, const OriginSource tiebreak) {
         //
         // The NSYMBT sanity check is what refuses such a file today, and it
         // refuses on an accident of the bytes rather than on the format. Each
-        // of the three formats OpenEye writes was written from
-        // tests/assets/mapq/1d26_2fofc.ccp4 and read back: '.grd', '.agd' and
-        // '.phi' all land on a word 24 that is not a multiple of 80, so all
-        // three are refused there. Zeroing that one word in the '.phi' -- and
-        // nothing else -- was enough for read_map to accept it and hand back
-        // the 65x65x65 grid OEReadGrid made of the Grasp stream, 19.5 A from
-        // the node 0 of the map it was written from, with no error. What the
-        // header half does when its bytes are not zero is visible in the '.agd'
-        // written from that same grid, whose words 50-52 are the text
-        // "502e-02\n-5.0" and read as an ORIGIN of (5.3e22, 8.6e-33, 6.3e-10).
+        // of the three formats OpenEye writes was written from the grid
+        // read_map returns for tests/assets/mapq/1d26_2fofc.ccp4 and read back:
+        // '.grd', '.agd' and '.phi' all land on a word 24 that is not a
+        // multiple of 80, so all three are refused there. Zeroing that one word
+        // in the '.phi' -- and nothing else -- was enough for read_map to
+        // accept it and hand back the 65x65x65 grid OEReadGrid made of the
+        // Grasp stream, 19.5 A from the node 0 of the map it was written from,
+        // with no error. What the header half does when its bytes are not zero
+        // is visible in the '.agd' written from that same grid, whose words
+        // 50-52 are the text "502e-02\n-5.0" and read as an ORIGIN of
+        // (5.3e22, 8.6e-33, 6.3e-10).
+        //
+        // Which grid was written matters for the byte figures above, so it is
+        // stated rather than left to the asset's name: a bare OEReadGrid of
+        // that same asset writes a different '.agd' -- "7e-02\n2.7225" at those
+        // words -- and a '.grd' whose word 24 is 1049322889 rather than 1.
+        // Neither is a multiple of 80 either, so the sentence about the three
+        // formats holds for both grids; the quoted bytes do not.
         //
         // UNDEFINED is not CCP4, so an extension OpenEye does not recognize is
         // covered by the same comparison.

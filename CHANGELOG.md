@@ -67,8 +67,9 @@ loaders that stood in for this in the benchmark suite are gone.
   `NSYMBT` bytes past that as 80-byte symmetry records, whatever the format
   turned out to be. The `NSYMBT` sanity check was all that stood in the way, and
   it fires on an accident of those bytes rather than on the format: `.grd`,
-  `.agd` and `.phi` files written from `tests/assets/mapq/1d26_2fofc.ccp4` all
-  land on a word 24 that is not a multiple of 80 and were refused there. Zeroing
+  `.agd` and `.phi` files written from the grid `read_map` returns for
+  `tests/assets/mapq/1d26_2fofc.ccp4` all land on a word 24 that is not a
+  multiple of 80 and were refused there. Zeroing
   that one word in the `.phi` was enough for the old path to accept the file and
   return the 65x65x65 grid `OEReadGrid` made of the Grasp stream, 19.5 A from
   the node 0 of the map it was written from, with no error. A compressed map was
