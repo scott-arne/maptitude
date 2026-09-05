@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1844,6 +1845,60 @@ TEST(MapIoPlacementSeamTest, NamesAnAxisWhoseRecordsPlaceNodeZeroApart) {
     const std::string message =
         compare_placement_records(by_origin, by_nxstart);
     EXPECT_NE(message.find("node 0 x"), std::string::npos) << message;
+}
+
+TEST(MapIoPlacementSeamTest, AcceptsThreeAxesEachInsideItsOwnHalfInterval) {
+    // The rule is per axis: each axis is compared against its own node
+    // interval, and nothing bounds the three together. The two seam tests above
+    // move x alone, where a per-axis rule and a Euclidean one return the same
+    // answer, so neither can tell them apart. This pair diverges on all three
+    // axes at once, by less than half an interval each, which puts the two
+    // placements further apart in space than the largest half-interval. A
+    // Euclidean rule refuses it; the per-axis rule this code implements accepts
+    // it, and the surfaces that document the bound now say per axis.
+    const OESystem::OESkewGrid by_origin = SeamGrid();
+    OESystem::OESkewGrid by_nxstart = SeamGrid();
+    ASSERT_TRUE(by_nxstart.SetMid(0.2f, 0.2f, 0.2f));
+
+    const GridParams origin_gp = get_grid_params(by_origin);
+    const GridParams nxstart_gp = get_grid_params(by_nxstart);
+    const struct {
+        const char* label;
+        double divergence;
+        double half_interval;
+    } axes[] = {
+        {"x", std::fabs(origin_gp.x_origin - nxstart_gp.x_origin),
+         0.5 * std::fabs(origin_gp.x_spacing)},
+        {"y", std::fabs(origin_gp.y_origin - nxstart_gp.y_origin),
+         0.5 * std::fabs(origin_gp.y_spacing)},
+        {"z", std::fabs(origin_gp.z_origin - nxstart_gp.z_origin),
+         0.5 * std::fabs(origin_gp.z_spacing)},
+    };
+
+    // State both premises rather than assume them: if either stops holding, the
+    // EXPECT below still passes, for a reason that has nothing to do with the
+    // rule it is meant to pin.
+    double square_sum = 0.0;
+    double largest_half = 0.0;
+    for (const auto& axis : axes) {
+        ASSERT_GT(axis.divergence, 0.0)
+            << "axis " << axis.label << " does not diverge, so this pair no "
+               "longer exercises three axes at once";
+        ASSERT_LT(axis.divergence, axis.half_interval)
+            << "axis " << axis.label << " diverges by " << axis.divergence
+            << " A, past its own " << axis.half_interval
+            << " A half-interval, so the per-axis rule refuses this pair too "
+               "and it no longer discriminates";
+        square_sum += axis.divergence * axis.divergence;
+        largest_half = std::max(largest_half, axis.half_interval);
+    }
+    const double distance = std::sqrt(square_sum);
+    ASSERT_GT(distance, largest_half)
+        << "the two placements are " << distance << " A apart, inside the "
+        << largest_half << " A largest half-interval, so a Euclidean rule "
+           "would accept this pair too and it no longer discriminates";
+
+    EXPECT_EQ(compare_placement_records(by_origin, by_nxstart), "");
 }
 
 TEST(MapIoVerifySeamTest, TreatsTwoNaNVoxelsAsAgreeing) {
