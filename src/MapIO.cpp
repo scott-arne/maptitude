@@ -774,6 +774,50 @@ MapFile::~MapFile() = default;
 
 MapFile read_map(const std::string& path, const OriginSource tiebreak) {
     RejectEmbeddedNul(path, "read");
+    if (IsCompressedPath(path)) {
+        throw GridError("Cannot read '" + path +
+                        "': this names a compressed file, and OEReadGrid "
+                        "decompresses it while the header and symmetry block "
+                        "are read from the bytes on disk, so the two halves of "
+                        "this function would be reading two different streams");
+    }
+    // Extension handling as the write gate does it, for the reasons measured
+    // there: no leading dot, and no lowercasing.
+    std::string extension = std::filesystem::path(path).extension().string();
+    if (!extension.empty()) {
+        extension.erase(0, 1u);
+    }
+    if (OESystem::OEGetGridFileType(extension.c_str()) !=
+        OESystem::OEGridFileType::CCP4) {
+        // OEReadGrid alone would take this file: it reads every format OpenEye
+        // reads. What cannot is everything after it -- ReadRawHeader and
+        // ParseHeader interpret the file's own first 1024 bytes as a CCP4
+        // header, and ReadSymopBlock reads NSYMBT bytes past that as 80-byte
+        // symmetry records. Nothing downstream catches the result: the read
+        // path has no counterpart to compare_placement_records, which lives
+        // only in the write verify.
+        //
+        // The NSYMBT sanity check is what refuses such a file today, and it
+        // refuses on an accident of the bytes rather than on the format. Each
+        // of the three formats OpenEye writes was written from
+        // tests/assets/mapq/1d26_2fofc.ccp4 and read back: '.grd', '.agd' and
+        // '.phi' all land on a word 24 that is not a multiple of 80, so all
+        // three are refused there. Zeroing that one word in the '.phi' -- and
+        // nothing else -- was enough for read_map to accept it and hand back
+        // the 65x65x65 grid OEReadGrid made of the Grasp stream, 19.5 A from
+        // the node 0 of the map it was written from, with no error. What the
+        // header half does when its bytes are not zero is visible in the '.agd'
+        // written from that same grid, whose words 50-52 are the text
+        // "502e-02\n-5.0" and read as an ORIGIN of (5.3e22, 8.6e-33, 6.3e-10).
+        //
+        // UNDEFINED is not CCP4, so an extension OpenEye does not recognize is
+        // covered by the same comparison.
+        throw GridError("Cannot read '" + path +
+                        "': this reader parses the file's own first 1024 bytes "
+                        "as a CCP4 header, so the extension has to be one "
+                        "OpenEye maps to CCP4; read '.ccp4', '.mrc' or '.map'");
+    }
+
     MapFile result;
     result.grid.reset(new OESystem::OESkewGrid());
     if (!OESystem::OEReadGrid(path, *result.grid)) {

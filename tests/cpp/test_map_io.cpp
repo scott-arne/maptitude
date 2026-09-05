@@ -287,6 +287,27 @@ std::string ReadBytesAt(const std::string& path, const std::size_t offset,
     return bytes;
 }
 
+/// Zero header word 24 -- NSYMBT -- in place, leaving every other byte alone.
+///
+/// HeaderVariant cannot serve the extension-gate cases: it names its scratch
+/// file ".ccp4", which is the one property those cases have to vary. They also
+/// need the file OpenEye's own writer produced, not a copy of a CCP4 fixture.
+void ZeroWordTwentyFour(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    ASSERT_TRUE(in.good()) << "cannot open " << path;
+    std::string bytes((std::istreambuf_iterator<char>(in)),
+                      std::istreambuf_iterator<char>());
+    in.close();
+    ASSERT_GE(bytes.size(), 24u * 4u)
+        << path << " is shorter than the word being patched";
+    const std::int32_t zero = 0;
+    std::memcpy(&bytes[(24 - 1) * 4], &zero, 4);
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(out.good()) << "cannot rewrite " << path;
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
 /// Count the files beside @p destination whose names have the shape write_map's
 /// temporary takes in *this* process: ".maptitude-" + <pid> + "-" + <hex> +
 /// extension, in the destination's own directory.
@@ -732,6 +753,92 @@ TEST(MapIoErrorTest, RaisesOnAPathWithAnEmbeddedNul) {
         EXPECT_NE(message.find("embedded NUL"), std::string::npos)
             << "refused by the wrong branch, or truncated at the NUL: "
             << message;
+    }
+}
+
+TEST(MapIoErrorTest, RefusesAnExtensionOpenEyeDoesNotMapToCcp4) {
+    // The read counterpart of
+    // MapIoWriteTest.RefusesAGridFormatOpenEyeWritesButThisPathCannotPatch.
+    // OEReadGrid accepts every format OpenEye reads, and ReadRawHeader and
+    // ParseHeader then read the file's own first 1024 bytes as a CCP4 header
+    // whatever it turned out to be. Nothing downstream catches that: the read
+    // path has no counterpart to compare_placement_records, which lives only in
+    // the write verify.
+    //
+    // The first read is the positive control. It runs before the refusal, so a
+    // gate that refused map files rather than this extension takes the test
+    // down here rather than passing it.
+    const MapFile source = read_map(AssetPath("1d26_2fofc.ccp4"));
+    ASSERT_EQ(SymOp::ParseAll(source.symops).size(), 8u);
+
+    // OEWriteGrid rather than write_map, because write_map refuses this
+    // extension for its own reasons and so cannot produce the input.
+    ScratchPath grasp(".phi");
+    ASSERT_TRUE(OESystem::OEWriteGrid(grasp.Str(), *source.grid))
+        << "OEWriteGrid produced no Grasp file at " << grasp.Str();
+
+    // A '.phi' straight from the writer would not discriminate: measured
+    // against this binary, its word 24 is 538976288 -- four spaces -- and the
+    // NSYMBT check refuses it with or without the gate. Zeroing that one word
+    // removes the accident. Measured with the gate taken back out, read_map
+    // then accepted this file and returned the 65x65x65 grid OEReadGrid made of
+    // the Grasp stream, 19.5 A from the node 0 of the map it was written from,
+    // with no error.
+    ZeroWordTwentyFour(grasp.Str());
+
+    // The two properties that made the unfixed path accept it, asserted so that
+    // a toolkit change stopping either one fails here rather than leaving a
+    // case that passes without discriminating.
+    OESystem::OESkewGrid readable;
+    ASSERT_TRUE(OESystem::OEReadGrid(grasp.Str(), readable))
+        << "OEReadGrid no longer reads the patched Grasp file, so this case no "
+           "longer reaches the header parse the gate exists to stop";
+    const std::string nsymbt_bytes = ReadBytesAt(grasp.Str(), (24 - 1) * 4, 4);
+    std::int32_t nsymbt = -1;
+    std::memcpy(&nsymbt, nsymbt_bytes.data(), 4);
+    ASSERT_EQ(nsymbt, 0)
+        << "word 24 is not zero, so the NSYMBT check refuses this file with or "
+           "without the gate";
+
+    try {
+        read_map(grasp.Str());
+        FAIL() << "expected GridError: '.phi' is not an extension OpenEye maps "
+                  "to CCP4";
+    } catch (const GridError& error) {
+        const std::string message(error.what());
+        EXPECT_NE(message.find("CCP4"), std::string::npos)
+            << "the message does not name the format family this reader "
+               "parses: " << message;
+        EXPECT_EQ(message.find("NSYMBT"), std::string::npos)
+            << "the message still blames NSYMBT: " << message;
+    }
+}
+
+TEST(MapIoErrorTest, RefusesACompressedSource) {
+    // The read counterpart of MapIoWriteTest.RefusesACompressedDestination,
+    // with its own reason: OEReadGrid decompresses the file while ReadRawHeader
+    // reads the bytes on disk, so the two halves of read_map would be reading
+    // two different streams.
+    //
+    // A compressed map is refused without the gate too, so this pins the
+    // message rather than the refusal. Measured with the gate taken back out,
+    // the NSYMBT check read the gzip bytes and refused with "declares NSYMBT
+    // -831825179", which names neither the cause nor the remedy.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    ScratchPath compressed(".ccp4.gz");
+    ASSERT_TRUE(OESystem::OEWriteGrid(compressed.Str(), *source.grid))
+        << "OEWriteGrid produced no gzip stream at " << compressed.Str();
+
+    try {
+        read_map(compressed.Str());
+        FAIL() << "expected GridError: a compressed source cannot carry the "
+                  "header this reader parses";
+    } catch (const GridError& error) {
+        const std::string message(error.what());
+        EXPECT_NE(message.find("compress"), std::string::npos)
+            << "the message does not name compression: " << message;
+        EXPECT_EQ(message.find("NSYMBT"), std::string::npos)
+            << "the message still blames NSYMBT: " << message;
     }
 }
 

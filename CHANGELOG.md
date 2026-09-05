@@ -60,6 +60,20 @@ loaders that stood in for this in the benchmark suite are gone.
   `tests/assets/mapq/1d26_2fofc.ccp4` with its first record respliced as
   `x,y,z;-x,-y,z`, the round trip turned eight records into nine and `NSYMBT`
   640 into 720.
+- **`read_map` refuses a path whose extension OpenEye does not map to the CCP4
+  format, and refuses a compressed path such as `.ccp4.gz`.** It previously
+  handed the path straight to `OEReadGrid`, which reads every format OpenEye
+  reads, and then parsed the file's own first 1024 bytes as a CCP4 header and
+  `NSYMBT` bytes past that as 80-byte symmetry records, whatever the format
+  turned out to be. The `NSYMBT` sanity check was all that stood in the way, and
+  it fires on an accident of those bytes rather than on the format: `.grd`,
+  `.agd` and `.phi` files written from `tests/assets/mapq/1d26_2fofc.ccp4` all
+  land on a word 24 that is not a multiple of 80 and were refused there. Zeroing
+  that one word in the `.phi` was enough for the old path to accept the file and
+  return the 65x65x65 grid `OEReadGrid` made of the Grasp stream, 19.5 A from
+  the node 0 of the map it was written from, with no error. A compressed map was
+  refused before this too, but by the `NSYMBT` check reading gzip bytes, which
+  named neither the cause nor the remedy.
 - **`write_map` defaults an absent space group to P1,** so an EM map written
   from a grid with no space group lands with `ISPG` 1 rather than 0. An unset
   space group is what makes `OEWriteGrid` double the cell and regrid the

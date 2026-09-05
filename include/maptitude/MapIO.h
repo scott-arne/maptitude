@@ -50,10 +50,14 @@ struct MapFile {
  *        nonzero origin, whether or not the two agree -- nothing here compares
  *        them. Ignored when at most one is nonzero.
  * @return The grid, positioned at the file's origin, and its symmetry text.
- * @throws GridError if the file cannot be read, if its header cannot be parsed,
- *         or if @p path contains an embedded NUL, since the calls that open the
- *         file stop at the NUL, so the name this function is given and the name
- *         it would open are not the same name.
+ * @throws GridError if @p path's extension is not one OpenEye maps to the CCP4
+ *         format, or names a compressed file such as ".ccp4.gz" -- this
+ *         function reads the file's own first 1024 bytes as a CCP4 header, and
+ *         neither admits that; the admitted class is the one write_map's @p
+ *         path documents. Also if the file cannot be read, if its header cannot
+ *         be parsed, or if @p path contains an embedded NUL, since the calls
+ *         that open the file stop at the NUL, so the name this function is
+ *         given and the name it would open are not the same name.
  * @throws SymOpError if the symmetry block is present and does not parse, or if
  *         one of its 80-byte records still holds a ';' or a newline once its
  *         padding is stripped. A CCP4 record carries one operator, so a

@@ -1601,8 +1601,12 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
         too, since the check is on the Python type.
     :raises CellError: If the file's sampling is not axis-aligned. maptitude
         requires an orthorhombic cell; a skewed one is rejected on read.
-    :raises GridError: If the file cannot be read, its header cannot be
-        parsed, or the copy that returns the grid to Python did not preserve
+    :raises GridError: If ``path``'s extension is not one OpenEye maps to the
+        CCP4 format, or names a compressed file such as ``.ccp4.gz``: this
+        function reads the file's own first 1024 bytes as a CCP4 header, and
+        neither admits that. The admitted class is the one :func:`write_map`'s
+        ``path`` documents. Also if the file cannot be read, its header cannot
+        be parsed, or the copy that returns the grid to Python did not preserve
         the source geometry -- a degenerate cell edge reaches this. Also if
         ``path`` contains an embedded NUL, which ``os.fspath`` passes through
         unchanged: the calls that open the file stop at the NUL, so the name
