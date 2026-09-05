@@ -54,7 +54,12 @@ struct MapFile {
  *         or if @p path contains an embedded NUL, since the calls that open the
  *         file stop at the NUL, so the name this function is given and the name
  *         it would open are not the same name.
- * @throws SymOpError if the symmetry block is present and does not parse.
+ * @throws SymOpError if the symmetry block is present and does not parse, or if
+ *         one of its 80-byte records still holds a ';' or a newline once its
+ *         padding is stripped. A CCP4 record carries one operator, so a
+ *         separator inside one separates nothing on disk; a record holding two
+ *         triplets that way is refused rather than read as two operators, which
+ *         would give a write_map round trip one more record than the file has.
  */
 MapFile read_map(const std::string& path,
                  OriginSource tiebreak = OriginSource::ORIGIN_RECORD);

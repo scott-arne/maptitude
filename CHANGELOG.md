@@ -49,6 +49,17 @@ loaders that stood in for this in the benchmark suite are gone.
   `OEReadGrid` did not read the block at all. A block whose framing is broken
   raises `GridError` instead: `NSYMBT` negative or not a multiple of 80, a
   record count above the 4096 cap, or a file that ends before the block does.
+- **`read_map` refuses a symmetry record that holds a separator.** An 80-byte
+  record still carrying a `;` or a newline once its padding is stripped now
+  raises `SymOpError`. Such a record was previously returned verbatim as one
+  operator, and accepted whenever the text on both sides of the separator
+  parsed: the `SymOp::ParseAll` check `read_map` runs over the joined text
+  splits on `;` and newline both, so it cannot see that a separator crossed a
+  fixed-width record boundary. Writing that text back out split it again, since
+  `CanonicalSymops` splits on the same two: measured on
+  `tests/assets/mapq/1d26_2fofc.ccp4` with its first record respliced as
+  `x,y,z;-x,-y,z`, the round trip turned eight records into nine and `NSYMBT`
+  640 into 720.
 - **`write_map` defaults an absent space group to P1,** so an EM map written
   from a grid with no space group lands with `ISPG` 1 rather than 0. An unset
   space group is what makes `OEWriteGrid` double the cell and regrid the

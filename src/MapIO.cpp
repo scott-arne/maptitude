@@ -164,6 +164,10 @@ std::string Strip(const std::string& text) {
 /// Turn the raw fixed-width block into the newline-delimited text SymOp::ParseAll
 /// accepts. The parser rejects the raw block outright, so the join is required
 /// rather than cosmetic.
+///
+/// Record boundaries are decided here and nowhere else: a record still carrying
+/// a ';' or a newline once its padding is stripped is refused, for the reason
+/// given at that check.
 std::string ReadSymopBlock(const std::string& path, const MapHeader& header) {
     if (header.nsymbt == 0) {
         return std::string();
@@ -228,6 +232,37 @@ std::string ReadSymopBlock(const std::string& path, const MapHeader& header) {
             Strip(block.substr(offset, SYMOP_RECORD_BYTES));
         if (record.empty()) {
             continue;
+        }
+        // A separator that survives Strip sits inside one fixed-width record,
+        // and is refused here rather than split. The SymOp::ParseAll call
+        // read_map makes on the joined text cannot see it: that parser splits
+        // on ';' as well as newline, so a separator inside a record reads to it
+        // as one between records. Measured on tests/assets/mapq/1d26_2fofc.ccp4
+        // with record 0 respliced as "x,y,z;-x,-y,z" and NSYMBT left at 640,
+        // read_map returned that text verbatim as one of eight operators and
+        // ParseAll passed it; the pristine file returns eight operators from
+        // the same eight records, so the accepted record is the splice's doing.
+        //
+        // Splitting the record here instead of refusing it would not close
+        // that: CanonicalSymops splits on ';' too, so that spliced file round
+        // trips as nine records whichever place does the splitting -- NSYMBT
+        // 640 in, 720 out. Only refusing leaves the record count alone.
+        // Refusing is also the read half of the position CanonicalSymops states
+        // for the write half: a consumer reading the fixed-width records
+        // literally gets one malformed operator out of a record holding two
+        // triplets, not two well-formed ones.
+        const std::size_t separator = record.find_first_of("\n;");
+        if (separator != std::string::npos) {
+            throw SymOpError(
+                "Map file '" + path + "' holds " +
+                (record[separator] == ';' ? "a ';'" : "a newline") +
+                " inside symmetry record " +
+                std::to_string(offset / SYMOP_RECORD_BYTES) + " of " +
+                std::to_string(record_count) + " (counting from 0): a CCP4 "
+                "symmetry record is a fixed " +
+                std::to_string(SYMOP_RECORD_BYTES) +
+                "-byte field carrying one operator, so a separator inside one "
+                "separates nothing on disk");
         }
         if (!joined.empty()) {
             joined += '\n';

@@ -1607,7 +1607,13 @@ def read_map(path, tiebreak=OriginSource_ORIGIN_RECORD):
         ``path`` contains an embedded NUL, which ``os.fspath`` passes through
         unchanged: the calls that open the file stop at the NUL, so the name
         given and the name opened are not the same name.
-    :raises SymOpError: If the symmetry block is present and does not parse.
+    :raises SymOpError: If the symmetry block is present and does not parse,
+        or if one of its 80-byte records still holds a ``;`` or a newline once
+        its padding is stripped. A CCP4 record carries one operator, so a
+        separator inside one separates nothing on disk; a record holding two
+        triplets that way is refused rather than read as two operators, which
+        would give a :func:`write_map` round trip one more record than the file
+        has.
     :raises ValueError: When ``tiebreak`` is an ``int`` outside 0-1 that fits
         in a C ``long``. One too large to fit raises ``OverflowError``.
 

@@ -813,6 +813,62 @@ TEST(MapIoErrorTest, ReadsAWellFormedSymopBlockSplicedIntoAFixtureThatHadNone) {
     EXPECT_EQ(map.grid->GetSize(), 9261u);
 }
 
+TEST(MapIoErrorTest, RefusesTwoTripletsInOneRecordAndAcceptsThemInTwo) {
+    // Where the record boundaries fall is decided in ReadSymopBlock and nowhere
+    // else. This pins that by holding the three operators fixed and moving only
+    // the boundary between the last two.
+    auto padded = [](const std::string& text) {
+        std::string record(text);
+        record.resize(80, ' ');
+        return record;
+    };
+
+    // Three operators in three records: accepted, and this is the joined text
+    // read_map hands the parser.
+    const std::string joined = "x,y,z\n-x,-y,z\nz,x,y";
+    HeaderVariant accepted(DataPath("test_map.ccp4"));
+    accepted.SetSymopBlock(padded("x,y,z") + padded("-x,-y,z") +
+                           padded("z,x,y"));
+    const MapFile map = read_map(accepted.Write());
+    EXPECT_EQ(map.symops, joined);
+    EXPECT_EQ(SymOp::ParseAll(map.symops).size(), 3u);
+
+    // The same three operators in two records, under each separator spelling
+    // ParseAll splits on. Crammed into record 1 rather than record 0, so the
+    // index the message names has to have come from the record's offset.
+    const char* crammed[] = {
+        "-x,-y,z;z,x,y",
+        "-x,-y,z\nz,x,y",
+    };
+    for (const char* record : crammed) {
+        SCOPED_TRACE(record);
+        // What the aggregate check would have been handed. The newline case
+        // joins to the accepted block's text byte for byte, so ParseAll cannot
+        // tell the two blocks apart at all; the semicolon case is different
+        // text yielding the same three operators. Either way the aggregate
+        // passes, so the refusal below can only be the per-record check.
+        const std::string would_join = "x,y,z\n" + std::string(record);
+        ASSERT_EQ(SymOp::ParseAll(would_join).size(), 3u)
+            << "the aggregate parser has to accept this text, or the case is "
+               "not exercising the gap the per-record check exists to close";
+
+        HeaderVariant variant(DataPath("test_map.ccp4"));
+        variant.SetSymopBlock(padded("x,y,z") + padded(record));
+        try {
+            read_map(variant.Write());
+            FAIL() << "Expected SymOpError for a separator inside a record";
+        } catch (const SymOpError& e) {
+            // The message is checked because a malformed triplet raises
+            // SymOpError too, so without it the case would also pass on a
+            // refusal from the aggregate parser -- the one check that cannot
+            // see the boundary, and so the one this test exists to tell apart.
+            const std::string msg(e.what());
+            EXPECT_NE(msg.find("symmetry record 1 of 2"), std::string::npos)
+                << "Expected the per-record separator message, got: " << msg;
+        }
+    }
+}
+
 TEST(MapIoEndiannessTest, ReadsABigEndianFileAsItsLittleEndianOriginal) {
     BigEndianCopy big_endian(AssetPath("1d26_2fofc.ccp4"));
     const MapFile big = read_map(big_endian.Path());
