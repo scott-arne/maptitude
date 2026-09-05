@@ -1778,17 +1778,23 @@ def write_map(path, grid, symops=""):
     :raises CellError: If the grid's sampling is not axis-aligned. maptitude
         requires an orthorhombic cell; a skewed one is rejected on write.
     :raises GridError: If the extension is not one OpenEye maps to the CCP4
-        format or names a compressed file, if the write fails, if the re-read
-        map differs from the grid in dimensions, cell, per-axis spacing,
-        node 0 or any voxel, if either the grid or the re-read map has an axis
-        with fewer than two nodes, so its spacing is undefined, if on any axis
-        the ORIGIN and NxSTART records place node 0 more than half that axis's
-        node interval apart, or if the verified temporary file cannot be
-        renamed onto ``path``. Also
-        if ``path`` contains an embedded NUL, which ``os.fspath`` passes through
-        unchanged: the extension gate reads the whole string while the calls
-        that write and publish the file stop at the NUL, so the name checked and
-        the name written are not the same name.
+        format or names a compressed file, if the temporary this function
+        writes beside ``path`` cannot be created, which an unwritable or absent
+        destination directory produces, if eight attempts at a temporary name
+        beside ``path`` all collide with an existing file, if the write fails,
+        if the re-read map differs from the grid in dimensions, cell, per-axis
+        spacing, node 0 or any voxel, if either the grid or the re-read map has
+        an axis with fewer than two nodes, so its spacing is undefined, if on
+        any axis the ORIGIN and NxSTART records place node 0 more than half
+        that axis's node interval apart, or if the verified temporary file
+        cannot be renamed onto ``path``. Also if ``path`` contains an embedded
+        NUL, which ``os.fspath`` passes through unchanged: the extension gate
+        reads the whole string while the calls that write and publish the file
+        stop at the NUL, so the name checked and the name written are not the
+        same name. That list is what a caller can predict from ``path``,
+        ``grid`` and the state of the destination. Steps this function drives
+        internally raise ``GridError`` too when they do not produce a usable
+        file, so catch the class rather than switching on the list.
     :raises SymOpError: If ``symops`` is non-empty and does not parse, or if
         any of its records is longer than the format's 80-character field.
     """

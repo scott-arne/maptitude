@@ -218,13 +218,20 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  *         format or names a compressed file, if @p path contains an embedded
  *         NUL, since std::filesystem reads the whole string while the calls
  *         that write and publish the file stop at the NUL, so the name checked
- *         here and the name written are not the same name, if the write fails,
- *         if the re-read map differs from the grid in dimensions, cell,
- *         per-axis spacing, node 0, or any voxel, if either the grid or the
- *         re-read map has an axis with fewer than two nodes, so its spacing is
- *         undefined, if on any axis its ORIGIN and NxSTART records place node 0
- *         more than half that axis's node interval apart, or if the temporary
- *         file cannot be renamed onto @p path.
+ *         here and the name written are not the same name, if the temporary
+ *         this function writes beside @p path cannot be created, which an
+ *         unwritable or absent destination directory produces, if eight
+ *         attempts at a temporary name beside @p path all collide with an
+ *         existing file, if the write fails, if the re-read map differs from
+ *         the grid in dimensions, cell, per-axis spacing, node 0, or any voxel,
+ *         if either the grid or the re-read map has an axis with fewer than two
+ *         nodes, so its spacing is undefined, if on any axis its ORIGIN and
+ *         NxSTART records place node 0 more than half that axis's node interval
+ *         apart, or if the temporary file cannot be renamed onto @p path. That
+ *         list is what a caller can predict from @p path, @p grid and the state
+ *         of the destination. Steps this function drives internally raise
+ *         GridError too when they do not produce a usable file, so catch the
+ *         class rather than switching on the list.
  * @throws SymOpError if symops is non-empty and does not parse, or if any of
  *         its records is longer than the format's 80-character field.
  * @throws CellError if the grid's sampling is not axis-aligned, which a cell
