@@ -176,10 +176,17 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * NxSTART as an integer node count, and the write is refused unless the two
  * agree on every axis to within half a node interval. So a map this function
  * wrote reproduces node 0 to float32 under the default
- * OriginSource::ORIGIN_RECORD, and only to half a node interval under
+ * OriginSource::ORIGIN_RECORD, and only to half a node interval per axis under
  * OriginSource::NXSTART. That gap is not a defect to be closed: an integer
  * lattice index cannot encode an off-lattice origin. The refusal is what makes
  * the bound a guarantee instead of an observation about one toolkit version.
+ *
+ * That bound is per axis, and there is no second one over the three together:
+ * each axis is compared against its own node interval. So the straight-line
+ * distance between the two placements can reach the root-sum-square of the
+ * three half-intervals -- sqrt(3) times half a node interval on a grid sampled
+ * equally on all three axes -- and a caller budgeting one distance rather than
+ * three per-axis bounds needs that larger figure.
  *
  * @param path Destination. The format follows the extension, though not
  *        because OEWriteGrid reads the extension: it dispatches on the whole
@@ -215,9 +222,9 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  *         if the re-read map differs from the grid in dimensions, cell,
  *         per-axis spacing, node 0, or any voxel, if either the grid or the
  *         re-read map has an axis with fewer than two nodes, so its spacing is
- *         undefined, if its ORIGIN and NxSTART records place node 0 more than
- *         half a node interval apart, or if the temporary file cannot be
- *         renamed onto @p path.
+ *         undefined, if on any axis its ORIGIN and NxSTART records place node 0
+ *         more than half that axis's node interval apart, or if the temporary
+ *         file cannot be renamed onto @p path.
  * @throws SymOpError if symops is non-empty and does not parse, or if any of
  *         its records is longer than the format's 80-character field.
  * @throws CellError if the grid's sampling is not axis-aligned, which a cell

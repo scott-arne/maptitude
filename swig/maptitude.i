@@ -1649,8 +1649,15 @@ def write_map(path, grid, symops=""):
     Node 0 is written twice, into the MRC2000 ORIGIN record exactly and into
     NxSTART as an integer node count. A map this function wrote reproduces node
     0 to float32 under ``OriginSource.ORIGIN_RECORD`` and only to half a node
-    interval under ``OriginSource.NXSTART``, and the write is refused unless
-    the two records agree to within that bound.
+    interval per axis under ``OriginSource.NXSTART``, and the write is refused
+    unless the two records agree on every axis to within that bound.
+
+    That bound is per axis, and there is no second one over the three together:
+    each axis is compared against its own node interval. So the straight-line
+    distance between the two placements can reach the root-sum-square of the
+    three half-intervals -- ``sqrt(3)`` times half a node interval on a grid
+    sampled equally on all three axes -- and a caller budgeting one distance
+    rather than three per-axis bounds needs that larger figure.
 
     The padded grid :func:`wrap_and_pad_grid` allocates when padding is needed
     is refused: its declared cell forces the written node count one higher per
@@ -1679,9 +1686,10 @@ def write_map(path, grid, symops=""):
         format or names a compressed file, if the write fails, if the re-read
         map differs from the grid in dimensions, cell, per-axis spacing,
         node 0 or any voxel, if either the grid or the re-read map has an axis
-        with fewer than two nodes, so its spacing is undefined, if the ORIGIN
-        and NxSTART records place node 0 more than half a node interval apart,
-        or if the verified temporary file cannot be renamed onto ``path``. Also
+        with fewer than two nodes, so its spacing is undefined, if on any axis
+        the ORIGIN and NxSTART records place node 0 more than half that axis's
+        node interval apart, or if the verified temporary file cannot be
+        renamed onto ``path``. Also
         if ``path`` contains an embedded NUL, which ``os.fspath`` passes through
         unchanged: the extension gate reads the whole string while the calls
         that write and publish the file stop at the NUL, so the name checked and
