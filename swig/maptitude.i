@@ -1634,6 +1634,16 @@ def write_map(path, grid, symops=""):
     cannot be written faithfully raises with ``path`` untouched rather than
     leaving a wrong map on disk or destroying a good one.
 
+    An absent space group is defaulted to P1 on the way out, so a successful
+    write of a grid carrying none lands at ``ISPG`` 1 rather than 0. Measured
+    on ``tests/assets/mapq/390_emd_30342_A_z4.mrc``, whose ``ISPG`` is 0: the
+    file this writes for it carries 1. The default is what keeps the payload
+    intact -- an unset space group makes ``OEWriteGrid`` double the cell and
+    regrid, and it does so silently, returning success over a self-consistent
+    header describing a different grid. Defaulting happens on a copy, so
+    ``grid`` itself is untouched; it is that copy the re-read map is compared
+    against, not ``grid``.
+
     A successful write replaces the destination's inode rather than rewriting
     it in place, so three properties of an existing destination do not survive.
     Its mode resets to whatever an ordinary create gives, which under POSIX is
@@ -1693,19 +1703,20 @@ def write_map(path, grid, symops=""):
         writes beside ``path`` cannot be created, which an unwritable or absent
         destination directory produces, if eight attempts at a temporary name
         beside ``path`` all collide with an existing file, if the write fails,
-        if the re-read map differs from the grid in dimensions, cell, per-axis
-        spacing, node 0 or any voxel, if either the grid or the re-read map has
-        an axis with fewer than two nodes, so its spacing is undefined, if on
-        any axis the ORIGIN and NxSTART records place node 0 more than half
-        that axis's node interval apart, or if the verified temporary file
-        cannot be renamed onto ``path``. Also if ``path`` contains an embedded
-        NUL, which ``os.fspath`` passes through unchanged: the extension gate
-        reads the whole string while the calls that write and publish the file
-        stop at the NUL, so the name checked and the name written are not the
-        same name. That list is not closed: this function raises ``GridError``
-        from further internal checks, among them the header re-reads and the
-        NSYMBT and symop-block byte comparisons. Catch the class rather than
-        switching on the list.
+        if the re-read map differs from the space-group-defaulted copy
+        described above -- not from ``grid`` itself -- in dimensions, cell,
+        per-axis spacing, node 0 or any voxel, if either the grid or the
+        re-read map has an axis with fewer than two nodes, so its spacing is
+        undefined, if on any axis the ORIGIN and NxSTART records place node 0
+        more than half that axis's node interval apart, or if the verified
+        temporary file cannot be renamed onto ``path``. Also if ``path``
+        contains an embedded NUL, which ``os.fspath`` passes through
+        unchanged: the extension gate reads the whole string while the calls
+        that write and publish the file stop at the NUL, so the name checked
+        and the name written are not the same name. That list is not closed:
+        this function raises ``GridError`` from further internal checks, among
+        them the header re-reads and the NSYMBT and symop-block byte
+        comparisons. Catch the class rather than switching on the list.
     :raises SymOpError: If ``symops`` is non-empty and does not parse, or if
         any of its records is longer than the format's 80-character field.
     """

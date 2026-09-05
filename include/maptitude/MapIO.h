@@ -157,6 +157,16 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * this function cannot write faithfully raises with @p path untouched, rather
  * than leaving a silently wrong map on disk or destroying a good one.
  *
+ * An absent space group is defaulted to P1 on the way out, so a successful
+ * write of a grid carrying none lands at ISPG 1 rather than 0. Measured on
+ * tests/assets/mapq/390_emd_30342_A_z4.mrc, whose ISPG is 0: the file this
+ * writes for it carries 1. The default is what keeps the payload intact --
+ * section 2.3 measures that an unset space group makes OEWriteGrid double the
+ * cell and regrid, and it does so silently, returning success over a
+ * self-consistent header describing a different grid. Defaulting happens on a
+ * copy, so @p grid itself is untouched; it is that copy the re-read map is
+ * compared against, not @p grid.
+ *
  * A successful write replaces the destination's inode rather than rewriting it
  * in place, so three properties of an existing destination do not survive. Its
  * mode resets to whatever an ordinary create gives, which under POSIX is 0666
@@ -232,15 +242,16 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  *         unwritable or absent destination directory produces, if eight
  *         attempts at a temporary name beside @p path all collide with an
  *         existing file, if the write fails, if the re-read map differs from
- *         the grid in dimensions, cell, per-axis spacing, node 0, or any voxel,
- *         if either the grid or the re-read map has an axis with fewer than two
- *         nodes, so its spacing is undefined, if on any axis its ORIGIN and
- *         NxSTART records place node 0 more than half that axis's node interval
- *         apart, or if the temporary file cannot be renamed onto @p path. That
- *         list is not closed: this function raises GridError from further
- *         internal checks, among them the header re-reads and the NSYMBT and
- *         symop-block byte comparisons. Catch the class rather than switching
- *         on the list.
+ *         the space-group-defaulted copy described above -- not from @p grid
+ *         itself -- in dimensions, cell, per-axis spacing, node 0, or any
+ *         voxel, if either the grid or the re-read map has an axis with fewer
+ *         than two nodes, so its spacing is undefined, if on any axis its
+ *         ORIGIN and NxSTART records place node 0 more than half that axis's
+ *         node interval apart, or if the temporary file cannot be renamed onto
+ *         @p path. That list is not closed: this function raises GridError from
+ *         further internal checks, among them the header re-reads and the
+ *         NSYMBT and symop-block byte comparisons. Catch the class rather than
+ *         switching on the list.
  * @throws SymOpError if symops is non-empty and does not parse, or if any of
  *         its records is longer than the format's 80-character field.
  * @throws CellError if the grid's sampling is not axis-aligned, which a cell
