@@ -67,12 +67,12 @@ def _part_a():
             d["mol"], d["grid"], res, cell, k_sol=0.35, symops=symops)
 
         # RSCC options
-        opts_scaled = mpt.RSCCOptions()
-        opts_scaled.atom_radius_method = mpt.AtomRadius.Scaled
+        opts_scaled = mpt.RsccOptions()
+        opts_scaled.atom_radius_method = mpt.AtomRadius.SCALED
         opts_scaled.atom_radius_scaling = 1.5
 
-        opts_binned = mpt.RSCCOptions()
-        opts_binned.atom_radius_method = mpt.AtomRadius.Binned
+        opts_binned = mpt.RsccOptions()
+        opts_binned.atom_radius_method = mpt.AtomRadius.BINNED
 
         bms_results[pdb] = {}
         mpt_scaled[pdb] = {}
@@ -92,16 +92,18 @@ def _part_a():
                 "rscc": r_rscc.overall, "rsr": r_rsr.overall}
 
             # maptitude Scaled@1.5
-            r_rscc_s = mpt.RSCC(d["mol"], d["grid"], res,
-                                mask, mpt_fc, opts_scaled)
+            r_rscc_s = mpt.rscc(d["mol"], d["grid"], res,
+                                mask=mask, calc_grid=mpt_fc,
+                                options=opts_scaled)
             r_rsr_s = mpt.rsr(d["mol"], d["grid"], res,
                               mask=mask, calc_grid=mpt_fc)
             mpt_scaled[pdb][key] = {
                 "rscc": r_rscc_s.overall, "rsr": r_rsr_s.overall}
 
             # maptitude Binned
-            r_rscc_b = mpt.RSCC(d["mol"], d["grid"], res,
-                                mask, mpt_fc, opts_binned)
+            r_rscc_b = mpt.rscc(d["mol"], d["grid"], res,
+                                mask=mask, calc_grid=mpt_fc,
+                                options=opts_binned)
             mpt_binned[pdb][key] = {"rscc": r_rscc_b.overall}
 
     # --- RSCC table ---

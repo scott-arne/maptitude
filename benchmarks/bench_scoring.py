@@ -69,8 +69,8 @@ def _run_dataset(label: str, mol, obs_grid, resolution, cell_dims=None,
         mpt_fc = None  # EM RSCC/RSR will use bms fc for both
 
     # Configure maptitude RSCC to use Scaled@1.5 (matches bms-bio default)
-    rscc_opts = mpt.RSCCOptions()
-    rscc_opts.atom_radius_method = mpt.AtomRadius.Scaled
+    rscc_opts = mpt.RsccOptions()
+    rscc_opts.atom_radius_method = mpt.AtomRadius.SCALED
     rscc_opts.atom_radius_scaling = 1.5
 
     # Define metric runners
