@@ -288,7 +288,7 @@ in the structure or map it was given -- they are listed in the second table, and
 
 | Exception      | Raised when                                                                       |
 |----------------|------------------------------------------------------------------------------------|
-| `RuntimeError` | An option value is out of range -- every option setter validates in C++ and its `std::invalid_argument` surfaces here. |
+| `RuntimeError` | An option value is out of range -- every option setter validates in C++ and its `std::invalid_argument` surfaces here. Also when the path that returns a grid to Python fails for a reason that is not the source geometry: an OpenEye wrapper that does not carry the pointer the copy needs, or a C++ exception other than `std::bad_alloc` raised while copying. Ordinary input does not reach those; note that a bare `RuntimeError` is not a `MaptitudeError`, so `except maptitude.MaptitudeError` does not catch them. |
 | `ValueError`   | A string argument the Python wrappers resolve against a table names nothing: `atom_radius="vdw"`, or `atom_radius="adaptive"` to `rscc`. |
 | `TypeError`    | An argument has the wrong type: a `mask` that is not an OpenEye atom predicate, an `options` object of the wrong class, a `symops` that is not a string or a sequence of `SymOp`. |
 | `MemoryError`  | The copy that returns a grid to Python could not be allocated. |
