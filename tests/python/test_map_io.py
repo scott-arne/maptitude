@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import ctypes
 import struct
+import subprocess
+import sys
 from pathlib import Path
 
 import maptitude
@@ -262,6 +264,61 @@ def test_write_map_round_trips_a_crystallographic_asset(tmp_path):
     assert [written[i] for i in range(back.grid.GetSize())] == [
         original[i] for i in range(source.grid.GetSize())
     ]
+
+
+# Deliberately a child script rather than an in-process loop: the leak this
+# pins is a process address, which is stable within one process, so a
+# single-process comparison passes while the defect is present.
+_REPRODUCIBILITY_CHILD = """
+import sys
+
+import maptitude
+
+bundle = maptitude.read_map(sys.argv[1])
+maptitude.write_map(sys.argv[2], bundle.grid, bundle.symops)
+"""
+
+
+def test_write_map_is_byte_reproducible_across_processes(tmp_path):
+    """Two processes writing one grid must produce the same bytes.
+
+    OEWriteGrid leaves SKWTRN, header words 35-37, holding whatever was in the
+    memory behind them, and write_map hands it a copied grid. Word 35 then
+    carried the low half of a heap pointer, which ASLR moves per process: the
+    same grid written twice gave different files, so content hashing and diff
+    failed spuriously, and four bytes of the writer's address space rode along
+    in the file. PatchHeaderRecords zeroes those words.
+    """
+    source = _ASSET_DIR / "1d26_2fofc.ccp4"
+    written = []
+    for tag in ("first", "second"):
+        out = tmp_path / f"{tag}.ccp4"
+        result = subprocess.run(
+            [sys.executable, "-c", _REPRODUCIBILITY_CHILD, str(source), str(out)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"{tag} child exited {result.returncode}:\n{result.stderr}"
+        )
+        written.append(out.read_bytes())
+
+    first, second = written
+    assert len(first) == len(second)
+
+    # Report the offsets rather than the buffers: these files are a quarter of
+    # a megabyte, and the header word is the diagnostic.
+    differing = [index for index, (a, b) in enumerate(zip(first, second)) if a != b]
+    header_words = sorted(
+        {offset // 4 + 1 for offset in differing if offset < _CCP4_HEADER_BYTES}
+    )
+    past_header = sum(1 for offset in differing if offset >= _CCP4_HEADER_BYTES)
+    assert not differing, (
+        "two processes wrote different bytes for the same grid: "
+        f"{len(differing)} differing bytes, 1-based header words "
+        f"{header_words}, {past_header} bytes past the header"
+    )
 
 
 def test_write_map_carries_the_em_origin(tmp_path):
