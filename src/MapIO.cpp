@@ -57,6 +57,8 @@ constexpr std::size_t MAX_SYMOP_RECORDS = 4096;
 // Word indices are 1-based, as the CCP4 specification numbers them.
 constexpr std::size_t WORD_NCSTART = 5;
 constexpr std::size_t WORD_NSYMBT = 24;
+constexpr std::size_t WORD_LSKFLG = 25;
+constexpr std::size_t WORD_SKWTRN = 35;
 constexpr std::size_t WORD_ORIGIN = 50;
 constexpr std::size_t WORD_MACHST = 54;
 
@@ -618,7 +620,8 @@ void SetRawWord(std::string& bytes, const std::size_t word,
     std::memcpy(&bytes[(word - 1u) * 4u], &raw, 4);
 }
 
-/// Splice NSYMBT, the symop block and ORIGIN into a file OEWriteGrid produced.
+/// Splice NSYMBT, the symop block and ORIGIN into a file OEWriteGrid produced,
+/// and zero the SKWTRN words it leaves uninitialized.
 ///
 /// NX/NY/NZ is deliberately not patched: section 2.4 measures the dim - 1
 /// patch an earlier draft applied here as a no-op on whole-cell grids and a
@@ -685,6 +688,29 @@ void PatchHeaderRecords(const std::filesystem::path& file,
         put_float(WORD_ORIGIN + 0u, node_x);
         put_float(WORD_ORIGIN + 1u, node_y);
         put_float(WORD_ORIGIN + 2u, node_z);
+    }
+
+    // OEWriteGrid leaves SKWTRN, words 35-37, holding whatever was in the
+    // memory behind them. Measured across three processes writing one asset,
+    // word 35 carried the low half of a heap pointer under ASLR, so two writes
+    // of the same grid produced different files and four bytes of the writing
+    // process's address space landed in a file the caller may share. It is not
+    // something this module puts there: a grid handed straight from OEReadGrid
+    // comes back with those words filled with spaces, while a bare
+    // copy-construct of that same grid, with no maptitude code involved, shows
+    // the drift -- and write_map copies the caller's grid to default its space
+    // group. Zero is the correct SKWTRN and is what the assets read here carry,
+    // so writing it also makes the words survive a round trip unchanged.
+    //
+    // Guarded on LSKFLG rather than unconditional, so a future path that does
+    // write a real skew translation does not have it silently erased. The guard
+    // does not cost this path its fix: LSKFLG was 0 in every file measured, and
+    // write_map refuses with CellError the non-axis-aligned sampling a nonzero
+    // one would describe.
+    if (WordAsInt(bytes, WORD_LSKFLG, swapped) == 0) {
+        put_float(WORD_SKWTRN + 0u, 0.0f);
+        put_float(WORD_SKWTRN + 1u, 0.0f);
+        put_float(WORD_SKWTRN + 2u, 0.0f);
     }
 
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
