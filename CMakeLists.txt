@@ -98,6 +98,16 @@ if(OpenMP_CXX_FOUND)
     target_compile_definitions(maptitude PRIVATE MAPTITUDE_USE_OPENMP)
 endif()
 
+# GCC 8's libstdc++ keeps std::filesystem in a separate archive; GCC 9 folded
+# it into libstdc++ proper. A shared object may leave symbols unresolved that
+# an executable may not, so without this the x86_64 wheel built in the Rocky 8
+# container linked and then failed at import with an undefined
+# std::filesystem::path::parent_path. PUBLIC because the library is static
+# and the reference surfaces on whatever links it.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+    target_link_libraries(maptitude PUBLIC stdc++fs)
+endif()
+
 # Tests
 if(MAPTITUDE_BUILD_TESTS)
     enable_testing()
