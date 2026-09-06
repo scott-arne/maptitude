@@ -538,6 +538,19 @@ def test_read_map_scores_the_same_as_the_retired_loader():
 
     Pinned against values computed through the loader being retired, so a
     difference here means the swap moved a score rather than just a call site.
+
+    The tolerance is the floor the C++ characterisation pins use for a pinned
+    value below 1 (grid_summary.h: absolute 1e-6), not a same-build tolerance.
+    The values were measured on macOS arm64; the Windows x64 and Linux aarch64
+    wheel jobs computed RSCC 6.0e-8 and 3.7e-8 below the pin from the same
+    source, the cross-build drift that floor exists for.
+
+    What the values are: fc_density on the molecule as read from the file,
+    whose atoms carry no radii, so fc_density's solvent mask takes its 1.7 A
+    fallback for every heavy atom. After rscc, rsr or qscore has assigned
+    Bondi radii to the same molecule, fc_density's RSCC on this asset is
+    0.96903, 1.9e-4 above the pin. The pin holds the file-fresh value; Q does
+    not use fc_density and is the same either way.
     """
     mol = oechem.OEGraphMol()
     ifs = oechem.oemolistream(str(_ASSET_DIR / "340d.cif"))
@@ -555,11 +568,11 @@ def test_read_map_scores_the_same_as_the_retired_loader():
         symops=symops)
 
     assert maptitude.rscc(mol, grid, 1.60, calc_grid=calc).overall == (
-        pytest.approx(_EXPECTED_RSCC, abs=1e-9))
+        pytest.approx(_EXPECTED_RSCC, abs=1e-6))
     assert maptitude.rsr(mol, grid, 1.60, calc_grid=calc).overall == (
-        pytest.approx(_EXPECTED_RSR, abs=1e-9))
+        pytest.approx(_EXPECTED_RSR, abs=1e-6))
     assert maptitude.qscore(mol, grid, 1.60).overall == (
-        pytest.approx(_EXPECTED_QSCORE, abs=1e-9))
+        pytest.approx(_EXPECTED_QSCORE, abs=1e-6))
 
 
 def test_combine_maps_rejects_an_out_of_range_op():
