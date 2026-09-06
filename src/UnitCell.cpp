@@ -1,5 +1,6 @@
 #include "maptitude/UnitCell.h"
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 
