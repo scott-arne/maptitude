@@ -357,6 +357,13 @@ TEST(GridOpsTest, InterpolateDensityAcceptsTheNominalNodeOrigin) {
     constexpr unsigned int N = 5u;
     const double NODE0[] = {0.0, 0.1, 3.7, 12.3, -37.45};
 
+    // Which of these origins the derived geometry misses is the platform's to
+    // decide, not the test's: on macOS arm64 all five come back off nominal,
+    // while on x86_64 Linux with GCC 8 the grid at 0.0 comes back at exactly
+    // 0.0. A case whose derived origin is exact pins nothing, so it is run but
+    // not counted, and the test asks only that some case on this platform
+    // exercised the tolerance.
+    unsigned int off_nominal = 0u;
     for (const double node0 : NODE0) {
         SCOPED_TRACE(node0);
         OESystem::OESkewGrid grid = MakeCubicGrid(N, 1.0, node0);
@@ -364,9 +371,7 @@ TEST(GridOpsTest, InterpolateDensityAcceptsTheNominalNodeOrigin) {
         for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 42.0f;
 
         const GridParams gp = get_grid_params(grid);
-        ASSERT_NE(gp.x_origin, node0)
-            << "the derived origin now matches its nominal value exactly, so this case "
-               "pins nothing";
+        if (gp.x_origin != node0) ++off_nominal;
 
         const double lo = node0;
         const double hi = node0 + (N - 1);
@@ -374,6 +379,10 @@ TEST(GridOpsTest, InterpolateDensityAcceptsTheNominalNodeOrigin) {
         EXPECT_DOUBLE_EQ(interpolate_density(grid, hi, hi, hi, -99.0), 42.0);
         EXPECT_DOUBLE_EQ(
             interpolate_density_periodic(grid, lo, lo, lo, N, N, N, -99.0), 42.0);
+    }
+    if (off_nominal == 0u) {
+        GTEST_SKIP() << "every origin in NODE0 derives exactly on this platform, so the "
+                        "magnitude-aware tolerance has nothing to accept here";
     }
 }
 
@@ -556,13 +565,16 @@ TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent) 
     // The ratio picks the shape but does not decide the outcome, because nothing
     // in it depends on the spacing. What also has to be large is the gap between
     // the derived extent and the nominal one, and that turns on how the geometry
-    // rounds at this particular spacing: of 4000 spacings from 0.005 to 20 A,
-    // only 46 put the gap past the endpoint-only allowance on the two-node
-    // centred grid and 13 on the four-node one, and 5.5, 5.4 and 0.9 are all well
-    // inside it. SPACING is load-bearing, not illustrative. The assertion below
-    // is what says so: without it, rounding the constant to 5.5 would leave an
-    // EXPECT_NO_THROW that passes under either scale.
-    constexpr double SPACING = 5.45;
+    // rounds at a particular spacing on a particular platform. On macOS arm64,
+    // of 4000 spacings from 0.005 to 20 A only 46 put the gap past the
+    // endpoint-only allowance on the two-node centred grid and 13 on the
+    // four-node one; 5.45 is one of them (8.2 units at two nodes, 9.4 at four)
+    // and 5.5, 5.4 and 0.9 are all well inside. On x86_64 Linux with GCC 8 the
+    // same 5.45 lands at 2.3 units on the two-node grid, inside the allowance.
+    // So the spacing is found rather than fixed: 5.45 is tried first, then that
+    // sweep, and the case runs at the first spacing whose gap is past the
+    // allowance on this platform. A platform on which no spacing in the sweep
+    // gets there has no such grid to accept, and the case is skipped there.
     const unsigned int DIMS[] = {2u, 4u};
 
     // Mirrors src/Grid.cpp, which keeps both file-local. Exporting them would
@@ -570,27 +582,40 @@ TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent) 
     constexpr double FLOAT_HALF_ULP = 0x1p-24;
     constexpr double CELL_EXTENT_ROUNDINGS = 8.0;
 
-    for (const unsigned int n : DIMS) {
-        SCOPED_TRACE(n);
-        OESystem::OESkewGrid grid = MakeCubicGrid(n, SPACING, -0.5 * (n - 1u) * SPACING);
-        float* values = grid.GetValues();
-        for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 1.0f;
-
-        const double extent = n * SPACING;
-
-        // The premise, in the unit the scale counts in: half-ulps of float times
-        // the magnitude it is handed. Against the further endpoint -- the
-        // magnitude the endpoint-only scale would use -- the derived extent is
-        // 8.2 of those units off nominal at two nodes and 9.4 at four, past the
-        // eight allowed, so that scale really would refuse both of these grids.
-        const GridParams gp = get_grid_params(grid);
+    // The premise, in the unit the scale counts in: half-ulps of float times the
+    // magnitude the endpoint-only scale would be handed, the further endpoint.
+    const auto roundings_past_nominal = [&](const unsigned int n, const double spacing) {
+        OESystem::OESkewGrid probe = MakeCubicGrid(n, spacing, -0.5 * (n - 1u) * spacing);
+        const GridParams gp = get_grid_params(probe);
         const double far_endpoint = std::max(
             std::abs(gp.x_origin), std::abs(gp.x_origin + (gp.x_dim - 1u) * gp.x_spacing));
-        const double deviation = std::abs(gp.x_dim * gp.x_spacing - extent);
-        ASSERT_GT(deviation / (FLOAT_HALF_ULP * far_endpoint), CELL_EXTENT_ROUNDINGS)
-            << "SPACING no longer puts the derived extent outside the endpoint-only "
-               "allowance, so this grid would be accepted with the cell edge dropped "
-               "from the scale and the case pins nothing";
+        const double deviation = std::abs(gp.x_dim * gp.x_spacing - n * spacing);
+        return deviation / (FLOAT_HALF_ULP * far_endpoint);
+    };
+
+    for (const unsigned int n : DIMS) {
+        SCOPED_TRACE(n);
+        double spacing = 5.45;
+        if (!(roundings_past_nominal(n, spacing) > CELL_EXTENT_ROUNDINGS)) {
+            spacing = 0.0;
+            for (unsigned int k = 1u; k <= 4000u && spacing == 0.0; ++k) {
+                const double candidate = 0.005 * k;
+                if (roundings_past_nominal(n, candidate) > CELL_EXTENT_ROUNDINGS) {
+                    spacing = candidate;
+                }
+            }
+        }
+        if (spacing == 0.0) {
+            GTEST_SKIP() << "no spacing in the sweep puts the derived extent past the "
+                            "endpoint-only allowance on this platform at "
+                         << n << " nodes, so there is no such grid to accept here";
+        }
+        SCOPED_TRACE(spacing);
+
+        OESystem::OESkewGrid grid = MakeCubicGrid(n, spacing, -0.5 * (n - 1u) * spacing);
+        float* values = grid.GetValues();
+        for (unsigned int i = 0; i < grid.GetSize(); ++i) values[i] = 1.0f;
+        const double extent = n * spacing;
 
         EXPECT_NO_THROW(
             interpolate_density_periodic(grid, 0.0, 0.0, 0.0, extent, extent, extent, -99.0));
@@ -599,7 +624,7 @@ TEST(GridOpsTest, InterpolateDensityPeriodicAcceptsASmallCentredGridsOwnExtent) 
         // so widening the allowance to admit the grid's own extent has not cost
         // the check its purpose.
         EXPECT_THROW(interpolate_density_periodic(grid, 0.0, 0.0, 0.0,
-                                                  (n + 1u) * SPACING, extent, extent, -99.0),
+                                                  (n + 1u) * spacing, extent, extent, -99.0),
                      CellError);
     }
 }
