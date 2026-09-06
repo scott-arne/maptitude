@@ -139,9 +139,19 @@ def test_combine_maps_rejects_infinite_cell_edge() -> None:
 
     OpenEye warns on stderr that SetSpacing cannot handle the value and leaves
     the node coordinates NaN, which get_grid_params then rejects.
+
+    Whether an infinite edge reaches SetUnitCell at all is decided by
+    OpenEye's own binding, and that differs by wheel: the 2026.1.0 macOS arm64
+    and Windows x64 wheels pass it through, while the Linux aarch64 wheel's
+    float argument check raises OverflowError first, so no such grid can be
+    built there. Where that happens there is nothing for combine_maps to
+    refuse, and the case is skipped rather than asserted against OpenEye.
     """
-    grid_a = _make_degenerate_grid(float("inf"), 1.0)
-    grid_b = _make_degenerate_grid(float("inf"), 2.0)
+    try:
+        grid_a = _make_degenerate_grid(float("inf"), 1.0)
+        grid_b = _make_degenerate_grid(float("inf"), 2.0)
+    except OverflowError as error:
+        pytest.skip(f"this OpenEye build refuses an infinite cell edge: {error}")
     with pytest.raises(maptitude.GridError):
         maptitude.combine_maps(grid_a, grid_b, maptitude.MapOp.ADD)
 
