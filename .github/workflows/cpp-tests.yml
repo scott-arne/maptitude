@@ -41,8 +41,12 @@ jobs:
         run: |
           dnf install -y epel-release
           dnf config-manager --set-enabled powertools
+          # The libraries the x86_64 wheel job installs for this SDK, less
+          # Python. FindOpenEye calls find_package(ZLIB), and the first run in
+          # this container stopped at configure with "Could NOT find ZLIB".
           dnf install -y --allowerasing \
-            git curl tar gzip gcc gcc-c++ cmake ninja-build fftw3-devel findutils
+            git curl tar gzip gcc gcc-c++ cmake ninja-build fftw3-devel findutils \
+            zlib-devel cairo
 
       - uses: actions/checkout@v6
 
