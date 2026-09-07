@@ -105,6 +105,22 @@ loaders that stood in for this in the benchmark suite are gone.
 - The `sys.path` inversion in `tests/python/conftest.py` that put `benchmarks/`
   on the test path. The only test that used it imported exactly the two loaders
   now retired.
+- The `benchmarks/` comparison suite against bms-bio, and the test that covered
+  its map-loading helper. bms-bio removed its own grid module in February 2026
+  when that functionality moved here, so the three scripts had nothing left to
+  compare against and could not import.
+
+### Fixed
+
+- **`fc_density` no longer depends on whether a scoring function has already
+  seen the molecule.** Its bulk-solvent mask reads each atom's radius and fell
+  back to 1.7 A, carbon's, for any atom without one; a molecule straight from a
+  file carries none, while `rscc`, `rsr` and `qscore` assign Bondi radii to the
+  molecule in place. So the same molecule gave one Fc before a scorer ran and
+  another after, and the README's quick start took the first path. `fc_density`
+  now assigns the same radii itself, in place, before it builds the mask. Scores
+  for molecules with non-carbon atoms move: on `tests/assets/mapq/340d`, RSCC by
+  1.9e-4 and RSR by 4.5e-4; Q does not use Fc and is unchanged.
 
 ### Known limitations
 
