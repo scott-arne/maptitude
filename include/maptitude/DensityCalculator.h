@@ -160,6 +160,8 @@ public:
      * The caller owns the returned pointer.
      *
      * @param mol Input molecule (OEMolBase or OEDesignUnit-derived).
+     *        Atoms without a radius are assigned Bondi radii in place, as
+     *        the scoring functions do.
      * @param obs_grid Observed electron density grid (defines output geometry).
      * @param resolution Resolution limit in Angstroms.
      * @param mask Optional atom predicate to restrict which atoms contribute.

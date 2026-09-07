@@ -36,8 +36,8 @@ from openeye import oechem, oegrid
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "mapq"
 _DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
-_EXPECTED_RSCC = 0.9688422977346897
-_EXPECTED_RSR = 0.09819888286522681
+_EXPECTED_RSCC = 0.9690309706700857
+_EXPECTED_RSR = 0.09864796027088141
 _EXPECTED_QSCORE = 0.9052790577235651
 
 _CCP4_HEADER_BYTES = 1024
@@ -536,21 +536,20 @@ def test_write_map_rejects_arguments_that_are_not_paths(bad, tmp_path,
 def test_read_map_scores_the_same_as_the_retired_loader():
     """RSCC, RSR and Q on one asset must not move when the loader changes.
 
-    Pinned against values computed through the loader being retired, so a
-    difference here means the swap moved a score rather than just a call site.
+    First pinned against values computed through the loader being retired, so
+    a difference here meant the swap had moved a score rather than a call
+    site; the swap moved nothing. RSCC and RSR were re-pinned once, when
+    fc_density gained its own radius preparation: on a file-fresh molecule
+    they had been 1.9e-4 and 4.5e-4 lower, the solvent mask's 1.7 A fallback
+    standing in for every atom's radius, and they now equal what a
+    scorer-prepared molecule always gave. Q does not use fc_density and did
+    not move.
 
     The tolerance is the floor the C++ characterisation pins use for a pinned
     value below 1 (grid_summary.h: absolute 1e-6), not a same-build tolerance.
     The values were measured on macOS arm64; the Windows x64 and Linux aarch64
-    wheel jobs computed RSCC 6.0e-8 and 3.7e-8 below the pin from the same
-    source, the cross-build drift that floor exists for.
-
-    What the values are: fc_density on the molecule as read from the file,
-    whose atoms carry no radii, so fc_density's solvent mask takes its 1.7 A
-    fallback for every heavy atom. After rscc, rsr or qscore has assigned
-    Bondi radii to the same molecule, fc_density's RSCC on this asset is
-    0.96903, 1.9e-4 above the pin. The pin holds the file-fresh value; Q does
-    not use fc_density and is the same either way.
+    wheel jobs computed RSCC 6.0e-8 and 3.7e-8 below the earlier pin from the
+    same source, the cross-build drift that floor exists for.
     """
     mol = oechem.OEGraphMol()
     ifs = oechem.oemolistream(str(_ASSET_DIR / "340d.cif"))

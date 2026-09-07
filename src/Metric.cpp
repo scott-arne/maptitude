@@ -212,7 +212,7 @@ static double scoring_radius(const OEChem::OEAtomBase& atom, const double resolu
 
 // ---- Helper: assign Bondi VDW radii if missing ----
 
-static void PrepareStructure(OEChem::OEMolBase& mol) {
+void detail::assign_missing_radii(OEChem::OEMolBase& mol) {
     for (OESystem::OEIter<OEChem::OEAtomBase> atom = mol.GetAtoms(OEChem::OEIsHeavy()); atom; ++atom) {
         if (atom->GetRadius() > 0.0) return;  // radii already assigned
     }
@@ -304,7 +304,7 @@ DensityScoreResult rscc(
     if (options.GetAtomRadiusMethod() == AtomRadius::ADAPTIVE) {
         RejectAdaptiveRsccRadius();
     }
-    PrepareStructure(mol);
+    detail::assign_missing_radii(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
     if (residue_atoms.empty()) {
@@ -394,7 +394,7 @@ DensityScoreResult rsr(
     const OESystem::OESkewGrid* calc_grid,
     const RsrOptions& options) {
     require_usable_resolution(resolution);
-    PrepareStructure(mol);
+    detail::assign_missing_radii(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
     if (residue_atoms.empty()) {
@@ -555,7 +555,7 @@ DensityScoreResult qscore(
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const QScoreOptions& options) {
     require_usable_resolution(resolution);
-    PrepareStructure(mol);
+    detail::assign_missing_radii(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
     if (residue_atoms.empty()) {
@@ -837,7 +837,7 @@ DensityScoreResult ediam(
     const double resolution,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask) {
     require_usable_resolution(resolution);
-    PrepareStructure(mol);
+    detail::assign_missing_radii(mol);
 
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
     if (residue_atoms.empty()) {
@@ -933,7 +933,7 @@ DensityScoreResult coverage(
     const OESystem::OESkewGrid& grid,
     const OESystem::OEUnaryPredicate<OEChem::OEAtomBase>* mask,
     const CoverageOptions& options) {
-    PrepareStructure(mol);
+    detail::assign_missing_radii(mol);
     auto residue_atoms = CollectAtomsByResidue(mol, mask);
     if (residue_atoms.empty()) {
         throw StructureError("No scorable heavy atoms after applying mask");

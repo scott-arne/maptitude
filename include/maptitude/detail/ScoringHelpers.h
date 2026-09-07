@@ -7,6 +7,10 @@
 #include <limits>
 #include <vector>
 
+namespace OEChem {
+class OEMolBase;
+}
+
 namespace Maptitude {
 namespace detail {
 
@@ -153,6 +157,15 @@ inline std::vector<std::array<double, 3>> fibonacci_sphere_points(
     }
     return pts;
 }
+
+/// Assign Bondi van der Waals radii to a molecule whose heavy atoms carry none.
+///
+/// A molecule fresh from a file has a radius of 0 on every atom. Every scoring
+/// function and the density calculator read the radius, so each of them
+/// prepares the molecule through this one function, in place, and a molecule
+/// gives the same numbers whichever of them sees it first. If any heavy atom
+/// already carries a radius the molecule is left as it is.
+void assign_missing_radii(OEChem::OEMolBase& mol);
 
 }  // namespace detail
 }  // namespace Maptitude

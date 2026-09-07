@@ -403,3 +403,41 @@ TEST(DensityCalculatorAnisotropicSampling, NamesTheOneAxisWhoseCellEdgeTheMapDoe
         EXPECT_NE(message.find("node interval of 0.75 A"), std::string::npos) << message;
     }
 }
+
+TEST(DensityCalculatorCharacterizationTest, CalculateGivesTheSameFcWhetherOrNotRadiiWereAssignedFirst) {
+    // The bulk-solvent mask reads each atom's radius and falls back to 1.7 A
+    // when it is unset. A molecule fresh from a file carries no radii, and every
+    // scorer assigns Bondi radii to the molecule in place, so unless Calculate
+    // prepares the structure itself it returns one Fc for a molecule no scorer
+    // has seen and another for the same molecule afterwards. Oxygen is the
+    // probe because its Bondi radius is not the fallback.
+    UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
+    std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
+    OESystem::OESkewGrid obs = MakeGaussianGrid(5.0, 5.0, 5.0, 1.0, 6.0, 0.5);
+    DensityCalculator calc(cell, symops);
+
+    OEChem::OEGraphMol fresh = MakeAtomMol(8, 5.0, 5.0, 5.0);
+    OESystem::OEIter<OEChem::OEAtomBase> fresh_atom = fresh.GetAtoms();
+    ASSERT_TRUE(fresh_atom);
+    ASSERT_EQ(fresh_atom->GetRadius(), 0.0) << "the fixture no longer models a file-fresh atom";
+    std::unique_ptr<OESystem::OESkewGrid> before(calc.Calculate(fresh, obs, 2.0));
+    ASSERT_NE(before, nullptr);
+
+    OEChem::OEGraphMol assigned = MakeAtomMol(8, 5.0, 5.0, 5.0);
+    OEChem::OEAssignBondiVdWRadii(assigned);
+    OESystem::OEIter<OEChem::OEAtomBase> assigned_atom = assigned.GetAtoms();
+    ASSERT_GT(assigned_atom->GetRadius(), 0.0);
+    ASSERT_GT(std::abs(assigned_atom->GetRadius() - 1.7), 0.01)
+        << "oxygen's Bondi radius now equals the fallback, so this probe pins nothing";
+    std::unique_ptr<OESystem::OESkewGrid> after(calc.Calculate(assigned, obs, 2.0));
+    ASSERT_NE(after, nullptr);
+
+    ASSERT_EQ(before->GetSize(), after->GetSize());
+    const float* before_values = before->GetValues();
+    const float* after_values = after->GetValues();
+    unsigned int differing = 0u;
+    for (unsigned int i = 0; i < before->GetSize(); ++i) {
+        if (before_values[i] != after_values[i]) ++differing;
+    }
+    EXPECT_EQ(differing, 0u) << "of " << before->GetSize() << " nodes";
+}

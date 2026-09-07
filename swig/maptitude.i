@@ -1304,6 +1304,8 @@ def fc_density(obj, obs_grid, resolution, cell, mask=None,
     """Compute model electron density via Fourier synthesis.
 
     :param obj: Input molecule (OEMolBase or OEDesignUnit).
+        Atoms without a radius are assigned Bondi radii in place, as the
+        scoring functions do.
     :param obs_grid: Observed electron density grid (OESkewGrid).
     :param resolution: Resolution limit in Angstroms.
     :param cell: UnitCell parameters.

@@ -1,4 +1,5 @@
 #include "maptitude/DensityCalculator.h"
+#include "maptitude/detail/ScoringHelpers.h"
 #include "maptitude/Error.h"
 #include "maptitude/Grid.h"
 #include "maptitude/ScatteringFactors.h"
@@ -349,6 +350,13 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
                    "addition wraps to zero";
         throw GridError(message.str());
     }
+
+    // The bulk-solvent mask reads each atom's radius. A molecule fresh from a
+    // file carries none, and the scorers assign Bondi radii in place, so
+    // without this the same molecule gave one Fc before rscc had seen it and
+    // another after; the mask's 1.7 A fallback is carbon's radius, wrong for
+    // every other element.
+    detail::assign_missing_radii(mol);
 
     const UnitCell& cell = pimpl_->cell;
     const auto& symops = pimpl_->symops;
