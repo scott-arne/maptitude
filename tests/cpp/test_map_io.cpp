@@ -12,6 +12,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -24,6 +26,7 @@
 #include <locale>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 #include <sys/stat.h>
@@ -36,6 +39,7 @@
 #include "maptitude/Grid.h"
 #include "maptitude/MapIO.h"
 #include "maptitude/SymOp.h"
+#include "maptitude/detail/MapIOHelpers.h"
 
 #include "fixtures.h"
 
@@ -1312,9 +1316,11 @@ TEST(MapIoWriteTest, ARefusedWriteLeavesNoHiddenTemporaryBehind) {
 TEST(MapIoWriteTest, WritesPastASiblingOfTheTemporaryNameShape) {
     // write_map reserves its temporary's name with an exclusive create, so a
     // name already taken is skipped rather than truncated. This case does not
-    // force that skip and does not claim to: the name carries 32 bits of
-    // std::random_device, which is not injectable, so a decoy cannot be made to
-    // collide with it. What it pins is the reachable half -- a file of the shape
+    // force that skip and does not claim to: through write_map the name
+    // carries 32 bits of std::random_device, so a decoy cannot be made to
+    // collide with it here; the exact collision is forced on
+    // detail::reserve_temporary_sibling in the Reservation cases below. What
+    // it pins is the reachable half -- a file of the shape
     // the reservation draws from, sitting beside the destination, neither blocks
     // the write nor is written through.
     const MapFile source = read_map(DataPath("test_map.ccp4"));
@@ -1395,6 +1401,183 @@ TEST(MapIoWriteTest, DoesNotAttributeAnotherProcessesTemporaryToThisWrite) {
     EXPECT_EQ(CountTemporarySiblings(out.Str()), 0u)
         << "the count attributed " << stale.Str()
         << " to this write, though its name carries another process's pid";
+}
+
+TEST(MapIoWriteTest, ResolvesARelativeDestinationAgainstTheWorkingDirectoryAtEntry) {
+    // Every step of write_map names the temporary and the destination by path.
+    // Handed a relative destination, a working directory that moves between
+    // those steps splits them across directories: the temporary reserved in
+    // one, written, verified or renamed in another. The working directory is
+    // process-wide, so another thread can move it under a write. A flipper
+    // thread moves it between two scratch directories for the duration; each
+    // call has to land whole in whichever directory it resolved at entry, with
+    // no error and no temporary left in either.
+    const MapFile source = read_map(DataPath("test_map.ccp4"));
+    const std::filesystem::path original = std::filesystem::current_path();
+    const std::filesystem::path base =
+        std::filesystem::path(::testing::TempDir()) /
+        ("maptitude_cwd_flip_" + std::to_string(::getpid()));
+    const std::filesystem::path a = base / "a";
+    const std::filesystem::path b = base / "b";
+    std::filesystem::remove_all(base);
+    std::filesystem::create_directories(a);
+    std::filesystem::create_directories(b);
+
+    // Enter one of the scratch directories before the flipper starts. Until it
+    // runs the working directory is still the caller's, and a relative write
+    // would land there instead of in a or b.
+    std::filesystem::current_path(a);
+    std::atomic<bool> stop{false};
+    std::thread flipper([&] {
+        bool to_a = true;
+        while (!stop.load()) {
+            std::error_code ignored;
+            std::filesystem::current_path(to_a ? a : b, ignored);
+            to_a = !to_a;
+            std::this_thread::sleep_for(std::chrono::microseconds(20));
+        }
+    });
+
+    int failures = 0;
+    std::string first_error;
+    for (int i = 0; i < 40 && failures == 0; ++i) {
+        try {
+            write_map("rel.ccp4", *source.grid, source.symops);
+        } catch (const GridError& error) {
+            ++failures;
+            first_error = error.what();
+        }
+    }
+    stop.store(true);
+    flipper.join();
+    std::filesystem::current_path(original);
+
+    EXPECT_EQ(failures, 0) << first_error;
+    EXPECT_TRUE(std::filesystem::exists(a / "rel.ccp4") ||
+                std::filesystem::exists(b / "rel.ccp4"))
+        << "no write published anywhere";
+    for (const std::filesystem::path& dir : {a, b}) {
+        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+            EXPECT_EQ(entry.path().filename().string().rfind(".maptitude-", 0),
+                      std::string::npos)
+                << "a temporary was left behind: " << entry.path().string();
+        }
+    }
+    std::filesystem::remove_all(base);
+}
+
+/// The candidate name write_map's reservation draws for one entropy value.
+std::filesystem::path CandidateBeside(const std::filesystem::path& dest, const char* hex) {
+    return dest.parent_path() /
+           (".maptitude-" + std::to_string(::getpid()) + "-" + hex +
+            dest.extension().string());
+}
+
+TEST(MapIoWriteTest, ReservationSkipsATakenCandidateAndLeavesItUntouched) {
+    // write_map draws its temporary's name from std::random_device, so a
+    // collision on the exact candidate cannot be forced through write_map. The
+    // reservation takes its entropy as an argument, so it is forced here: the
+    // first two draws name a file that already exists, the third a free name.
+    ScratchPath out(".ccp4");
+    const std::filesystem::path dest(out.Str());
+    const std::filesystem::path taken = CandidateBeside(dest, "dead");
+    const std::filesystem::path free_name = CandidateBeside(dest, "beef");
+    std::filesystem::remove(free_name);
+    {
+        std::ofstream planted(taken, std::ios::binary);
+        planted << "keep me";
+    }
+
+    const std::vector<unsigned int> draws = {0xdead, 0xdead, 0xbeef};
+    std::size_t next = 0;
+    const std::filesystem::path reserved =
+        detail::reserve_temporary_sibling(dest, [&] { return draws.at(next++); });
+
+    EXPECT_EQ(reserved, free_name);
+    EXPECT_EQ(next, 3u) << "the reservation did not draw past the taken name twice";
+    EXPECT_TRUE(std::filesystem::exists(reserved));
+    EXPECT_EQ(std::filesystem::file_size(reserved), 0u);
+    EXPECT_EQ(ReadBytesAt(taken.string(), 0, 7), "keep me")
+        << "the taken candidate was written through";
+    std::filesystem::remove(reserved);
+    std::filesystem::remove(taken);
+}
+
+TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo) {
+    // O_CREAT|O_EXCL fails on an existing path even when that path is a
+    // symbolic link, whatever the link resolves to, so a link planted at the
+    // candidate is skipped and its target left alone -- where the truncating
+    // create a plain fopen("w") does would follow the link. Both shapes: a
+    // link onto an existing file, and a dangling one.
+    ScratchPath out(".ccp4");
+    const std::filesystem::path dest(out.Str());
+    const std::filesystem::path target =
+        dest.parent_path() / ("maptitude_link_target_" + std::to_string(::getpid()));
+    {
+        std::ofstream planted(target, std::ios::binary);
+        planted << "target";
+    }
+    struct Case {
+        unsigned int value;
+        const char* hex;
+        std::filesystem::path to;
+    };
+    const Case cases[] = {
+        {0xdead, "dead", target},
+        {0xd00d, "d00d", dest.parent_path() / "maptitude_absent_link_target"},
+    };
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.hex);
+        const std::filesystem::path link = CandidateBeside(dest, c.hex);
+        const std::filesystem::path free_name = CandidateBeside(dest, "beef");
+        std::filesystem::remove(link);
+        std::filesystem::remove(free_name);
+        std::filesystem::create_symlink(c.to, link);
+
+        const std::vector<unsigned int> draws = {c.value, 0xbeef};
+        std::size_t next = 0;
+        const std::filesystem::path reserved =
+            detail::reserve_temporary_sibling(dest, [&] { return draws.at(next++); });
+
+        EXPECT_EQ(reserved, free_name);
+        EXPECT_TRUE(std::filesystem::is_symlink(link)) << "the link was replaced";
+        EXPECT_EQ(std::filesystem::read_symlink(link), c.to);
+        std::filesystem::remove(reserved);
+        std::filesystem::remove(link);
+    }
+    EXPECT_EQ(ReadBytesAt(target.string(), 0, 6), "target")
+        << "the create followed the link onto its target";
+    std::filesystem::remove(target);
+}
+
+TEST(MapIoWriteTest, ReservationGivesUpOnceEveryDrawHasCollided) {
+    ScratchPath out(".ccp4");
+    const std::filesystem::path dest(out.Str());
+    const std::filesystem::path taken = CandidateBeside(dest, "dead");
+    {
+        std::ofstream planted(taken, std::ios::binary);
+        planted << "keep me";
+    }
+
+    std::size_t draws = 0;
+    try {
+        detail::reserve_temporary_sibling(dest, [&] {
+            ++draws;
+            return 0xdeadu;
+        });
+        FAIL() << "expected GridError once every candidate collided";
+    } catch (const GridError& error) {
+        const std::string what = error.what();
+        EXPECT_NE(what.find("no free temporary name"), std::string::npos) << what;
+        EXPECT_NE(what.find(std::to_string(detail::TEMPORARY_NAME_ATTEMPTS) + " attempts"),
+                  std::string::npos)
+            << what;
+    }
+    EXPECT_EQ(draws, static_cast<std::size_t>(detail::TEMPORARY_NAME_ATTEMPTS));
+    EXPECT_EQ(ReadBytesAt(taken.string(), 0, 7), "keep me");
+    EXPECT_EQ(CountTemporarySiblings(out.Str()), 1u)
+        << "beside the planted file, the failed reservation left something";
+    std::filesystem::remove(taken);
 }
 
 TEST(MapIoWriteTest, ReservesTheTemporaryBeforeHandingTheNameToOEWriteGrid) {

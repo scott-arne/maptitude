@@ -1640,6 +1640,11 @@ def write_map(path, grid, symops=""):
     cannot be written faithfully raises with ``path`` untouched rather than
     leaving a wrong map on disk or destroying a good one.
 
+    A relative ``path`` is resolved against the working directory once, on
+    entry, and that resolved path is what the temporary is placed beside and
+    what the rename targets; a thread moving the working directory during the
+    write changes nothing after that point.
+
     An absent space group is defaulted to P1 on the way out, so a successful
     write of a grid carrying none lands at ``ISPG`` 1 rather than 0. Measured
     on ``tests/assets/mapq/390_emd_30342_A_z4.mrc``, whose ``ISPG`` is 0: the
@@ -1666,7 +1671,11 @@ def write_map(path, grid, symops=""):
     publish its bytes and return successfully. Such a process can already
     create, replace and remove ``path`` itself; what this adds is that a
     successful return stops implying the published bytes are the ones that were
-    verified. A destination directory only the caller can write closes that.
+    verified. A destination directory only the caller can write closes the
+    replacement, while the process umask denies others write on the temporary
+    itself: under POSIX it is created at 0666 narrowed by the umask, so a umask
+    that leaves it group- or world-writable lets a process able to enter the
+    directory write its bytes without being able to replace it.
 
     Node 0 is written twice, into the MRC2000 ORIGIN record exactly and into
     NxSTART as an integer node count. A map this function wrote reproduces node

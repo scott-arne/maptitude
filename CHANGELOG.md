@@ -5,6 +5,38 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
+## [Unreleased]
+
+### Fixed
+
+- `write_map` now resolves a relative destination against the working directory
+  once, on entry. It previously re-derived the temporary's directory, the rename
+  target and the verification path from the caller's string at separate points,
+  so a working directory that moved between them split a single write across two
+  directories: the temporary reserved in one, the rename attempted from another.
+  The call then failed with a placement mismatch and left the temporary behind.
+  The working directory is process-wide, so another thread moving it was enough.
+  Pinned at `ResolvesARelativeDestinationAgainstTheWorkingDirectoryAtEntry`,
+  which fails on the previous code.
+
+### Added
+
+- `include/maptitude/detail/MapIOHelpers.h`, exposing
+  `detail::reserve_temporary_sibling(dest, entropy)` -- the loop that reserves
+  `write_map`'s temporary sibling, with its entropy source taken as an argument.
+  `write_map` draws from `std::random_device`, so a collision on an exact
+  candidate name cannot be forced through the public API; this seam lets the
+  suite drive one directly. Pinned at
+  `ReservationSkipsATakenCandidateAndLeavesItUntouched`,
+  `ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo` and
+  `ReservationGivesUpOnceEveryDrawHasCollided`.
+
+### Changed
+
+- `write_map`'s documented race bound is now stated against the umask it was
+  measured under, on both the C++ and Python API surfaces. The published file
+  carries mode 0644 under umask 022 and 0666 under umask 000.
+
 ## [0.5.0]
 
 The map I/O release. Maptitude now reads and writes CCP4/MRC files through its

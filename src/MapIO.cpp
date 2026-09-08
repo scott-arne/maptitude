@@ -1,4 +1,5 @@
 #include "maptitude/MapIO.h"
+#include "maptitude/detail/MapIOHelpers.h"
 
 #include "maptitude/Error.h"
 #include "maptitude/Grid.h"
@@ -501,38 +502,12 @@ long ProcessId() {
 /// the verification never saw -- which is a statement about what write_map
 /// promises its caller, and is made there.
 TemporaryFile MakeTemporarySibling(const std::filesystem::path& dest) {
-    constexpr int MAX_ATTEMPTS = 8;
+    // The loop itself is detail::reserve_temporary_sibling, defined after this
+    // anonymous namespace so that a test can hand it its own draws. This is
+    // the only caller that draws from the device.
     std::random_device entropy;
-    for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
-        std::ostringstream name;
-        name.imbue(std::locale::classic());
-        name << ".maptitude-" << ProcessId() << '-' << std::hex << entropy()
-             << dest.extension().string();
-        std::filesystem::path candidate = dest.parent_path() / name.str();
-        // Narrowed into a named local rather than a temporary, so that no
-        // destructor -- and so no deallocation, of exactly the class the next
-        // comment is about -- runs between the create and the errno read.
-        const std::string candidate_name = candidate.string();
-        std::FILE* const reserved = std::fopen(candidate_name.c_str(), "wx");
-        // errno is read once, into a local: the throw below builds its message
-        // with operator+, whose operands are evaluated in an unspecified order
-        // and whose allocations can overwrite errno before a second read of it
-        // reaches the message.
-        const int failure = errno;
-        if (reserved != nullptr) {
-            std::fclose(reserved);
-            return TemporaryFile(std::move(candidate));
-        }
-        if (failure != EEXIST) {
-            throw GridError(
-                "Cannot write '" + dest.string() +
-                "': cannot create a temporary beside it: " +
-                std::error_code(failure, std::generic_category()).message());
-        }
-    }
-    throw GridError("Cannot write '" + dest.string() +
-                    "': no free temporary name beside it after " +
-                    std::to_string(MAX_ATTEMPTS) + " attempts");
+    return TemporaryFile(
+        detail::reserve_temporary_sibling(dest, [&entropy] { return entropy(); }));
 }
 
 /// Normalize symop text to the one-triplet-per-line form read_map returns.
@@ -766,6 +741,41 @@ void PatchHeaderRecords(const std::filesystem::path& file,
 }
 
 }  // namespace
+
+std::filesystem::path detail::reserve_temporary_sibling(
+    const std::filesystem::path& dest,
+    const std::function<unsigned int()>& entropy) {
+    for (int attempt = 0; attempt < TEMPORARY_NAME_ATTEMPTS; ++attempt) {
+        std::ostringstream name;
+        name.imbue(std::locale::classic());
+        name << ".maptitude-" << ProcessId() << '-' << std::hex << entropy()
+             << dest.extension().string();
+        std::filesystem::path candidate = dest.parent_path() / name.str();
+        // Narrowed into a named local rather than a temporary, so that no
+        // destructor -- and so no deallocation, of exactly the class the next
+        // comment is about -- runs between the create and the errno read.
+        const std::string candidate_name = candidate.string();
+        std::FILE* const reserved = std::fopen(candidate_name.c_str(), "wx");
+        // errno is read once, into a local: the throw below builds its message
+        // with operator+, whose operands are evaluated in an unspecified order
+        // and whose allocations can overwrite errno before a second read of it
+        // reaches the message.
+        const int failure = errno;
+        if (reserved != nullptr) {
+            std::fclose(reserved);
+            return candidate;
+        }
+        if (failure != EEXIST) {
+            throw GridError(
+                "Cannot write '" + dest.string() +
+                "': cannot create a temporary beside it: " +
+                std::error_code(failure, std::generic_category()).message());
+        }
+    }
+    throw GridError("Cannot write '" + dest.string() +
+                    "': no free temporary name beside it after " +
+                    std::to_string(TEMPORARY_NAME_ATTEMPTS) + " attempts");
+}
 
 MapFile::MapFile() = default;
 MapFile::MapFile(MapFile&& other) noexcept = default;
@@ -1037,7 +1047,22 @@ void write_map(const std::string& path, const OESystem::OESkewGrid& grid,
                         "writing '" + path + "'");
     }
 
-    const std::filesystem::path dest(path);
+    // Every step from here names the temporary and the destination by path,
+    // and the working directory is process-wide, so a relative destination is
+    // resolved once, here, and the resolved path is what every step uses. A
+    // thread moving the working directory during the write then changes
+    // nothing but which directory this call resolved to at entry. Measured
+    // with a thread moving it between two directories: unresolved, the first
+    // write failed at verification, having read back a file in the other
+    // directory, and left its temporary behind.
+    std::error_code resolve_error;
+    const std::filesystem::path dest =
+        std::filesystem::absolute(std::filesystem::path(path), resolve_error);
+    if (resolve_error) {
+        throw GridError("Cannot write '" + path +
+                        "': cannot resolve it against the working directory: " +
+                        resolve_error.message());
+    }
     // MakeTemporarySibling creates the file it names, so it hands back the
     // owner rather than a path a caller has to remember to wrap.
     TemporaryFile temporary = MakeTemporarySibling(dest);

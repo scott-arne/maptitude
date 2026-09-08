@@ -161,6 +161,14 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * this function cannot write faithfully raises with @p path untouched, rather
  * than leaving a silently wrong map on disk or destroying a good one.
  *
+ * A relative @p path is resolved against the working directory once, on
+ * entry, and that resolved path is what the temporary is placed beside and
+ * what the rename targets. The working directory is process-wide, so without
+ * that a thread moving it during the write split the steps across
+ * directories: measured with a thread moving it between two directories, the
+ * first unresolved write failed at verification and left its temporary
+ * behind, and forty resolved writes each landed whole.
+ *
  * An absent space group is defaulted to P1 on the way out, so a successful
  * write of a grid carrying none lands at ISPG 1 rather than 0. Measured on
  * tests/assets/mapq/390_emd_30342_A_z4.mrc, whose ISPG is 0: the file this
@@ -190,10 +198,19 @@ std::string compare_placement_records(const OESystem::OESkewGrid& by_origin,
  * this adds is that a successful return stops implying the published bytes are
  * the ones that were verified.
  *
- * A destination directory only the caller can write closes that. Confining the
- * temporary to a directory only the caller can enter would narrow it to the
- * same set, and is not what this function does. Nothing closes it outright: the
- * publication step is a rename, and rename names its source by path.
+ * A destination directory only the caller can write closes the replacement,
+ * and the temporary's own mode is what stands between a process that can
+ * merely enter that directory and the bytes inside the file. Under POSIX the
+ * temporary is created at 0666 narrowed by the process umask -- 0644 under
+ * umask 022 and 0666 under umask 000, both measured on the published file,
+ * which the rename carries over from the temporary. So the directory closes
+ * the window only while the umask denies others write on the temporary; under
+ * a umask that leaves it group- or world-writable, a process able to enter the
+ * directory can write its bytes without being able to replace it. Confining
+ * the temporary to a directory only the caller can enter would narrow both to
+ * the same set, and is not what this function does. Nothing closes it
+ * outright: the publication step is a rename, and rename names its source by
+ * path.
  *
  * Node 0 is written twice, into the MRC2000 ORIGIN record exactly and into
  * NxSTART as an integer node count, and the write is refused unless the two
