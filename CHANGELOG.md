@@ -5,7 +5,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
-## [Unreleased]
+## [0.6.0]
+
+The FFT dependency comes out. maptitude no longer links FFTW: the transforms
+run on PocketFFT, vendored as a single BSD-3-Clause header. That ends a
+deadlock caused by the FFTW 2.1.5 that OpenEye's `liboegrid.a` statically
+embeds, takes GPL-licensed code out of the MIT wheels, and removes a build
+dependency three CI jobs had been compiling from source. Building from source
+now needs only CMake, SWIG and the OpenEye toolkits. The release also closes
+the last three open items on the map I/O work.
 
 ### Fixed
 
