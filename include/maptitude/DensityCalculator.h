@@ -70,9 +70,9 @@ constexpr double MAX_MILLER_BOX_POINTS = 2e8;
 /// 2e8 points leaves the crystallography this pipeline is for well inside the bound: 1d26
 /// samples 48 x 48 x 24 = 55,296 points, 3.6e3x under, and reaching the bound at a 0.5 A
 /// node interval takes a cubic cell of roughly 292 A. Memory rather than time is what
-/// binds at the limit: the per-shell scaling path holds four `fftw_complex` arrays and one
-/// `double` array over the FFT grid at once, 72 bytes per point, so the bound already
-/// admits a 14.4 GB request.
+/// binds at the limit: the per-shell scaling path holds four `std::complex<double>` arrays
+/// and one `double` array over the FFT grid at once, 72 bytes per point, so the bound
+/// already admits a 14.4 GB request.
 ///
 /// Declared as a double for the reason MAX_MILLER_BOX_POINTS is: the check has to run in
 /// arithmetic that cannot itself overflow, so both the per-axis ratio and the product are
@@ -120,7 +120,7 @@ std::vector<MillerIndex> GenerateMillerIndices(double a, double b, double c, dou
  * 2. Cromer-Mann scattering factor lookup
  * 3. Miller index generation within resolution sphere
  * 4. Structure factor accumulation with symmetry expansion (OpenMP-parallel)
- * 5. Inverse FFT to real space via FFTW3
+ * 5. Inverse FFT to real space (PocketFFT)
  * 6. Optional flat bulk solvent correction
  * 7. Optional per-shell amplitude scaling against observed density
  * 8. Trilinear interpolation onto output grid

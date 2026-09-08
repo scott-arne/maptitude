@@ -45,7 +45,7 @@ jobs:
           # Python. FindOpenEye calls find_package(ZLIB), and the first run in
           # this container stopped at configure with "Could NOT find ZLIB".
           dnf install -y --allowerasing \
-            git curl tar gzip gcc gcc-c++ cmake ninja-build fftw3-devel findutils \
+            git curl tar gzip gcc gcc-c++ cmake ninja-build findutils \
             zlib-devel cairo
 
       - uses: actions/checkout@v6

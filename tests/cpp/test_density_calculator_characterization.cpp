@@ -1,10 +1,12 @@
-/// Tier 2 pins for the structure-factor pipeline and behavioral guards for the
-/// FFTW conversion.
+/// Tier 2 pins for the structure-factor pipeline and behavioral guards for its
+/// FFT layer.
 ///
 /// src/DensityCalculator.cpp had no C++ coverage before Phase 1. These pins are
-/// what make the FFTW RAII conversion verifiable. Tolerance is two-regime:
-/// relative 1e-6 for |pinned| >= 1, absolute 1e-6 below it. The floor avoids
-/// cross-machine flakiness when FFTW_ESTIMATE picks different codelets.
+/// what made the FFTW RAII conversion verifiable, and later the replacement of
+/// FFTW by PocketFFT -- every value below held unchanged across that swap.
+/// Tolerance is two-regime: relative 1e-6 for |pinned| >= 1, absolute 1e-6
+/// below it. The floor absorbs an FFT implementation's choice of codelet,
+/// which varies across builds and machines.
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -98,14 +100,11 @@ TEST(DensityCalculatorCharacterizationTest, OrthorhombicAsym) {
     ExpectPinned(s.index_moment, MaptitudePins::FC_ORTHORHOMBIC_ASYM_INDEX_MOMENT);
 }
 
-// Calculate performs nine FFTW allocations and five plans, all held by the
-// FftwBuffer and FftwPlan wrappers. This test does not exercise them: it throws
-// from the argument check, before the first fftw_alloc_complex, so what it pins
-// is that the guard fires repeatedly and leaves the pipeline usable. The
-// allocation paths rest on the phase's one-time leak measurement instead --
-// reverting the wrappers to raw allocation plus manual fftw_free on the success
-// path leaves this test, and the whole suite, green. See the corresponding
-// Known limitations entry in CHANGELOG.md.
+// Calculate allocates nine FFT volumes. They are std::vector, so a throw
+// between any two of them releases the earlier ones by construction; there is
+// no longer a hand-written deleter for a test to protect. This test throws from
+// the argument check, before the first allocation, so what it pins is narrower:
+// that the guard fires repeatedly and leaves the pipeline usable.
 TEST(DensityCalculatorCharacterizationTest, ThrowingPathDoesNotDestabilizeTheProcess) {
     UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");
@@ -123,12 +122,12 @@ TEST(DensityCalculatorCharacterizationTest, ThrowingPathDoesNotDestabilizeThePro
     ExpectPinned(Summarize(*fc).sum, MaptitudePins::FC_ORTHORHOMBIC_SUM);
 }
 
-// fftw_plan_dft_3d and fftw_destroy_plan mutate global planner state and are
-// not thread-safe. fftw_execute on an already-created plan is thread-safe. A
-// C++ caller invoking Calculate from multiple threads reaches this directly;
-// Python callers are currently serialized by the GIL since the module is not
-// built with SWIG threading. The planner mutex guards only plan creation and
-// destruction.
+// PocketFFT holds no planner state between calls, so concurrent Calculate
+// calls share nothing and this passes with no lock anywhere in the pipeline.
+// FFTW needed one: fftw_plan_dft_3d and fftw_destroy_plan mutate global planner
+// state. A C++ caller invoking Calculate from several threads reaches this
+// directly; Python callers are serialized by the GIL in any case, since the
+// module is not built with SWIG threading.
 TEST(DensityCalculatorCharacterizationTest, ConcurrentCalculateIsSafe) {
     UnitCell cell(20.0, 25.0, 30.0, 90.0, 90.0, 90.0);
     std::vector<SymOp> symops = SymOp::ParseAll("x,y,z");

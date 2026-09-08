@@ -9,6 +9,17 @@ This project is pre-1.0: breaking changes may land in a minor release.
 
 ### Fixed
 
+- `DensityCalculator::Calculate` no longer deadlocks. maptitude linked FFTW 3
+  while OpenEye's `liboegrid.a` statically embeds a complete FFTW 2.1.5, and the
+  two majors export three C symbols in common -- `fftw_destroy_plan`,
+  `fftw_malloc` and `fftw_free`. On macOS the static archive won those three
+  while `fftw_plan_dft_3d` and `fftw_execute` still resolved to the FFTW 3
+  dylib, so an FFTW 3 plan was handed to FFTW 2's destructor, which walked it as
+  an FFTW 2 plan and spun. Four C++ tests hung indefinitely rather than failing.
+  There is no deduplicating fix: the two plan structures are unrelated. The FFT
+  is now PocketFFT (see Changed), so maptitude references no FFTW symbol at all
+  and the collision cannot re-form on any platform or in any link mode.
+
 - `write_map` now resolves a relative destination against the working directory
   once, on entry. It previously re-derived the temporary's directory, the rename
   target and the verification path from the caller's string at separate points,
@@ -31,11 +42,49 @@ This project is pre-1.0: breaking changes may land in a minor release.
   `ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo` and
   `ReservationGivesUpOnceEveryDrawHasCollided`.
 
+- `third_party/pocketfft/`, holding `pocketfft_hdronly.h` vendored unmodified
+  from `mreineck/pocketfft` branch `cpp` at `c90e55b`, with its BSD-3-Clause
+  text and that provenance in a sibling `LICENSE`. It is vendored rather than
+  fetched because it has no releases to pin and the wheel builds run with
+  FetchContent disconnected. The wheel now ships that license file alongside
+  maptitude's own.
+
+- The C++ tests carry a 60-second per-test `TIMEOUT` from CMake rather than only
+  from the CI `ctest` flag, so a deadlock fails the run wherever the suite is
+  invoked. The slowest test takes 3.3 s in a Debug build.
+
 ### Changed
 
 - `write_map`'s documented race bound is now stated against the umask it was
   measured under, on both the C++ and Python API surfaces. The published file
   carries mode 0644 under umask 022 and 0666 under umask 000.
+
+- **FFTW 3 is gone; the FFT is PocketFFT.** `DensityCalculator`'s five
+  transforms are 3D complex-to-complex over a whole volume, which PocketFFT does
+  header-only with no planner and no global state. Beyond the deadlock above
+  this resolves a licensing conflict -- maptitude is MIT and the published
+  wheels statically embedded GPL-2.0-or-later FFTW 3.3.11, whereas PocketFFT is
+  BSD-3-Clause -- and removes the from-source FFTW build from three CI jobs plus
+  `fftw3-devel` from two container images. Building from source no longer needs
+  FFTW3 installed.
+
+  The pinned values did not move: the whole C++ suite (374 tests, including the
+  Fc characterization pins at relative 1e-6) and the Python suite (191 tests,
+  including the RSCC and RSR pins at absolute 1e-6) pass unchanged. A direct
+  comparison on a 12x20x7 volume put PocketFFT within 3e-14 of FFTW on values up
+  to 94, i.e. at the double-precision floor.
+
+### Removed
+
+- `cmake/FindFFTW3.cmake`, the `FFTW3_USE_STATIC` option and the `FFTW3_ROOT`
+  build define, all unreachable now that nothing links FFTW.
+
+- The FFTW planner mutex in `DensityCalculator.cpp`, and with it the two
+  0.3.0 Known-limitations entries that described it: PocketFFT keeps no planner
+  state, so there is nothing to serialize and no host-application planning call
+  to be unsynchronized with. The nine allocations are `std::vector`, so the
+  RAII gap that entry also recorded -- allocation paths provable only by a
+  one-time manual leak measurement -- closes with it.
 
 ## [0.5.0]
 

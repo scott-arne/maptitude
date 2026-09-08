@@ -48,4 +48,9 @@ target_link_libraries(maptitude_pin_generator PRIVATE maptitude)
 target_include_directories(maptitude_pin_generator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 include(GoogleTest)
-gtest_discover_tests(maptitude_tests)
+# A per-test timeout belongs here, not only on the CI ctest invocation: a
+# deadlocked FFT -- which is what four of these tests did while a second,
+# incompatible FFTW was reachable through OpenEye's static liboegrid -- is
+# indistinguishable from a slow test, and ctest otherwise waits forever. The
+# slowest test in this suite takes 3.3 s in a Debug build.
+gtest_discover_tests(maptitude_tests PROPERTIES TIMEOUT 60)

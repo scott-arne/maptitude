@@ -60,7 +60,7 @@ jobs:
           dnf install -y --allowerasing \
             git curl unzip gcc gcc-c++ cmake ninja-build \
             python3.11 python3.11-devel \
-            zlib-devel cairo fftw3-devel findutils
+            zlib-devel cairo findutils
 
       - uses: actions/checkout@v6
 
@@ -265,24 +265,6 @@ jobs:
           pip install --upgrade pip setuptools wheel
           pip install scikit-build-core ninja cmake build delocate
 
-      - name: Build universal2 FFTW3 from source
-        run: |
-          FFTW_VERSION=3.3.10
-          curl -fsSL "http://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz" -o /tmp/fftw.tar.gz
-          tar -xzf /tmp/fftw.tar.gz -C /tmp
-          cd /tmp/fftw-${FFTW_VERSION}
-          mkdir build-universal && cd build-universal
-          cmake .. \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0" \
-            -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/fftw3" \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_TESTS=OFF
-          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
-          cmake --install . --config Release
-
       - name: Download OpenEye SDK from GCS
         run: |
           mkdir -p ${{ runner.temp }}/openeye
@@ -349,7 +331,6 @@ jobs:
             --openeye-root ${{ runner.temp }}/openeye \
             --python $(which python) \
             --cmake-define MAPTITUDE_UNIVERSAL2=ON \
-            --cmake-define FFTW3_ROOT=${{ runner.temp }}/fftw3 \
             --verbose
 
       - name: Validate abi3 link table
@@ -439,29 +420,6 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install scikit-build-core ninja cmake build swig pytest
 
-      - name: Build FFTW3 from source
-        run: |
-          # Git-bash tar on Windows treats a drive-letter colon in the path
-          # (e.g. D:\a\_temp) as a remote hostname. --force-local disables
-          # that interpretation so local Windows paths work.
-          FFTW_VERSION=3.3.10
-          curl -fsSL "http://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz" -o "${RUNNER_TEMP}/fftw.tar.gz"
-          cd "${RUNNER_TEMP}"
-          tar --force-local -xzf fftw.tar.gz
-          cd "fftw-${FFTW_VERSION}"
-          mkdir build && cd build
-          cmake .. \
-            -G Ninja \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="${RUNNER_TEMP}/fftw3" \
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_TESTS=OFF
-          cmake --build . --config Release
-          cmake --install . --config Release
-          echo "FFTW3_ROOT=${RUNNER_TEMP}/fftw3" >> $GITHUB_ENV
-
       - name: Authenticate to Google Cloud
         id: gcp-auth
         uses: google-github-actions/auth@v3
@@ -536,7 +494,6 @@ jobs:
           python scripts/build_python.py \
             --openeye-root "${OPENEYE_ROOT}" \
             --python "$(which python)" \
-            --cmake-define "FFTW3_ROOT=${FFTW3_ROOT}" \
             --verbose
 
       - name: Validate abi3 import table

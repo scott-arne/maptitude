@@ -20,10 +20,7 @@ option(MAPTITUDE_USE_STABLE_ABI "Use Python stable ABI" ON)
 if(APPLE AND MAPTITUDE_UNIVERSAL2)
     set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Build architectures" FORCE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
-    set(FFTW3_USE_STATIC ON CACHE BOOL "Use static FFTW3 for universal2 builds" FORCE)
 endif()
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Fetch header-only dependencies
 include(FetchContent)
@@ -56,7 +53,6 @@ if(OPENEYE_USE_SHARED)
 endif()
 
 find_package(OpenEye REQUIRED)
-find_package(FFTW3 REQUIRED)
 find_package(OpenMP)
 
 # Library sources
@@ -84,9 +80,22 @@ target_include_directories(maptitude
         $<INSTALL_INTERFACE:include>
 )
 
+# PocketFFT is a vendored single header (third_party/pocketfft, BSD-3-Clause)
+# rather than a fetched or system dependency: it has no releases to pin and the
+# wheel builds run with FetchContent disconnected. It is PRIVATE because no
+# public header names it.
+#
+# Multithreading is off because DensityCalculator only ever asks for one
+# thread. The threaded build would add a process-wide thread pool, a
+# pthread_atfork handler and a hardware_concurrency() call at load time --
+# exactly the kind of global FFT state that made the previous FFTW dependency
+# collide with the copy OpenEye statically embeds in liboegrid.
+target_include_directories(maptitude
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pocketfft)
+target_compile_definitions(maptitude PRIVATE POCKETFFT_NO_MULTITHREADING)
+
 target_link_libraries(maptitude
     PUBLIC
-        FFTW3::fftw3
         OpenEye::OEChem
         OpenEye::OEGrid
     PRIVATE

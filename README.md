@@ -34,7 +34,8 @@ Install from a wheel:
 pip install maptitude
 ```
 
-Building from source requires CMake 3.21+, SWIG 4.2+, FFTW3, and the OpenEye C++ Toolkits.
+Building from source requires CMake 3.21+, SWIG 4.2+, and the OpenEye C++ Toolkits.
+The FFT is PocketFFT, vendored in `third_party/pocketfft`; nothing else needs installing.
 SWIG 4.2 is what the default stable-ABI build needs; 4.0 is enough with
 `-DMAPTITUDE_USE_STABLE_ABI=OFF`.
 

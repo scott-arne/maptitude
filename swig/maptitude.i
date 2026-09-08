@@ -34,8 +34,8 @@ using namespace Maptitude;
 
    Sharing one set of classes across every interpreter makes this module unsafe
    under subinterpreters. That is a known, deliberate constraint, and these
-   statics are only one reason for it -- the library also links OpenEye, FFTW,
-   and OpenMP, none of which are subinterpreter-safe either. */
+   statics are only one reason for it -- the library also links OpenEye and
+   OpenMP, neither of which is subinterpreter-safe either. */
 static PyObject* g_maptitude_error = NULL;
 static PyObject* g_structure_error = NULL;
 static PyObject* g_grid_error = NULL;

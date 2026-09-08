@@ -7,14 +7,12 @@
 
 #include <oechem.h>
 #include <oegrid.h>
-#include <fftw3.h>
+#include <pocketfft_hdronly.h>
 
-#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstddef>
 #include <memory>
-#include <mutex>
 #include <sstream>
 #include <vector>
 
@@ -273,56 +271,61 @@ static void InterpolateUCToGrid(
     }
 }
 
-// ==== FFTW RAII wrappers ====
+// ==== FFT helpers ====
 
 namespace {
-// This mutex has internal linkage and is sufficient only while this file is
-// the sole FFTW translation unit. A second FFTW TU must share this mutex
-// through an internal header rather than copying this block.
 
-/// FFTW buffers come from fftw_malloc, not operator new, so they need their own
-/// deleter. RAII here guards the throw paths: the nine null checks added during
-/// this conversion are themselves the throw sites, and they are reachable in
-/// practice — under planner contention fftw_plan_dft_3d returns NULL.
-struct FftwComplexDeleter {
-    void operator()(fftw_complex* p) const noexcept {
-        if (p != nullptr) {
-            fftw_free(p);
-        }
-    }
-};
+/// The transforms run over std::complex<double> volumes in C order, so an
+/// element's position matches how every loop in Calculate addresses it:
+/// flat = (i*ny + j)*nz + k.
+using ComplexVolume = std::vector<std::complex<double>>;
 
-using FftwComplexPtr = std::unique_ptr<fftw_complex, FftwComplexDeleter>;
-
-/// fftw_plan is a pointer to an opaque fftw_plan_s.
-struct FftwPlanDeleter {
-    void operator()(fftw_plan_s* p) const noexcept;
-};
-
-using FftwPlanPtr = std::unique_ptr<fftw_plan_s, FftwPlanDeleter>;
-
-/// fftw_plan_dft_3d and fftw_destroy_plan mutate global planner state and are
-/// not thread-safe. fftw_execute on an already-created plan is, so this guards
-/// only creation and destruction. A C++ caller invoking Calculate from multiple
-/// threads reaches this directly; Python callers are currently serialized by the
-/// GIL since the module is not built with SWIG threading.
-std::mutex& FftwPlannerMutex() {
-    static std::mutex mutex;
-    return mutex;
-}
-
-void FftwPlanDeleter::operator()(fftw_plan_s* p) const noexcept {
-    if (p != nullptr) {
-        std::lock_guard<std::mutex> lock(FftwPlannerMutex());
-        fftw_destroy_plan(p);
+/// Allocate a zero-filled FFT volume, reporting exhaustion as a GridError.
+/// MAX_FFT_GRID_POINTS admits grids whose working set runs to gigabytes, so a
+/// failed allocation is an input-driven outcome the caller can act on rather
+/// than a programming error, and it belongs in this library's error type
+/// instead of escaping as std::bad_alloc.
+ComplexVolume MakeVolume(size_t grid_size, const char* what) {
+    try {
+        return ComplexVolume(grid_size);
+    } catch (const std::bad_alloc&) {
+        std::ostringstream msg;
+        msg << "allocation failed for " << what << " (" << grid_size
+            << " complex elements)";
+        throw GridError(msg.str());
     }
 }
 
-/// Create a plan under the planner lock.
-FftwPlanPtr MakePlan3d(int n0, int n1, int n2, fftw_complex* in, fftw_complex* out, int sign,
-                       unsigned int flags) {
-    std::lock_guard<std::mutex> lock(FftwPlannerMutex());
-    return FftwPlanPtr(fftw_plan_dft_3d(n0, n1, n2, in, out, sign, flags));
+/// Return a volume's storage to the allocator. The peak-memory figure
+/// documented on MAX_FFT_GRID_POINTS counts only the volumes live at once, so
+/// releasing each as soon as it is consumed is load-bearing rather than tidy.
+/// clear() would keep the allocation; only the swap gives it back.
+void ReleaseVolume(ComplexVolume& volume) {
+    ComplexVolume().swap(volume);
+}
+
+/// Run an out-of-place 3D complex-to-complex transform over a whole volume.
+///
+/// pocketfft::FORWARD is the exp(-2*pi*i*h*x) direction, density to structure
+/// factors, and BACKWARD its exp(+2*pi*i*h*x) inverse. Neither is normalized:
+/// the scale factor is 1, and each caller divides by the point count itself.
+///
+/// PocketFFT carries no planner state between calls (POCKETFFT_CACHE_SIZE is 0
+/// by default), so there is nothing global here to serialize and concurrent
+/// Calculate calls need no lock.
+void Transform3d(int nx, int ny, int nz, const ComplexVolume& in, ComplexVolume& out,
+                 bool forward) {
+    // pocketfft strides are byte counts, not element counts. ptrdiff_t
+    // arithmetic throughout: MAX_FFT_GRID_POINTS admits an outer stride past
+    // 3e9 bytes, which int cannot hold.
+    constexpr std::ptrdiff_t ELEMENT_BYTES = sizeof(ComplexVolume::value_type);
+    const pocketfft::shape_t shape{static_cast<size_t>(nx), static_cast<size_t>(ny),
+                                   static_cast<size_t>(nz)};
+    const pocketfft::stride_t stride{static_cast<std::ptrdiff_t>(ny) * nz * ELEMENT_BYTES,
+                                     static_cast<std::ptrdiff_t>(nz) * ELEMENT_BYTES,
+                                     ELEMENT_BYTES};
+    const pocketfft::shape_t axes{0, 1, 2};
+    pocketfft::c2c(shape, stride, stride, axes, forward, in.data(), out.data(), 1.0);
 }
 
 }  // namespace
@@ -590,24 +593,16 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
     }
 
     const size_t grid_size = static_cast<size_t>(nx) * ny * nz;
-    FftwComplexPtr Fc_3d_owner(fftw_alloc_complex(grid_size));
-    if (!Fc_3d_owner) {
-        std::ostringstream msg;
-        msg << "FFTW allocation failed for the calculated structure factors ("
-            << grid_size << " fftw_complex elements)";
-        throw GridError(msg.str());
-    }
-    fftw_complex* Fc_3d = Fc_3d_owner.get();
-    std::fill(reinterpret_cast<double*>(Fc_3d),
-              reinterpret_cast<double*>(Fc_3d) + 2 * grid_size, 0.0);
+    // The scatter below accumulates into this volume, so it has to start at
+    // zero; MakeVolume value-initializes.
+    ComplexVolume Fc_3d = MakeVolume(grid_size, "the calculated structure factors");
 
     for (size_t i = 0; i < n_refl; ++i) {
         const int hi = ((miller[i].h % nx) + nx) % nx;
         const int ki = ((miller[i].k % ny) + ny) % ny;
         const int li = ((miller[i].l % nz) + nz) % nz;
         const size_t flat = hi * ny * nz + ki * nz + li;
-        Fc_3d[flat][0] += Fc_real[i];
-        Fc_3d[flat][1] += Fc_imag[i];
+        Fc_3d[flat] += std::complex<double>(Fc_real[i], Fc_imag[i]);
     }
 
     // ----------------------------------------------------------------
@@ -618,35 +613,14 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
             symops.empty() ? std::vector<SymOp>{SymOp()} : symops);
 
         // FFT the solvent mask
-        FftwComplexPtr mask_fft_owner(fftw_alloc_complex(grid_size));
-        if (!mask_fft_owner) {
-            std::ostringstream msg;
-            msg << "FFTW allocation failed for the solvent mask FFT ("
-                << grid_size << " fftw_complex elements)";
-            throw GridError(msg.str());
-        }
-        fftw_complex* mask_fft = mask_fft_owner.get();
-        FftwComplexPtr mask_in_owner(fftw_alloc_complex(grid_size));
-        if (!mask_in_owner) {
-            std::ostringstream msg;
-            msg << "FFTW allocation failed for the solvent mask input ("
-                << grid_size << " fftw_complex elements)";
-            throw GridError(msg.str());
-        }
-        fftw_complex* mask_in = mask_in_owner.get();
+        ComplexVolume mask_fft = MakeVolume(grid_size, "the solvent mask FFT");
+        ComplexVolume mask_in = MakeVolume(grid_size, "the solvent mask input");
         for (size_t i = 0; i < grid_size; ++i) {
-            mask_in[i][0] = sol_mask[i];
-            mask_in[i][1] = 0.0;
+            mask_in[i] = sol_mask[i];
         }
 
-        FftwPlanPtr mask_plan = MakePlan3d(
-            nx, ny, nz, mask_in, mask_fft, FFTW_FORWARD, FFTW_ESTIMATE);
-        if (!mask_plan) {
-            throw GridError("FFTW planning failed for the solvent mask");
-        }
-        fftw_execute(mask_plan.get());
-        mask_plan.reset();
-        mask_in_owner.reset();
+        Transform3d(nx, ny, nz, mask_in, mask_fft, pocketfft::FORWARD);
+        ReleaseVolume(mask_in);
 
         // Compute S^2 for each FFT grid point and apply correction
         for (int i = 0; i < nx; ++i) {
@@ -660,40 +634,24 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
                                       (li / c) * (li / c);
                     const double correction = k_sol * std::exp(-b_sol * s2 / 4.0);
                     const size_t flat = i * ny * nz + j * nz + k;
-                    Fc_3d[flat][0] += correction * mask_fft[flat][0];
-                    Fc_3d[flat][1] += correction * mask_fft[flat][1];
+                    Fc_3d[flat] += correction * mask_fft[flat];
                 }
             }
         }
-
-        mask_fft_owner.reset();
     }
 
     // ----------------------------------------------------------------
     // Step 8: Inverse FFT -> real-space density
     // ----------------------------------------------------------------
-    FftwComplexPtr rho_complex_owner(fftw_alloc_complex(grid_size));
-    if (!rho_complex_owner) {
-        std::ostringstream msg;
-        msg << "FFTW allocation failed for the density map ("
-            << grid_size << " fftw_complex elements)";
-        throw GridError(msg.str());
-    }
-    fftw_complex* rho_complex = rho_complex_owner.get();
-    FftwPlanPtr ifft_plan = MakePlan3d(
-        nx, ny, nz, Fc_3d, rho_complex, FFTW_BACKWARD, FFTW_ESTIMATE);
-    if (!ifft_plan) {
-        throw GridError("FFTW planning failed for the structure-factor inverse FFT");
-    }
-    fftw_execute(ifft_plan.get());
-    ifft_plan.reset();
-    Fc_3d_owner.reset();
+    ComplexVolume rho_complex = MakeVolume(grid_size, "the density map");
+    Transform3d(nx, ny, nz, Fc_3d, rho_complex, pocketfft::BACKWARD);
+    ReleaseVolume(Fc_3d);
 
     const double V = a * b * c;
     std::vector<double> rho_3d(grid_size);
     const double scale_factor = static_cast<double>(nx * ny * nz) / V;
     for (size_t i = 0; i < grid_size; ++i) {
-        rho_3d[i] = rho_complex[i][0] * scale_factor /
+        rho_3d[i] = rho_complex[i].real() * scale_factor /
                      static_cast<double>(grid_size);
     }
 
@@ -702,52 +660,19 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
     // ----------------------------------------------------------------
     if (n_scale_shells > 1) {
         // FFT the calculated density
-        FftwComplexPtr rho_in_owner(fftw_alloc_complex(grid_size));
-        if (!rho_in_owner) {
-            std::ostringstream msg;
-            msg << "FFTW allocation failed for the calculated density input ("
-                << grid_size << " fftw_complex elements)";
-            throw GridError(msg.str());
-        }
-        fftw_complex* rho_in = rho_in_owner.get();
-        FftwComplexPtr F_calc_owner(fftw_alloc_complex(grid_size));
-        if (!F_calc_owner) {
-            std::ostringstream msg;
-            msg << "FFTW allocation failed for the calculated structure factor FFT ("
-                << grid_size << " fftw_complex elements)";
-            throw GridError(msg.str());
-        }
-        fftw_complex* F_calc = F_calc_owner.get();
+        ComplexVolume rho_in = MakeVolume(grid_size, "the calculated density input");
+        ComplexVolume F_calc =
+            MakeVolume(grid_size, "the calculated structure factor FFT");
         for (size_t i = 0; i < grid_size; ++i) {
-            rho_in[i][0] = rho_3d[i];
-            rho_in[i][1] = 0.0;
+            rho_in[i] = rho_3d[i];
         }
-        FftwPlanPtr fwd_plan = MakePlan3d(
-            nx, ny, nz, rho_in, F_calc, FFTW_FORWARD, FFTW_ESTIMATE);
-        if (!fwd_plan) {
-            throw GridError("FFTW planning failed for the calculated-density forward FFT");
-        }
-        fftw_execute(fwd_plan.get());
-        fwd_plan.reset();
-        rho_in_owner.reset();
+        Transform3d(nx, ny, nz, rho_in, F_calc, pocketfft::FORWARD);
+        ReleaseVolume(rho_in);
 
         // Sample observed density onto UC grid and FFT
-        FftwComplexPtr obs_in_owner(fftw_alloc_complex(grid_size));
-        if (!obs_in_owner) {
-            std::ostringstream msg;
-            msg << "FFTW allocation failed for the observed density input ("
-                << grid_size << " fftw_complex elements)";
-            throw GridError(msg.str());
-        }
-        fftw_complex* obs_in = obs_in_owner.get();
-        FftwComplexPtr Fobs_3d_owner(fftw_alloc_complex(grid_size));
-        if (!Fobs_3d_owner) {
-            std::ostringstream msg;
-            msg << "FFTW allocation failed for the observed structure factor FFT ("
-                << grid_size << " fftw_complex elements)";
-            throw GridError(msg.str());
-        }
-        fftw_complex* Fobs_3d = Fobs_3d_owner.get();
+        ComplexVolume obs_in = MakeVolume(grid_size, "the observed density input");
+        ComplexVolume Fobs_3d =
+            MakeVolume(grid_size, "the observed structure factor FFT");
 
         const float* obs_values = obs_grid.GetValues();
         for (int i = 0; i < nx; ++i) {
@@ -759,21 +684,14 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
                     const double z = obs_gp.z_origin +
                                      (static_cast<double>(k) / nz) * c;
                     const size_t flat = i * ny * nz + j * nz + k;
-                    obs_in[flat][0] =
+                    obs_in[flat] =
                         interpolate_density_at(obs_gp, obs_values, x, y, z, 0.0);
-                    obs_in[flat][1] = 0.0;
                 }
             }
         }
 
-        FftwPlanPtr obs_fwd = MakePlan3d(
-            nx, ny, nz, obs_in, Fobs_3d, FFTW_FORWARD, FFTW_ESTIMATE);
-        if (!obs_fwd) {
-            throw GridError("FFTW planning failed for the observed-density forward FFT");
-        }
-        fftw_execute(obs_fwd.get());
-        obs_fwd.reset();
-        obs_in_owner.reset();
+        Transform3d(nx, ny, nz, obs_in, Fobs_3d, pocketfft::FORWARD);
+        ReleaseVolume(obs_in);
 
         // Per-shell scaling
         const double s2_max = 1.0 / (resolution * resolution);
@@ -808,12 +726,15 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
 
                         if (in_shell) {
                             const size_t flat = i * ny * nz + j * nz + k;
+                            // Spelled out rather than std::abs, which is
+                            // hypot: the pinned shell values were measured on
+                            // this arithmetic.
                             const double fc_amp = std::sqrt(
-                                F_calc[flat][0] * F_calc[flat][0] +
-                                F_calc[flat][1] * F_calc[flat][1]);
+                                F_calc[flat].real() * F_calc[flat].real() +
+                                F_calc[flat].imag() * F_calc[flat].imag());
                             const double fobs_amp = std::sqrt(
-                                Fobs_3d[flat][0] * Fobs_3d[flat][0] +
-                                Fobs_3d[flat][1] * Fobs_3d[flat][1]);
+                                Fobs_3d[flat].real() * Fobs_3d[flat].real() +
+                                Fobs_3d[flat].imag() * Fobs_3d[flat].imag());
                             sum_fobs_fc += fobs_amp * fc_amp;
                             sum_fc2 += fc_amp * fc_amp;
                         }
@@ -840,8 +761,7 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
                             }
                             if (in_shell) {
                                 const size_t flat = i * ny * nz + j * nz + k;
-                                F_calc[flat][0] *= k_shell;
-                                F_calc[flat][1] *= k_shell;
+                                F_calc[flat] *= k_shell;
                             }
                         }
                     }
@@ -849,33 +769,19 @@ OESystem::OESkewGrid* DensityCalculator::Calculate(
             }
         }
 
-        Fobs_3d_owner.reset();
+        ReleaseVolume(Fobs_3d);
 
         // Inverse FFT scaled Fc back to real space
-        FftwComplexPtr rho_scaled_owner(fftw_alloc_complex(grid_size));
-        if (!rho_scaled_owner) {
-            std::ostringstream msg;
-            msg << "FFTW allocation failed for the scaled density map ("
-                << grid_size << " fftw_complex elements)";
-            throw GridError(msg.str());
-        }
-        fftw_complex* rho_scaled = rho_scaled_owner.get();
-        FftwPlanPtr scale_ifft = MakePlan3d(
-            nx, ny, nz, F_calc, rho_scaled, FFTW_BACKWARD, FFTW_ESTIMATE);
-        if (!scale_ifft) {
-            throw GridError("FFTW planning failed for the scaled structure-factor inverse FFT");
-        }
-        fftw_execute(scale_ifft.get());
-        scale_ifft.reset();
-        F_calc_owner.reset();
+        ComplexVolume rho_scaled = MakeVolume(grid_size, "the scaled density map");
+        Transform3d(nx, ny, nz, F_calc, rho_scaled, pocketfft::BACKWARD);
+        ReleaseVolume(F_calc);
 
         for (size_t i = 0; i < grid_size; ++i) {
-            rho_3d[i] = rho_scaled[i][0] / static_cast<double>(grid_size);
+            rho_3d[i] = rho_scaled[i].real() / static_cast<double>(grid_size);
         }
-        rho_scaled_owner.reset();
     }
 
-    rho_complex_owner.reset();
+    ReleaseVolume(rho_complex);
 
     // ----------------------------------------------------------------
     // Step 10: Trilinear interpolation onto output grid
