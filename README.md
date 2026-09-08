@@ -19,6 +19,8 @@ This project provides the following for both C++ and Python:
   solvent correction, and per-shell amplitude scaling
 - **Per-residue and per-atom resolution** for all metrics
 - **Grid utilities** including trilinear interpolation, periodic-aware sampling, map scaling, and map combination
+- **CCP4/MRC map I/O** that preserves the MRC2000 `ORIGIN` record and the symmetry block, both of which the
+  OpenEye grid readers drop
 - **OpenMP parallelism** for structure factor accumulation
 
 ## Requirements
@@ -42,15 +44,15 @@ SWIG 4.2 is what the default stable-ABI build needs; 4.0 is enough with
 ## Quick Start
 
 ```python
-from openeye import oechem, oegrid
-from maptitude import UnitCell, fc_density, get_unit_cell, rscc
+from openeye import oechem
+from maptitude import UnitCell, fc_density, get_unit_cell, read_map, rscc
 
-# Load structure and observed density map
+# Load structure and observed density map. read_map places the grid on the
+# origin the file declares; oegrid.OEReadGrid ignores that record.
 mol = oechem.OEGraphMol()
 oechem.OEReadMolecule(oechem.oemolistream("model.pdb"), mol)
 
-obs_grid = oegrid.OESkewGrid()
-oegrid.OEReadGrid("2fofc.map", obs_grid)
+obs_grid, symops = read_map("2fofc.ccp4")
 
 # Calculate the model density to score against. get_unit_cell reports the
 # grid's edges; the angles are yours to supply.
@@ -166,6 +168,51 @@ from openeye import oechem
 mask = oechem.OEHasChainID("A")
 result = rscc(mol, obs_grid, resolution, mask=mask, calc_grid=calc_grid)
 ```
+
+### Map Files
+
+`read_map` and `write_map` handle CCP4 and MRC files directly. They exist because
+`OEReadGrid` returns the payload, the cell and the space group but never consults
+the MRC2000 `ORIGIN` record and does not expose the symmetry block, so a map read
+through it can land in the wrong place and loses its symmetry.
+
+```python
+from maptitude import read_map, write_map, parse_symops, OriginSource
+
+# Returns a MapFile, which unpacks as (grid, symops).
+grid, symops = read_map("2fofc.ccp4")
+
+# The symmetry text is in the newline-delimited form parse_symops accepts.
+ops = parse_symops(symops)
+
+# Write it back, restoring the ORIGIN and symmetry records.
+write_map("out.ccp4", grid, symops)
+```
+
+`write_map` writes and verifies a temporary sibling of the destination and renames
+it only once the file reads back as the grid it came from, so a grid that cannot be
+written faithfully raises with the destination untouched, rather than leaving a
+wrong map on disk or destroying a good one. A relative path is resolved against the
+working directory once, on entry. The default space group is P1.
+
+When a file sets both `ORIGIN` and `NxSTART` to nonzero values they can disagree
+about where the map belongs. `OriginSource` picks the winner:
+
+| Value                          | Places the map using          |
+|--------------------------------|-------------------------------|
+| `OriginSource.ORIGIN_RECORD`   | The MRC2000 `ORIGIN` record (default) |
+| `OriginSource.NXSTART`         | The `NxSTART` node offsets    |
+
+```python
+grid, symops = read_map("map.ccp4", OriginSource.NXSTART)
+```
+
+Two limits are worth knowing before you rely on a round trip. The file's text
+labels are not preserved: `write_map` splices back the symmetry block, `NSYMBT`
+and `ORIGIN`, and the label block is not among them. And a box that
+`wrap_and_pad_grid` actually padded is refused, because its declared cell equals
+its full sampled extent; the refusal is a `GridError` naming the dimensions, and
+the destination is left untouched.
 
 ### Grid Operations
 
@@ -368,3 +415,7 @@ and the grid spacing instead, and raises `GridError`.
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+The wheels bundle one third-party component: PocketFFT, vendored unmodified in
+[`third_party/pocketfft`](third_party/pocketfft) under the BSD-3-Clause license.
+Its license text ships alongside maptitude's own in the wheel metadata.

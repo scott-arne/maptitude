@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
+## [Unreleased]
+
+### Changed
+
+- The README documents the map I/O added in 0.5.0. `write_map` appeared nowhere
+  in it and `read_map` only inside the exception tables, so the release's
+  headline feature had no introduction: there is now a Map Files section
+  covering both, `MapFile` unpacking, the `OriginSource` tiebreak, and the two
+  round-trip limits (text labels are dropped; a padded box is refused). The
+  quick start reads its map with `read_map` rather than `OEReadGrid`, which is
+  the point of having it -- `OEReadGrid` ignores the `ORIGIN` record. Every
+  snippet in the new section was run against `tests/assets/mapq/1d26_2fofc.ccp4`
+  before being written down.
+
+- The README records that the wheels bundle PocketFFT under BSD-3-Clause.
+
+### Fixed
+
+- Two test comments justified themselves with FFTW behavior that no longer
+  exists: the pin tolerance floor in `tests/cpp/grid_summary.h` cited
+  `FFTW_ESTIMATE` codelet selection, and the spacing guard in
+  `tests/cpp/test_input_validation.cpp` cited an `"FFTW planning failed"` message
+  no build can now emit. Both reasons were restated against what is true after
+  the PocketFFT swap; neither assertion changed.
+
 ## [0.6.0]
 
 The FFT dependency comes out. maptitude no longer links FFTW: the transforms

@@ -64,10 +64,12 @@ inline GridSummary Summarize(const OESystem::OESkewGrid& grid) {
 /// ExpectPinned with two-regime tolerance: relative 1e-6 for |pinned| >= 1,
 /// absolute 1e-6 below it.
 ///
-/// The floor exists to avoid manufacturing cross-machine flakiness. For FC pins,
-/// FFTW_ESTIMATE may pick different codelets across builds. For GridOps pins,
-/// the floor ensures that near-zero results do not turn into brittle noise-floor
-/// assertions. Tightening toward float epsilon would make pins fragile.
+/// The floor exists to avoid manufacturing cross-machine flakiness. Fc pins run
+/// through an FFT and a sum over symmetry-expanded atoms, so they carry
+/// accumulated rounding that differs with the compiler and the SIMD width. For
+/// GridOps pins, the floor ensures that near-zero results do not turn into
+/// brittle noise-floor assertions. Tightening toward float epsilon would make
+/// pins fragile.
 inline void ExpectPinned(double actual, double pinned) {
     const double scale = std::max(1.0, std::abs(pinned));
     EXPECT_NEAR(actual, pinned, PIN_RELATIVE_TOLERANCE * scale);

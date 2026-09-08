@@ -705,9 +705,11 @@ TEST(DensityCalculatorValidationTest, RejectsASpacingCoarserThanTheCell) {
     // by zero (SIGFPE on x86-64) and the allocation is zero-sized. Every other guard
     // on this path passes.
     //
-    // Assert on the message, not just the type. Without this guard the zero-sized
-    // geometry still reaches FFTW and dies there with "FFTW planning failed", so a
-    // bare EXPECT_THROW(GridError) passes on arm64 whether the guard exists or not.
+    // Assert on the message, not just the type. A bare EXPECT_THROW(GridError)
+    // cannot tell this guard from a GridError thrown further down the same path:
+    // when the FFT was FFTW, deleting the guard left the test passing on arm64
+    // because the zero-sized geometry reached the planner and failed there
+    // instead. Naming the branch is what makes the guard's absence visible.
     OEChem::OEGraphMol mol = MakeAtomMol(6, 0.0, 0.0, 0.0);
     const OESystem::OESkewGrid obs = MakeGaussianGrid(0.0, 0.0, 0.0, 1.0, 5.0, 5.0);
     DensityCalculator density(UnitCell(2.0, 2.0, 2.0, 90.0, 90.0, 90.0),
