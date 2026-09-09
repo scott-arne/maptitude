@@ -247,6 +247,55 @@ print(f"Spacing: {params.x_spacing} x {params.y_spacing} x {params.z_spacing} A"
 print(f"First node: {params.x_origin}, {params.y_origin}, {params.z_origin}")
 ```
 
+#### Sampling
+
+`interpolate_density` samples the node span, `[origin, origin + (n - 1) * spacing]`
+on each axis, and returns `default_value` outside it. The periodic variants treat
+the grid as one period of a map that tiles space, so a point in an axis's final
+interval blends across the period boundary and no point is outside; there
+`default_value` only covers a non-finite coordinate. They need the cell to be
+commensurate with the spacing and raise `CellError` when it is not:
+
+```python
+from maptitude import interpolate_density_periodic, get_unit_cell
+
+cell = get_unit_cell(grid)
+value = interpolate_density_periodic(grid, x, y, z, cell.a, cell.b, cell.c)
+```
+
+Both have batch forms that take a flat `[x0, y0, z0, x1, y1, z1, ...]` sequence
+and the point count, and return a tuple of densities:
+
+```python
+from maptitude import interpolate_density_batch, interpolate_density_periodic_batch
+
+points = [x0, y0, z0, x1, y1, z1]
+values = interpolate_density_batch(grid, points, 2)
+values = interpolate_density_periodic_batch(grid, points, 2, cell.a, cell.b, cell.c)
+```
+
+`get_atom_grid_points` returns the grid nodes within a radius of a point, which is
+what the scoring metrics sample over:
+
+```python
+from maptitude import get_atom_grid_points
+
+nodes = get_atom_grid_points(grid, x, y, z, radius=1.5)
+```
+
+#### Geometry checks
+
+```python
+from maptitude import grid_contains, same_grid_geometry
+
+# Is a Cartesian point inside the sampled box?
+grid_contains(get_grid_params(grid), x, y, z)
+
+# Do two grids sample the same box the same way? Required before combine_maps.
+same_grid_geometry(grid_a, grid_b)          # default tolerance 1e-6
+same_grid_geometry(grid_a, grid_b, tol=1e-4)
+```
+
 ### Crystallographic Types
 
 ```python
@@ -275,6 +324,17 @@ from maptitude import get_scattering_factors
 # Look up Cromer-Mann coefficients for carbon (Z=6)
 coeffs = get_scattering_factors(6, formal_charge=0)
 f0 = coeffs.Evaluate(0.0)  # Scattering factor at sin(theta)/lambda = 0
+```
+
+`get_scattering_factor_table` returns the whole table as `(entries, count)`, where
+each entry carries `atomic_number`, `formal_charge`, and its `coeffs`:
+
+```python
+from maptitude import get_scattering_factor_table
+
+entries, count = get_scattering_factor_table()
+for entry in entries:
+    print(entry.atomic_number, entry.formal_charge, entry.coeffs.Evaluate(0.0))
 ```
 
 ## Configuration Reference

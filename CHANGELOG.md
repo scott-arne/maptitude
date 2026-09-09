@@ -21,7 +21,25 @@ This project is pre-1.0: breaking changes may land in a minor release.
 
 - The README records that the wheels bundle PocketFFT under BSD-3-Clause.
 
+- The README documents the seven public functions it had never mentioned:
+  `interpolate_density_periodic` and the three batch samplers, `get_atom_grid_points`,
+  `grid_contains`, `same_grid_geometry`, and `get_scattering_factor_table`. Each
+  snippet was run verbatim against `tests/assets/mapq/1d26_2fofc.ccp4`, and the two
+  contracts the sampling section states -- that the plain form defaults outside the
+  node span while the periodic form has no outside, and that an incommensurate cell
+  raises `CellError` -- were confirmed by injecting both faults rather than by
+  reading the headers.
+
 ### Fixed
+
+- The package namespace no longer exposes the standard-library modules it imports.
+  `maptitude.os`, `.sys`, `.re`, `.Path`, `.metadata`, `.hashlib`, `.shutil`,
+  `.warnings`, and `.importlib` were all reachable as attributes: `__all__` governs
+  `from maptitude import *` but not attribute lookup, so anything reachable is
+  something a caller can come to depend on. The imports are now bound privately
+  (`import os as _os`). `del` was not an option -- every one of the nine is
+  referenced at call time, and module globals resolve then, not at import. A test
+  now fails on any non-`__all__` name whose origin is outside the package.
 
 - Two test comments justified themselves with FFTW behavior that no longer
   exists: the pin tolerance floor in `tests/cpp/grid_summary.h` cited

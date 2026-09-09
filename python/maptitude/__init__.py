@@ -27,16 +27,16 @@ Example usage::
     print(f"Overall RSCC: {result.overall}")
 """
 
-import hashlib
-import importlib.machinery
-import importlib.util
-import os
-import re
-import shutil
-import sys
-import warnings
-from importlib import metadata
-from pathlib import Path
+import hashlib as _hashlib
+import importlib.machinery as _importlib_machinery
+import importlib.util as _importlib_util
+import os as _os
+import re as _re
+import shutil as _shutil
+import sys as _sys
+import warnings as _warnings
+from importlib import metadata as _metadata
+from pathlib import Path as _Path
 
 # Version info
 __version__ = "0.6.0"
@@ -44,22 +44,22 @@ __version_info__ = (0, 6, 0)
 
 
 _OPENEYE_COMPAT_PRELOAD_PATHS: list[str] = []
-_OPENEYE_COMPAT_EXTENSION_DIR: Path | None = None
+_OPENEYE_COMPAT_EXTENSION_DIR: _Path | None = None
 
 
 def _user_cache_root():
     """Return the per-user cache root for OpenEye compatibility aliases."""
-    cache_home = os.environ.get("XDG_CACHE_HOME")
+    cache_home = _os.environ.get("XDG_CACHE_HOME")
     if cache_home:
-        return Path(cache_home) / "maptitude"
-    return Path.home() / ".cache" / "maptitude"
+        return _Path(cache_home) / "maptitude"
+    return _Path.home() / ".cache" / "maptitude"
 
 
 def _runtime_openeye_version():
     """Return the installed OpenEye toolkit distribution version if available."""
     try:
-        return metadata.version("openeye-toolkits")
-    except metadata.PackageNotFoundError:
+        return _metadata.version("openeye-toolkits")
+    except _metadata.PackageNotFoundError:
         return "unknown"
 
 
@@ -67,13 +67,13 @@ def _cache_key(oe_lib_dir, expected_libs, build_version, runtime_version):
     """Build a stable cache key for one OpenEye runtime library set."""
     key_data = "\n".join(
         [
-            os.path.realpath(oe_lib_dir),
+            _os.path.realpath(oe_lib_dir),
             build_version or "unknown",
             runtime_version or "unknown",
             *sorted(expected_libs),
         ]
     )
-    return hashlib.sha256(key_data.encode("utf-8")).hexdigest()[:16]
+    return _hashlib.sha256(key_data.encode("utf-8")).hexdigest()[:16]
 
 
 def _runtime_shared_library_names(lib_names):
@@ -95,14 +95,14 @@ def _is_openeye_runtime_library_name(lib_name):
 def _find_openeye_runtime_lib_dir(expected_libs=()):
     """Find the OpenEye runtime library directory without importing oechem."""
     search_locations = []
-    openeye_module = sys.modules.get("openeye")
+    openeye_module = _sys.modules.get("openeye")
     openeye_path = getattr(openeye_module, "__path__", None)
     if openeye_path is not None:
         search_locations.extend(openeye_path)
 
     if not search_locations:
         try:
-            openeye_spec = importlib.util.find_spec("openeye")
+            openeye_spec = _importlib_util.find_spec("openeye")
         except (ImportError, ValueError):
             openeye_spec = None
         if (
@@ -114,14 +114,14 @@ def _find_openeye_runtime_lib_dir(expected_libs=()):
     expected_libs = set(_runtime_shared_library_names(expected_libs or ()))
     fallback_dir = None
     for package_root in search_locations:
-        libs_root = Path(package_root) / "libs"
+        libs_root = _Path(package_root) / "libs"
         if not libs_root.is_dir():
             continue
 
         # Importing openeye.libs eagerly imports oechem in some environments.
         # The runtime libraries are shipped below openeye/libs, so filesystem
         # discovery preserves the fresh-import condition.
-        for root, _, files in os.walk(libs_root):
+        for root, _, files in _os.walk(libs_root):
             file_set = set(files)
             if expected_libs and expected_libs.intersection(file_set):
                 return root
@@ -136,7 +136,7 @@ def _find_openeye_runtime_lib_dir(expected_libs=()):
 
 def _library_family(lib_name):
     """Return the stable library family name for a versioned shared library."""
-    match = re.match(r"(lib\w+?)(-[\d.]+)?(\.[\d.]*\w+)$", lib_name)
+    match = _re.match(r"(lib\w+?)(-[\d.]+)?(\.[\d.]*\w+)$", lib_name)
     if match is None:
         return None
     return match.group(1)
@@ -148,9 +148,9 @@ def _candidate_runtime_libraries(oe_lib_dir, expected_name):
     if family is None:
         return []
     candidates = []
-    for file_name in os.listdir(oe_lib_dir):
-        candidate_path = os.path.join(oe_lib_dir, file_name)
-        if not os.path.isfile(candidate_path):
+    for file_name in _os.listdir(oe_lib_dir):
+        candidate_path = _os.path.join(oe_lib_dir, file_name)
+        if not _os.path.isfile(candidate_path):
             continue
         if file_name.startswith(f"{family}-") or file_name.startswith(f"{family}."):
             candidates.append(candidate_path)
@@ -159,13 +159,13 @@ def _candidate_runtime_libraries(oe_lib_dir, expected_name):
 
 def _compatible_library_path(oe_lib_dir, expected_name):
     """Return a runtime library path and whether it needs an expected-name alias."""
-    exact_path = os.path.join(oe_lib_dir, expected_name)
-    if os.path.isfile(exact_path):
+    exact_path = _os.path.join(oe_lib_dir, expected_name)
+    if _os.path.isfile(exact_path):
         return exact_path, False
 
     candidates = _candidate_runtime_libraries(oe_lib_dir, expected_name)
     if len(candidates) != 1:
-        candidate_names = ", ".join(os.path.basename(path) for path in candidates)
+        candidate_names = ", ".join(_os.path.basename(path) for path in candidates)
         raise ImportError(
             f"Could not find a compatible OpenEye runtime library for "
             f"{expected_name!r} in {oe_lib_dir!r}. "
@@ -180,9 +180,9 @@ def _extension_runtime_library_names(pkg_dir):
     if extension_path is None:
         return []
 
-    if sys.platform == "darwin":
+    if _sys.platform == "darwin":
         return _mach_o_runtime_library_names(extension_path)
-    if sys.platform.startswith("linux"):
+    if _sys.platform.startswith("linux"):
         return _elf_runtime_library_names(extension_path)
     return []
 
@@ -204,7 +204,7 @@ def _mach_o_runtime_library_names(extension_path):
     dependencies = []
     for line in result.stdout.splitlines()[1:]:
         dependency = line.strip().split(" ", 1)[0]
-        lib_name = os.path.basename(dependency)
+        lib_name = _os.path.basename(dependency)
         if _is_openeye_runtime_library_name(lib_name):
             dependencies.append(lib_name)
     return dependencies
@@ -225,7 +225,7 @@ def _elf_runtime_library_names(extension_path):
         return []
 
     dependencies = []
-    for match in re.finditer(r"Shared library: \[(?P<name>[^\]]+)\]", result.stdout):
+    for match in _re.finditer(r"Shared library: \[(?P<name>[^\]]+)\]", result.stdout):
         lib_name = match.group("name")
         if _is_openeye_runtime_library_name(lib_name):
             dependencies.append(lib_name)
@@ -236,7 +236,7 @@ def _ensure_cache_alias(cache_dir, expected_name, target_path):
     """Create or refresh an expected-name symlink in the user cache."""
     alias_path = cache_dir / expected_name
     if alias_path.is_symlink():
-        if alias_path.resolve() == Path(target_path).resolve():
+        if alias_path.resolve() == _Path(target_path).resolve():
             return alias_path
         alias_path.unlink()
     elif alias_path.exists():
@@ -274,7 +274,7 @@ def _check_openeye_version():
         from importlib import metadata
         runtime_version = metadata.version("openeye-toolkits")
     except metadata.PackageNotFoundError:
-        warnings.warn(
+        _warnings.warn(
             "openeye-toolkits package not found. "
             "This wheel requires openeye-toolkits to be installed. "
             "Install with: pip install openeye-toolkits",
@@ -285,7 +285,7 @@ def _check_openeye_version():
     build_parts = build_version.split('.')[:2]
     runtime_parts = runtime_version.split('.')[:2]
     if build_parts != runtime_parts:
-        warnings.warn(
+        _warnings.warn(
             f"OpenEye version mismatch: maptitude was built with OpenEye Toolkits "
             f"{build_version} but runtime has OpenEye Toolkits {runtime_version}. "
             f"This may cause compatibility issues.",
@@ -323,7 +323,7 @@ def _ensure_library_compat():
     expected_libs = set(_runtime_shared_library_names(
         getattr(_build_info, 'OPENEYE_EXPECTED_LIBS', [])
     ))
-    expected_libs.update(_extension_runtime_library_names(os.path.dirname(__file__)))
+    expected_libs.update(_extension_runtime_library_names(_os.path.dirname(__file__)))
     expected_libs = sorted(expected_libs)
     if not expected_libs:
         return False
@@ -332,7 +332,7 @@ def _ensure_library_compat():
     if oe_lib_dir is None:
         return False
 
-    if not os.path.isdir(oe_lib_dir):
+    if not _os.path.isdir(oe_lib_dir):
         return False
 
     build_version = getattr(_build_info, 'OPENEYE_BUILD_VERSION', None)
@@ -370,16 +370,16 @@ def _ensure_library_compat():
 
 def _extension_suffixes():
     """Return extension-module suffixes for the active Python interpreter."""
-    return tuple(importlib.machinery.EXTENSION_SUFFIXES)
+    return tuple(_importlib_machinery.EXTENSION_SUFFIXES)
 
 
 def _find_extension_module_path(pkg_dir):
     """Find the installed _maptitude extension file."""
     for suffix in _extension_suffixes():
-        candidate = Path(pkg_dir) / f"_maptitude{suffix}"
+        candidate = _Path(pkg_dir) / f"_maptitude{suffix}"
         if candidate.is_file():
             return candidate
-    for candidate in Path(pkg_dir).glob("_maptitude*"):
+    for candidate in _Path(pkg_dir).glob("_maptitude*"):
         if candidate.is_file() and str(candidate).endswith(_extension_suffixes()):
             return candidate
     return None
@@ -393,12 +393,12 @@ def _copy_if_stale(source_path, target_path):
         and target_path.stat().st_mtime_ns == source_path.stat().st_mtime_ns
     ):
         return
-    shutil.copy2(source_path, target_path)
+    _shutil.copy2(source_path, target_path)
 
 
 def _copy_package_shared_sidecars(pkg_dir, cache_dir, extension_path):
     """Copy package-local shared library sidecars needed by cached extension."""
-    for candidate in Path(pkg_dir).iterdir():
+    for candidate in _Path(pkg_dir).iterdir():
         name = candidate.name
         if not candidate.is_file() or candidate == extension_path:
             continue
@@ -419,10 +419,10 @@ def _load_cached_extension_if_needed():
         return
 
     module_name = f"{__name__}._maptitude"
-    if module_name in sys.modules:
+    if module_name in _sys.modules:
         return
 
-    pkg_dir = os.path.dirname(__file__)
+    pkg_dir = _os.path.dirname(__file__)
     extension_path = _find_extension_module_path(pkg_dir)
     if extension_path is None:
         return
@@ -437,16 +437,16 @@ def _load_cached_extension_if_needed():
             f"Could not prepare cached maptitude extension in {cache_dir}: {exc}"
         ) from exc
 
-    spec = importlib.util.spec_from_file_location(module_name, cached_extension_path)
+    spec = _importlib_util.spec_from_file_location(module_name, cached_extension_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Could not create import spec for {cached_extension_path}")
 
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
+    module = _importlib_util.module_from_spec(spec)
+    _sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)
     except Exception:
-        sys.modules.pop(module_name, None)
+        _sys.modules.pop(module_name, None)
         raise
 
 
@@ -488,19 +488,19 @@ def _preload_shared_libs():
     if oe_lib_dir is None:
         return
 
-    if not os.path.isdir(oe_lib_dir):
+    if not _os.path.isdir(oe_lib_dir):
         return
 
     paths = _OPENEYE_COMPAT_PRELOAD_PATHS
     if not paths:
         paths = [
-            os.path.join(oe_lib_dir, lib_name)
+            _os.path.join(oe_lib_dir, lib_name)
             for lib_name in expected_libs
-            if os.path.exists(os.path.join(oe_lib_dir, lib_name))
+            if _os.path.exists(_os.path.join(oe_lib_dir, lib_name))
         ]
 
     for path in paths:
-        if os.path.exists(path) or os.path.islink(path):
+        if _os.path.exists(path) or _os.path.islink(path):
             try:
                 ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
             except OSError:
@@ -525,15 +525,15 @@ def _preload_bundled_libs():
 
     import ctypes
     pkg_name = __name__
-    pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    site_dir = os.path.dirname(pkg_dir)
+    pkg_dir = _os.path.dirname(_os.path.abspath(__file__))
+    site_dir = _os.path.dirname(pkg_dir)
     for libs_name in (f'{pkg_name}.libs', f'.{pkg_name}.libs'):
-        libs_dir = os.path.join(site_dir, libs_name)
-        if not os.path.isdir(libs_dir):
+        libs_dir = _os.path.join(site_dir, libs_name)
+        if not _os.path.isdir(libs_dir):
             continue
         remaining = [
-            os.path.join(libs_dir, f)
-            for f in sorted(os.listdir(libs_dir))
+            _os.path.join(libs_dir, f)
+            for f in sorted(_os.listdir(libs_dir))
             if '.so' in f
         ]
         # Multi-pass: keep retrying until no progress (handles dep ordering)

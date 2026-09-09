@@ -158,3 +158,34 @@ def test_import_uses_user_cache_for_broken_openeye_runtime_compat_symlink(
     assert len(cached_aliases) == 1
     assert cached_aliases[0].is_symlink()
     assert cached_aliases[0].resolve().name == runtime_name
+
+
+def test_package_namespace_does_not_leak_stdlib_imports():
+    """The package namespace exposes its API, not the machinery behind it.
+
+    ``__all__`` governs ``from maptitude import *``, but ``maptitude.os`` and
+    ``maptitude.Path`` stay reachable as plain attributes unless the imports are
+    bound privately. Anything reachable is something a caller can come to depend
+    on. Names outside ``__all__`` are allowed only when they come from the SWIG
+    extension, which generates more than the curated API exports.
+    """
+    import maptitude
+
+    module_type = type(maptitude)
+    leaked = []
+    for name in dir(maptitude):
+        if name.startswith("_") or name in maptitude.__all__:
+            continue
+        value = getattr(maptitude, name)
+        if isinstance(value, module_type):
+            origin = value.__name__
+        else:
+            # SWIG's flat enum aliases are bare ints carrying no __module__.
+            # They come from the extension, so an absent origin is not a leak.
+            origin = getattr(value, "__module__", None)
+            if not origin:
+                continue
+        if not origin.startswith("maptitude"):
+            leaked.append(f"{name} (from {origin})")
+
+    assert leaked == [], "stdlib names reachable on the package: " + ", ".join(sorted(leaked))
