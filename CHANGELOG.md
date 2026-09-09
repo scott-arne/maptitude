@@ -5,7 +5,12 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
-## [Unreleased]
+## [0.6.1]
+
+A documentation and namespace release; no library behavior changes. The README
+now covers the map I/O that shipped in 0.5.0 and the seven public functions it
+had never mentioned, and the package stops exposing the standard-library
+modules it imports.
 
 ### Changed
 
