@@ -45,7 +45,7 @@ SWIG 4.4.1 is what the default stable-ABI build needs; 4.0 is enough with
 Python 3.13 or newer.
 
 On Linux, editable builds also need `patchelf`, so they can add the OpenEye
-(and, where used, pyarrow) library directories to the extension's RPATH;
+library directories to the extension's RPATH;
 without it the editable import fails with `cannot open shared object file`.
 
 ## Quick Start
