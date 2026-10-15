@@ -329,3 +329,8 @@ docs/plans
 docs/superpowers/
 docs/hyperpowers/
 issues/
+
+# SWIG-generated proxy module. Every build rewrites it, and it must come from
+# the same SWIG version as the compiled extension, so tracking it only
+# produces churn.
+python/maptitude/maptitude.py
