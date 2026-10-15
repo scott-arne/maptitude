@@ -10,7 +10,9 @@
             "name": "default",
             "hidden": true,
             "description": "Common settings. Set OPENEYE_ROOT in the environment, or override it in a local CMakeUserPresets.json.",
-            "cacheVariables": {}
+            "cacheVariables": {
+                "OPENEYE_USE_SHARED": "ON"
+            }
         },
         {
             "name": "debug",
