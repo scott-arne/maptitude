@@ -36,10 +36,17 @@ Install from a wheel:
 pip install maptitude
 ```
 
-Building from source requires CMake 3.21+, SWIG 4.2+, and the OpenEye C++ Toolkits.
+Building from source requires CMake 3.21+, SWIG 4.4.1 or newer, and the OpenEye C++ Toolkits.
 The FFT is PocketFFT, vendored in `third_party/pocketfft`; nothing else needs installing.
-SWIG 4.2 is what the default stable-ABI build needs; 4.0 is enough with
-`-DMAPTITUDE_USE_STABLE_ABI=OFF`.
+SWIG 4.4.1 is what the default stable-ABI build needs; 4.0 is enough with
+`-DMAPTITUDE_USE_STABLE_ABI=OFF`. CI builds with SWIG 4.5.1
+(`pip install swig==4.5.1`). SWIG 4.4.0, which Ubuntu 26.04 ships as
+`/usr/bin/swig`, generates stable-ABI wrappers that do not compile against
+Python 3.13 or newer.
+
+On Linux, editable builds also need `patchelf`, so they can add the OpenEye
+(and, where used, pyarrow) library directories to the extension's RPATH;
+without it the editable import fails with `cannot open shared object file`.
 
 ## Quick Start
 
