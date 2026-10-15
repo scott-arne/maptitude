@@ -11,6 +11,10 @@ env:
   # is the first release with cp314 wheels, so the abi3 smoke test below cannot
   # run on Python 3.14 against anything older.
   OPENEYE_VERSION: "2026.1.0"
+  # One SWIG for every platform and every run. The generated maptitude.py must
+  # come from the same SWIG as the compiled extension, and an unpinned
+  # install changes the build whenever SWIG publishes a release.
+  SWIG_VERSION: "4.5.1"
 
   # pypi.anaconda.org hosts the OpenEye channel and periodically stalls for
   # GitHub-hosted runners. pip's 15 s default read timeout turns that into a
@@ -77,7 +81,7 @@ jobs:
           ${{ matrix.python }} -m venv /opt/venv
           echo "/opt/venv/bin" >> $GITHUB_PATH
           /opt/venv/bin/pip install --upgrade pip setuptools wheel
-          /opt/venv/bin/pip install scikit-build-core ninja cmake build swig auditwheel patchelf
+          /opt/venv/bin/pip install scikit-build-core ninja cmake build "swig==${{ env.SWIG_VERSION }}" auditwheel patchelf
 
       - name: Download OpenEye SDK from GCS
         run: |
@@ -261,9 +265,8 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew install swig
           pip install --upgrade pip setuptools wheel
-          pip install scikit-build-core ninja cmake build delocate
+          pip install scikit-build-core ninja cmake build delocate "swig==${{ env.SWIG_VERSION }}"
 
       - name: Download OpenEye SDK from GCS
         run: |
@@ -418,7 +421,7 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install scikit-build-core ninja cmake build swig pytest
+          python -m pip install scikit-build-core ninja cmake build "swig==${{ env.SWIG_VERSION }}" pytest
 
       - name: Authenticate to Google Cloud
         id: gcp-auth
