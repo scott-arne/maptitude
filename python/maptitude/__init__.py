@@ -39,8 +39,8 @@ from importlib import metadata as _metadata
 from pathlib import Path as _Path
 
 # Version info
-__version__ = "0.6.1"
-__version_info__ = (0, 6, 1)
+__version__ = "0.6.2"
+__version_info__ = (0, 6, 2)
 
 
 _OPENEYE_COMPAT_PRELOAD_PATHS: list[str] = []

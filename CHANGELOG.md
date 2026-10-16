@@ -5,6 +5,41 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
+## [0.6.2]
+
+A build release; no library behavior changes. Building from source now needs
+SWIG 4.4.1 or newer and says so at configure time, every wheel is built with
+the same pinned SWIG, and editable builds link OpenEye the way wheels do.
+
+### Changed
+
+- The default stable-ABI build requires SWIG 4.4.1. SWIG 4.4.0, which Ubuntu
+  26.04 ships, generates stable-ABI wrappers that call Python 3.13-only
+  functions and do not compile against 3.13+ headers (swig/swig#3283). The SWIG
+  lookup used to be optional, so a missing or too-old SWIG silently produced a
+  build with no extension, and a wheel with none. Configure now stops with the
+  reason when `MAPTITUDE_BUILD_PYTHON` is ON and no suitable SWIG is found. A
+  C++-only build without SWIG must now pass `-DMAPTITUDE_BUILD_PYTHON=OFF`.
+  `build-system.requires` asks for `swig>=4.4.1`; `-DMAPTITUDE_USE_STABLE_ABI=OFF`
+  still accepts SWIG 4.0.
+
+- The CMake presets set `OPENEYE_USE_SHARED=ON`, as `scripts/build_python.py`
+  already did for the Linux and macOS wheels, so editable builds link the
+  openeye-toolkits shared libraries instead of carrying a second static copy of
+  OEChem. Configuring from a preset therefore needs openeye-toolkits installed
+  in the Python CMake selects, and a C++-only preset build needs
+  `-DOPENEYE_USE_SHARED=OFF`. On Linux, editable builds also need `patchelf`.
+
+- Wheels are built with SWIG 4.5.1 on every platform, pinned in the workflow
+  beside the OpenEye version. macOS installs it with pip instead of Homebrew,
+  so a new SWIG release can no longer change a build without a commit.
+
+- `python/maptitude/maptitude.py` is no longer tracked. It is SWIG output that
+  every build rewrites and that must match the SWIG that compiled the
+  extension, so a build with any SWIG other than 4.5.1 left a modified tracked
+  file. Wheels are unaffected: they install the module generated in the build
+  directory.
+
 ## [0.6.1]
 
 A documentation and namespace release; no library behavior changes. The README
