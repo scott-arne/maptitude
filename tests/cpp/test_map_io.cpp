@@ -1539,9 +1539,20 @@ TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo)
     // symbolic link, whatever the link resolves to, so a link planted at the
     // candidate is skipped and its target left alone -- where the truncating
     // create a plain fopen("w") does would follow the link. Both shapes: a
-    // link onto an existing file, and a dangling one.
+    // link onto an existing file, and a dangling one. On Windows the
+    // reservation gets the same refusal from CREATE_NEW with
+    // FILE_FLAG_OPEN_REPARSE_POINT.
     ScratchPath out(".ccp4");
     const std::filesystem::path dest(out.Str());
+    // The dangling target is removed up front and named per process: a file
+    // left there by a create that followed the link on an earlier run would
+    // make the link resolve, and the case would pass whichever create is used.
+    const std::filesystem::path absent =
+        dest.parent_path() /
+        ("maptitude_absent_link_target_" + std::to_string(TestProcessId()));
+    std::filesystem::remove(absent);
+    ASSERT_FALSE(std::filesystem::exists(absent))
+        << "cannot clear the dangling link's target: " << absent.string();
     const std::filesystem::path target =
         dest.parent_path() / ("maptitude_link_target_" + std::to_string(TestProcessId()));
     {
@@ -1555,7 +1566,7 @@ TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo)
     };
     const Case cases[] = {
         {0xdead, "dead", target},
-        {0xd00d, "d00d", dest.parent_path() / "maptitude_absent_link_target"},
+        {0xd00d, "d00d", absent},
     };
     for (const Case& c : cases) {
         SCOPED_TRACE(c.hex);
@@ -1591,6 +1602,9 @@ TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo)
     }
     EXPECT_EQ(ReadBytesAt(target.string(), 0, 6), "target")
         << "the create followed the link onto its target";
+    EXPECT_FALSE(std::filesystem::exists(absent))
+        << "the create followed the dangling link and made its target";
+    std::filesystem::remove(absent);
     std::filesystem::remove(target);
 }
 

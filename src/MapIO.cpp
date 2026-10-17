@@ -442,15 +442,17 @@ long ProcessId() {
 /// counter can see something, which counts only decoys and so keeps reporting
 /// success.
 ///
-/// The name is taken, not merely chosen. The C11 "x" mode claims a name in the
-/// same step that tests it, and the pid gives each process its own space of
-/// names to draw from. An exists() call ahead of the create cannot do that --
-/// it is a filter, and a second writer can slip between the test and the use.
-/// A name already held comes back as EEXIST, measured here and what POSIX
-/// specifies for that mode, and the loop draws another; the GridError at the
-/// bottom is what a run of MAX_ATTEMPTS collisions raises. Any other errno is
-/// not a collision, so it is reported as itself instead of being retried into
-/// that message.
+/// The name is taken, not merely chosen. Under POSIX the C11 "x" mode claims a
+/// name in the same step that tests it, and CreateFileW with CREATE_NEW does
+/// the same on Windows; the pid gives each process its own space of names to
+/// draw from. An exists() call ahead of the create cannot do that -- it is a
+/// filter, and a second writer can slip between the test and the use. A name
+/// already held comes back as EEXIST under POSIX, measured here and what POSIX
+/// specifies for that mode, and the loop draws another; on Windows the same
+/// collision is ERROR_FILE_EXISTS or ERROR_ALREADY_EXISTS from CreateFileW.
+/// The GridError at the bottom is what a run of MAX_ATTEMPTS collisions raises.
+/// Any other errno, or any other Windows error, is not a collision, so it is
+/// reported as itself instead of being retried into that message.
 ///
 /// A symlink sitting at the candidate name does not redirect the create. POSIX
 /// specifies that O_CREAT|O_EXCL fails on an existing path even where that path
@@ -464,9 +466,12 @@ long ProcessId() {
 /// created the file the link pointed to and returned the link's own name as
 /// reserved, so the write would have gone through the link. CreateFileW with
 /// CREATE_NEW and FILE_FLAG_OPEN_REPARSE_POINT opens a link rather than what it
-/// points to, so an existing name of any kind, a dangling link included, fails
-/// with ERROR_FILE_EXISTS and the loop draws again, as EEXIST makes it do
-/// under POSIX.
+/// points to. The reservation tests measured three shapes on windows-latest: a
+/// regular file at the candidate name, a link onto an existing file and a
+/// dangling link are each skipped and the next name is drawn, as EEXIST makes
+/// it happen under POSIX. A directory at the name, or a link to one, was not
+/// measured. The code treats ERROR_FILE_EXISTS and ERROR_ALREADY_EXISTS alike
+/// as the collision; any other error is reported, not retried.
 ///
 /// A temporary left behind by a crashed or killed run is covered by the same
 /// EEXIST -- skipped rather than truncated -- which is what the old existence
@@ -477,9 +482,14 @@ long ProcessId() {
 /// Under POSIX, std::fopen creates at 0666 before the umask, so the process
 /// umask narrows the temporary as it narrows an ordinary create. ISO C fixes no
 /// permissions for fopen, and Windows has no 0666 to create at: the permission
-/// bits it documents for a created file are _S_IREAD and _S_IWRITE. That is why
-/// this reaches for the "x" mode rather than mkstemps, the obvious way to get
-/// an atomic create: mkstemps moves the permissions rather than fixing them.
+/// bits it documents for a created file are _S_IREAD and _S_IWRITE. The create
+/// there is CreateFileW with FILE_ATTRIBUTE_NORMAL and no security attributes,
+/// and what is measured for it is that the published map is as writable as an
+/// ordinary create in the same directory, by the test
+/// LeavesTheDestinationAtTheModeAnOrdinaryCreateGives on windows-latest; no
+/// more than that is claimed. That is why this reaches for an exclusive create
+/// rather than mkstemps, the obvious way to get an atomic create: mkstemps
+/// moves the permissions rather than fixing them.
 /// Neither scheme preserves the destination's mode, because the rename replaces
 /// its inode either way. Measured on this machine under umask 0022: this create
 /// and an ordinary one both land at 0644, mkstemps at 0600, and the rename
@@ -508,18 +518,18 @@ long ProcessId() {
 /// contention there is over the destination.
 ///
 /// The second is substitution at the temporary's own name. The create claims
-/// the name; the fclose gives up the file. Every step after it -- OEWriteGrid,
-/// the header patch, each verification re-read, the rename -- addresses the
-/// temporary by path, because OEWriteGrid takes a path and not a descriptor, so
-/// nothing holds the file across them. A process able to write the
-/// destination's directory can therefore unlink the entry this function
-/// verified, put its own file at that name, and have the rename publish those
-/// bytes while write_map returns success. Refusing a second exclusive create is
-/// what the reservation buys; it does not keep the name bound to the file it
-/// created. Such a process can already create, replace and remove the
-/// destination itself, so what the window adds is the success return on bytes
-/// the verification never saw -- which is a statement about what write_map
-/// promises its caller, and is made there.
+/// the name; the fclose, or CloseHandle on Windows, gives up the file. Every
+/// step after it -- OEWriteGrid, the header patch, each verification re-read,
+/// the rename -- addresses the temporary by path, because OEWriteGrid takes a
+/// path and not a descriptor, so nothing holds the file across them. A process
+/// able to write the destination's directory can therefore unlink the entry
+/// this function verified, put its own file at that name, and have the rename
+/// publish those bytes while write_map returns success. Refusing a second
+/// exclusive create is what the reservation buys; it does not keep the name
+/// bound to the file it created. Such a process can already create, replace and
+/// remove the destination itself, so what the window adds is the success return
+/// on bytes the verification never saw -- which is a statement about what
+/// write_map promises its caller, and is made there.
 TemporaryFile MakeTemporarySibling(const std::filesystem::path& dest) {
     // The loop itself is detail::reserve_temporary_sibling, defined after this
     // anonymous namespace so that a test can hand it its own draws. This is
@@ -772,9 +782,13 @@ std::filesystem::path detail::reserve_temporary_sibling(
         std::filesystem::path candidate = dest.parent_path() / name.str();
 #ifdef _WIN32
         // FILE_FLAG_OPEN_REPARSE_POINT makes CREATE_NEW test the name itself,
-        // so a symlink there, dangling or not, is a collision; see the doc
-        // comment on MakeTemporarySibling. The last error is read once, before
-        // anything else runs, for the reason the POSIX branch reads errno once.
+        // so a symlink there is a collision. That is measured for a link onto
+        // an existing file and for a dangling one, the shape std::fopen's "x"
+        // mode followed. Only ERROR_FILE_EXISTS and ERROR_ALREADY_EXISTS are
+        // collisions; any other error is reported rather than retried. See the
+        // doc comment on MakeTemporarySibling. The last error is read once,
+        // before anything else runs, for the reason the POSIX branch reads
+        // errno once.
         const HANDLE reserved = ::CreateFileW(
             candidate.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);

@@ -25,12 +25,22 @@ This project is pre-1.0: breaking changes may land in a minor release.
   configure failed without a package the Windows build never uses.
 
 - nanoflann's own examples and unit tests are no longer built, and its two
-  tests no longer run in this project's ctest.
+  tests no longer run in this project's ctest. A build tree configured before
+  this change keeps nanoflann's old `_deps/nanoflann-build/CTestTestfile.cmake`,
+  because CMake stops writing that file but does not delete it, so ctest there
+  still lists `unit_tests_build` and `unit_tests_run`, and `unit_tests_build`
+  fails because the `unit_tests` target no longer exists. Delete that file
+  once, or recreate the tree.
 
 - `CMakePresets.json` declared schema version 6, which needs CMake 3.25, so
   every preset command failed on the CMake 3.21–3.24 that the README and the
-  file's own `cmakeMinimumRequired` admit. It now declares version 3, CMake
-  3.21's, which carries everything the presets use.
+  file's own `cmakeMinimumRequired` admitted. It now declares version 3, CMake
+  3.21's, which carries everything the presets use, so the file parses on CMake
+  3.21. The default build still needs CMake 3.26: its stable-ABI extension
+  links the `Python3::SABIModule` target, and cmake-openeye stops the configure
+  on anything older, as it did on 3.21.3. The README now says 3.26, and that a
+  `-DMAPTITUDE_USE_STABLE_ABI=OFF` configure and a C++-only configure both
+  succeeded on 3.21.3.
 
 - `tests/cpp/test_map_io.cpp` compiles on Windows. It included `<unistd.h>`,
   which MSVC lacks, for `getpid`; the pid now comes from a helper spelled as
@@ -46,10 +56,13 @@ This project is pre-1.0: breaking changes may land in a minor release.
   symlink onto an existing file but followed one onto a missing file, creating
   that file and handing its link's name back as the temporary, where POSIX
   refuses the name in both cases. Windows now reserves the temporary with
-  `CreateFileW` and `FILE_FLAG_OPEN_REPARSE_POINT`, which refuses any existing
-  name. The new Windows CI job found it. Reaching it took write access to the
-  destination's directory, the privilege to create symlinks, and a guess at
-  the temporary's random name.
+  `CreateFileW` and `FILE_FLAG_OPEN_REPARSE_POINT`, which tests the name itself
+  instead of what a link there points to. On windows-latest a regular file at
+  the name, a link onto an existing file, and a dangling link are each skipped
+  for the next name; a directory at the name was not measured. The new Windows
+  CI job found the bug. Reaching it took write access to the destination's
+  directory, the privilege to create symlinks, and a guess at the temporary's
+  random name.
 
 ### Added
 
