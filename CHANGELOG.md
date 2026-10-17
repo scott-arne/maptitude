@@ -32,6 +32,15 @@ This project is pre-1.0: breaking changes may land in a minor release.
   file's own `cmakeMinimumRequired` admit. It now declares version 3, CMake
   3.21's, which carries everything the presets use.
 
+- `tests/cpp/test_map_io.cpp` compiles on Windows. It included `<unistd.h>`,
+  which MSVC lacks, for `getpid`; the pid now comes from a helper spelled as
+  the library's own, under `_getpid()` on Windows, because the leak counter has
+  to rebuild the temporary's name exactly. The mode case compares
+  `std::filesystem` permissions instead of `st_mode`, which on Windows checks
+  that the published map is as writable as an ordinary create, and the symlink
+  case skips, with the reason, where Windows withholds the privilege to make a
+  symlink.
+
 ### Added
 
 - `debug` and `release` test presets: `ctest --preset release`.
