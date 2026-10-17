@@ -45,6 +45,10 @@ This project is pre-1.0: breaking changes may land in a minor release.
 
 - `debug` and `release` test presets: `ctest --preset release`.
 
+- The C++ tests workflow builds and tests both presets on Windows. The wheel
+  job builds through `scripts/build_python.py` and runs no C++ tests, so until
+  now nothing built from the presets or compiled the C++ suite on Windows.
+
 ## [0.6.2]
 
 A build release; no library behavior changes. Building from source now needs
