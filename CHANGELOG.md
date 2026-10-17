@@ -41,6 +41,16 @@ This project is pre-1.0: breaking changes may land in a minor release.
   case skips, with the reason, where Windows withholds the privilege to make a
   symlink.
 
+- On Windows, `write_map` no longer follows a dangling symlink at its
+  temporary's name. The exclusive create, `std::fopen`'s `"x"` mode, refused a
+  symlink onto an existing file but followed one onto a missing file, creating
+  that file and handing its link's name back as the temporary, where POSIX
+  refuses the name in both cases. Windows now reserves the temporary with
+  `CreateFileW` and `FILE_FLAG_OPEN_REPARSE_POINT`, which refuses any existing
+  name. The new Windows CI job found it. Reaching it took write access to the
+  destination's directory, the privilege to create symlinks, and a guess at
+  the temporary's random name.
+
 ### Added
 
 - `debug` and `release` test presets: `ctest --preset release`.

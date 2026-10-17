@@ -27,14 +27,24 @@
 #include <utility>
 #include <vector>
 
-// The exclusive create in MakeTemporarySibling takes no platform guard:
-// std::fopen's C11 "x" mode is standard C. getpid does take one -- MSVC has no
-// <unistd.h> and declares _getpid() in <process.h> -- and ProcessId below is
-// where it is settled. Both spellings are reached, because CMakeLists.txt
-// builds this file into libmaptitude unconditionally and the release workflow
-// builds a Windows wheel with MSVC.
+// The exclusive create in reserve_temporary_sibling is std::fopen's C11 "x"
+// mode under POSIX and CreateFileW under Windows, where the "x" mode followed
+// a dangling symlink at the candidate name (see MakeTemporarySibling). getpid
+// also takes a guard -- MSVC has no <unistd.h> and declares _getpid() in
+// <process.h> -- and ProcessId below is where it is settled. Both spellings are
+// reached, because CMakeLists.txt builds this file into libmaptitude
+// unconditionally and the release workflow builds a Windows wheel with MSVC.
 #ifdef _WIN32
+// NOMINMAX keeps <windows.h> from defining min and max macros over the
+// std::max calls in this file.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <process.h>
+#include <windows.h>
 #else
 #include <unistd.h>
 #endif
@@ -449,6 +459,15 @@ long ProcessId() {
 /// dangling link and a link resolving onto an existing file are each refused
 /// with errno 17, and the file the second pointed at is not truncated.
 ///
+/// Windows needs its own create for that. On windows-latest, std::fopen's "x"
+/// mode refused a link onto an existing file but followed a dangling one: it
+/// created the file the link pointed to and returned the link's own name as
+/// reserved, so the write would have gone through the link. CreateFileW with
+/// CREATE_NEW and FILE_FLAG_OPEN_REPARSE_POINT opens a link rather than what it
+/// points to, so an existing name of any kind, a dangling link included, fails
+/// with ERROR_FILE_EXISTS and the loop draws again, as EEXIST makes it do
+/// under POSIX.
+///
 /// A temporary left behind by a crashed or killed run is covered by the same
 /// EEXIST -- skipped rather than truncated -- which is what the old existence
 /// check was there for. Pids are reused, so the name space a leftover sits in
@@ -751,6 +770,28 @@ std::filesystem::path detail::reserve_temporary_sibling(
         name << ".maptitude-" << ProcessId() << '-' << std::hex << entropy()
              << dest.extension().string();
         std::filesystem::path candidate = dest.parent_path() / name.str();
+#ifdef _WIN32
+        // FILE_FLAG_OPEN_REPARSE_POINT makes CREATE_NEW test the name itself,
+        // so a symlink there, dangling or not, is a collision; see the doc
+        // comment on MakeTemporarySibling. The last error is read once, before
+        // anything else runs, for the reason the POSIX branch reads errno once.
+        const HANDLE reserved = ::CreateFileW(
+            candidate.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        const DWORD failure = ::GetLastError();
+        if (reserved != INVALID_HANDLE_VALUE) {
+            ::CloseHandle(reserved);
+            return candidate;
+        }
+        if (failure != ERROR_FILE_EXISTS && failure != ERROR_ALREADY_EXISTS) {
+            throw GridError(
+                "Cannot write '" + dest.string() +
+                "': cannot create a temporary beside it: " +
+                std::error_code(static_cast<int>(failure),
+                                std::system_category())
+                    .message());
+        }
+#else
         // Narrowed into a named local rather than a temporary, so that no
         // destructor -- and so no deallocation, of exactly the class the next
         // comment is about -- runs between the create and the errno read.
@@ -771,6 +812,7 @@ std::filesystem::path detail::reserve_temporary_sibling(
                 "': cannot create a temporary beside it: " +
                 std::error_code(failure, std::generic_category()).message());
         }
+#endif
     }
     throw GridError("Cannot write '" + dest.string() +
                     "': no free temporary name beside it after " +
