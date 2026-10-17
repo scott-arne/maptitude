@@ -5,6 +5,60 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
+## [Unreleased]
+
+### Fixed
+
+- Windows builds from the CMake presets link. The presets name no generator,
+  so Windows gets Visual Studio, which ignores `CMAKE_BUILD_TYPE` and built the
+  Debug configuration even from the release preset. A Debug build could not
+  link at all: OpenEye's Windows SDK ships static libraries built against the
+  release C runtime only, and under `_DEBUG` Python's `pyconfig.h` asks for
+  `python311_d.lib`, which the python.org installer does not ship. The build
+  presets now name their configuration, and MSVC builds use the release runtime
+  (`/MD`) in every configuration, overridable through
+  `CMAKE_MSVC_RUNTIME_LIBRARY`.
+
+- A preset configure on Windows no longer requires openeye-toolkits. 0.6.2's
+  presets set `OPENEYE_USE_SHARED=ON`, and `CMakeLists.txt` looked for the
+  package before cmake-openeye turned shared mode off for Windows, so the
+  configure failed without a package the Windows build never uses.
+
+- nanoflann's own examples and unit tests are no longer built, and its two
+  tests no longer run in this project's ctest.
+
+- `CMakePresets.json` declared schema version 6, which needs CMake 3.25, so
+  every preset command failed on the CMake 3.21–3.24 that the README and the
+  file's own `cmakeMinimumRequired` admit. It now declares version 3, CMake
+  3.21's, which carries everything the presets use.
+
+- `tests/cpp/test_map_io.cpp` compiles on Windows. It included `<unistd.h>`,
+  which MSVC lacks, for `getpid`; the pid now comes from a helper spelled as
+  the library's own, under `_getpid()` on Windows, because the leak counter has
+  to rebuild the temporary's name exactly. The mode case compares
+  `std::filesystem` permissions instead of `st_mode`, which on Windows checks
+  that the published map is as writable as an ordinary create, and the symlink
+  case skips, with the reason, where Windows withholds the privilege to make a
+  symlink.
+
+- On Windows, `write_map` no longer follows a dangling symlink at its
+  temporary's name. The exclusive create, `std::fopen`'s `"x"` mode, refused a
+  symlink onto an existing file but followed one onto a missing file, creating
+  that file and handing its link's name back as the temporary, where POSIX
+  refuses the name in both cases. Windows now reserves the temporary with
+  `CreateFileW` and `FILE_FLAG_OPEN_REPARSE_POINT`, which refuses any existing
+  name. The new Windows CI job found it. Reaching it took write access to the
+  destination's directory, the privilege to create symlinks, and a guess at
+  the temporary's random name.
+
+### Added
+
+- `debug` and `release` test presets: `ctest --preset release`.
+
+- The C++ tests workflow builds and tests both presets on Windows. The wheel
+  job builds through `scripts/build_python.py` and runs no C++ tests, so until
+  now nothing built from the presets or compiled the C++ suite on Windows.
+
 ## [0.6.2]
 
 A build release; no library behavior changes. Building from source now needs

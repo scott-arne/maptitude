@@ -48,6 +48,21 @@ On Linux, editable builds also need `patchelf`, so they can add the OpenEye
 library directories to the extension's RPATH;
 without it the editable import fails with `cannot open shared object file`.
 
+The CMake presets configure into `build-debug` and `build-release`. Set
+`OPENEYE_ROOT` in the environment, or in a `CMakeUserPresets.json`, then:
+
+```bash
+cmake --preset release
+cmake --build --preset release
+ctest --preset release
+```
+
+On Linux and macOS the presets link openeye-toolkits' shared libraries, so the
+package must be installed in the Python CMake finds. On Windows they link the
+OpenEye SDK statically and do not need it, and every configuration, Debug
+included, builds against the release C runtime (`/MD`), because the OpenEye
+Windows SDK ships release-runtime libraries only.
+
 ## Quick Start
 
 ```python

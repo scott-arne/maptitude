@@ -29,8 +29,13 @@
 #include <thread>
 #include <vector>
 
-#include <sys/stat.h>
+// MSVC has no <unistd.h> and declares _getpid() in <process.h>; TestProcessId
+// below is where the two spellings meet.
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <oegrid.h>
 #include <oesystem.h>
@@ -47,6 +52,20 @@ using namespace Maptitude;
 using namespace MaptitudeTest;
 
 namespace {
+
+/// This process's id, spelled as src/MapIO.cpp's ProcessId spells it.
+///
+/// write_map names its temporary ".maptitude-<pid>-<hex><ext>", and the leak
+/// counter, the decoys and the candidate names below rebuild that prefix to
+/// find it, so they must read the pid the same way the library does. MSVC
+/// declares _getpid() in <process.h>; POSIX declares getpid() in <unistd.h>.
+long TestProcessId() {
+#ifdef _WIN32
+    return static_cast<long>(::_getpid());
+#else
+    return static_cast<long>(::getpid());
+#endif
+}
 
 std::string AssetPath(const std::string& name) {
     return std::string(MAPTITUDE_TEST_ASSET_DIR) + "/" + name;
@@ -99,7 +118,7 @@ class HeaderVariant {
 public:
     explicit HeaderVariant(const std::string& source)
         : path_(::testing::TempDir() + "/maptitude_variant_" +
-                std::to_string(::getpid()) + "_" +
+                std::to_string(TestProcessId()) + "_" +
                 std::to_string(++counter_) + ".ccp4") {
         std::ifstream in(source, std::ios::binary);
         bytes_.assign(std::istreambuf_iterator<char>(in),
@@ -165,7 +184,7 @@ class BigEndianCopy {
 public:
     explicit BigEndianCopy(const std::string& source)
         : path_(::testing::TempDir() + "/maptitude_bigendian_" +
-                std::to_string(::getpid()) + "_" +
+                std::to_string(TestProcessId()) + "_" +
                 std::to_string(++counter_) + ".ccp4") {
         std::ifstream in(source, std::ios::binary);
         std::string bytes((std::istreambuf_iterator<char>(in)),
@@ -223,7 +242,7 @@ class TruncatedFile {
 public:
     TruncatedFile()
         : path_(::testing::TempDir() + "/maptitude_truncated_" +
-                std::to_string(::getpid()) + "_" +
+                std::to_string(TestProcessId()) + "_" +
                 std::to_string(++counter_) + ".ccp4") {
         std::ofstream out(path_, std::ios::binary);
         out << "not a map";
@@ -249,7 +268,7 @@ class ScratchPath {
 public:
     explicit ScratchPath(const std::string& extension)
         : path_(::testing::TempDir() + "/maptitude_write_" +
-                std::to_string(::getpid()) + "_" +
+                std::to_string(TestProcessId()) + "_" +
                 std::to_string(++counter_) + extension) {
         std::remove(path_.c_str());
     }
@@ -336,7 +355,7 @@ void ZeroWordTwentyFour(const std::string& path) {
 std::size_t CountTemporarySiblings(const std::string& destination) {
     const std::filesystem::path dest(destination);
     const std::string prefix =
-        ".maptitude-" + std::to_string(::getpid()) + "-";
+        ".maptitude-" + std::to_string(TestProcessId()) + "-";
     const std::string suffix = dest.extension().string();
 
     std::error_code error;
@@ -368,7 +387,7 @@ public:
     explicit DecoySibling(const std::string& destination) {
         const std::filesystem::path dest(destination);
         path_ = (dest.parent_path() /
-                 (".maptitude-" + std::to_string(::getpid()) + "-decoy" +
+                 (".maptitude-" + std::to_string(TestProcessId()) + "-decoy" +
                   dest.extension().string()))
                     .string();
         std::ofstream out(path_, std::ios::binary);
@@ -1348,6 +1367,11 @@ TEST(MapIoWriteTest, LeavesTheDestinationAtTheModeAnOrdinaryCreateGives) {
     // The reference is an ordinary create in the same directory rather than a
     // hardcoded 0644, so the case says the same thing under whatever umask the
     // suite runs.
+    //
+    // std::filesystem reports the POSIX permission bits where there are any,
+    // the same twelve bits st_mode & 07777 gave. On Windows its permissions
+    // reflect only the read-only attribute, so there the case checks that the
+    // published map is as writable as an ordinary create.
     const MapFile source = read_map(DataPath("test_map.ccp4"));
 
     ScratchPath reference(".reference");
@@ -1356,17 +1380,24 @@ TEST(MapIoWriteTest, LeavesTheDestinationAtTheModeAnOrdinaryCreateGives) {
         ASSERT_TRUE(ordinary.good()) << "cannot create " << reference.Str();
         ordinary << "reference";
     }
-    struct ::stat reference_info {};
-    ASSERT_EQ(::stat(reference.Str().c_str(), &reference_info), 0)
-        << "cannot stat " << reference.Str();
+    const auto mode_of = [](const std::string& path, std::error_code& error) {
+        return static_cast<unsigned int>(
+            std::filesystem::status(path, error).permissions() &
+            std::filesystem::perms::mask);
+    };
+
+    std::error_code error;
+    const unsigned int reference_mode = mode_of(reference.Str(), error);
+    ASSERT_FALSE(error) << "cannot stat " << reference.Str() << ": "
+                        << error.message();
 
     ScratchPath out(".ccp4");
     write_map(out.Str(), *source.grid, source.symops);
-    struct ::stat written_info {};
-    ASSERT_EQ(::stat(out.Str().c_str(), &written_info), 0)
-        << "cannot stat " << out.Str();
+    const unsigned int written_mode = mode_of(out.Str(), error);
+    ASSERT_FALSE(error) << "cannot stat " << out.Str() << ": "
+                        << error.message();
 
-    EXPECT_EQ(written_info.st_mode & 07777u, reference_info.st_mode & 07777u)
+    EXPECT_EQ(written_mode, reference_mode)
         << "the written map's mode is not the one an ordinary create gives in "
            "this directory under this umask";
 }
@@ -1416,7 +1447,7 @@ TEST(MapIoWriteTest, ResolvesARelativeDestinationAgainstTheWorkingDirectoryAtEnt
     const std::filesystem::path original = std::filesystem::current_path();
     const std::filesystem::path base =
         std::filesystem::path(::testing::TempDir()) /
-        ("maptitude_cwd_flip_" + std::to_string(::getpid()));
+        ("maptitude_cwd_flip_" + std::to_string(TestProcessId()));
     const std::filesystem::path a = base / "a";
     const std::filesystem::path b = base / "b";
     std::filesystem::remove_all(base);
@@ -1469,7 +1500,7 @@ TEST(MapIoWriteTest, ResolvesARelativeDestinationAgainstTheWorkingDirectoryAtEnt
 /// The candidate name write_map's reservation draws for one entropy value.
 std::filesystem::path CandidateBeside(const std::filesystem::path& dest, const char* hex) {
     return dest.parent_path() /
-           (".maptitude-" + std::to_string(::getpid()) + "-" + hex +
+           (".maptitude-" + std::to_string(TestProcessId()) + "-" + hex +
             dest.extension().string());
 }
 
@@ -1512,7 +1543,7 @@ TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo)
     ScratchPath out(".ccp4");
     const std::filesystem::path dest(out.Str());
     const std::filesystem::path target =
-        dest.parent_path() / ("maptitude_link_target_" + std::to_string(::getpid()));
+        dest.parent_path() / ("maptitude_link_target_" + std::to_string(TestProcessId()));
     {
         std::ofstream planted(target, std::ios::binary);
         planted << "target";
@@ -1532,7 +1563,20 @@ TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo)
         const std::filesystem::path free_name = CandidateBeside(dest, "beef");
         std::filesystem::remove(link);
         std::filesystem::remove(free_name);
-        std::filesystem::create_symlink(c.to, link);
+        std::error_code link_error;
+        std::filesystem::create_symlink(c.to, link, link_error);
+#ifdef _WIN32
+        // Creating a symlink on Windows takes SeCreateSymbolicLinkPrivilege,
+        // which an unelevated account without Developer Mode does not hold.
+        // That says nothing about the reservation, so it is a skip.
+        if (link_error) {
+            std::filesystem::remove(target);
+            GTEST_SKIP() << "cannot create a symlink here: "
+                         << link_error.message();
+        }
+#endif
+        ASSERT_FALSE(link_error) << "cannot create " << link.string() << ": "
+                                 << link_error.message();
 
         const std::vector<unsigned int> draws = {c.value, 0xbeef};
         std::size_t next = 0;
@@ -1594,7 +1638,7 @@ TEST(MapIoWriteTest, ReservesTheTemporaryBeforeHandingTheNameToOEWriteGrid) {
     const MapFile source = read_map(DataPath("test_map.ccp4"));
     const std::filesystem::path absent =
         std::filesystem::path(::testing::TempDir()) /
-        ("maptitude_absent_reserve_" + std::to_string(::getpid()));
+        ("maptitude_absent_reserve_" + std::to_string(TestProcessId()));
     ASSERT_FALSE(std::filesystem::exists(absent))
         << "the parent directory exists, so the temporary's create would "
            "succeed: " << absent.string();
@@ -1655,7 +1699,7 @@ TEST(MapIoWriteTest, BuildsTheTemporarysNameOutsideTheGlobalLocale) {
     // beside it takes one per digit past its first. The assertion is on the
     // pid because the hex is drawn from random_device: a run that drew a
     // one-digit value would leave the name ungrouped without it.
-    ASSERT_GT(::getpid(), 9)
+    ASSERT_GT(TestProcessId(), 9)
         << "a single-digit pid takes no separator, so this case would have "
            "nothing certain for the facet to group";
 
@@ -1923,7 +1967,7 @@ TEST(MapIoWriteTest, RefusesAnUnpatchableExtensionBeforeItReachesOEWriteGrid) {
     const MapFile source = read_map(DataPath("test_map.ccp4"));
     const std::filesystem::path absent =
         std::filesystem::path(::testing::TempDir()) /
-        ("maptitude_absent_" + std::to_string(::getpid()));
+        ("maptitude_absent_" + std::to_string(TestProcessId()));
     ASSERT_FALSE(std::filesystem::exists(absent))
         << "the parent directory exists, so this case no longer separates the "
            "gate from the write: " << absent.string();

@@ -1,5 +1,5 @@
 {
-    "version": 6,
+    "version": 3,
     "cmakeMinimumRequired": {
         "major": 3,
         "minor": 21,
@@ -36,11 +36,39 @@
     "buildPresets": [
         {
             "name": "debug",
-            "configurePreset": "debug"
+            "configurePreset": "debug",
+            "configuration": "Debug"
         },
         {
             "name": "release",
-            "configurePreset": "release"
+            "configurePreset": "release",
+            "configuration": "Release"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "timeout": 60
+            }
+        },
+        {
+            "name": "release",
+            "configurePreset": "release",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "timeout": 60
+            }
         }
     ]
 }

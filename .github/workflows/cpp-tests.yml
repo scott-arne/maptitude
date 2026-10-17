@@ -11,6 +11,9 @@ on:
 env:
   GCS_BUCKET: openeye-sdks
   OPENEYE_VERSION: "2026.1.0"
+  # The Windows job builds from the presets, which build the Python bindings,
+  # so it needs SWIG. Same pin as build-wheels.yml.
+  SWIG_VERSION: "4.5.1"
 
 jobs:
   ctest:
@@ -148,3 +151,110 @@ jobs:
         # ensures that a discovery regression fails the build rather than
         # reporting green having run nothing.
         run: ctest --test-dir build --output-on-failure --timeout 60 --no-tests=error
+
+  # The wheel job builds through scripts/build_python.py, so nothing else
+  # builds from the presets or compiles the C++ suite on Windows. This job does
+  # both, the way a Windows developer would: the presets as shipped, the
+  # default generator (Visual Studio, multi-config), and no openeye-toolkits,
+  # which a Windows configure must not need.
+  windows:
+    name: windows-x64-${{ matrix.preset }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [debug, release]
+    defaults:
+      run:
+        shell: bash
+    env:
+      # ilammy/msvc-dev-cmd still ships with `using: node20`; see build-wheels.yml.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install SWIG
+        run: python -m pip install "swig==${SWIG_VERSION}"
+
+      - name: Authenticate to Google Cloud
+        id: gcp-auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Download the OpenEye SDK
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/openeye-extract"
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
+            "https://storage.googleapis.com/${GCS_BUCKET}/OpenEye-toolkits-${OPENEYE_VERSION}-win-x64-MD.zip" \
+            -o "${RUNNER_TEMP}/sdk.zip"
+          unzip -q "${RUNNER_TEMP}/sdk.zip" -d "${RUNNER_TEMP}/openeye-extract"
+          rm "${RUNNER_TEMP}/sdk.zip"
+          sdk_inner=$(find "${RUNNER_TEMP}/openeye-extract" -maxdepth 1 -mindepth 1 -type d | head -n1)
+          README="$(find "${sdk_inner}" -maxdepth 2 -name README.txt -print -quit)"
+          if [ -z "${README}" ]; then
+            echo "FAIL: no README.txt in the extracted SDK; cannot confirm the version"
+            exit 1
+          fi
+          grep -F "OpenEye Toolkits v${OPENEYE_VERSION} for " "${README}" || {
+            echo "FAIL: extracted SDK is not ${OPENEYE_VERSION}"
+            head -3 "${README}"
+            exit 1
+          }
+          # The preset reads OPENEYE_ROOT from the environment. A forward-slash
+          # Windows path, because CMake does not understand /d/a/... MSYS paths.
+          echo "OPENEYE_ROOT=$(cygpath -m "${sdk_inner}")" >> "$GITHUB_ENV"
+
+      - name: Download the OpenEye license
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ steps.gcp-auth.outputs.access_token }}" \
+            "https://storage.googleapis.com/${GCS_BUCKET}/oe_license.txt" \
+            -o "${RUNNER_TEMP}/oe_license.txt"
+          echo "OE_LICENSE=${RUNNER_TEMP}/oe_license.txt" >> "$GITHUB_ENV"
+
+      # The runner has several Pythons; pin the one setup-python installed, as
+      # a CMakeUserPresets.json would.
+      - name: Configure from the preset
+        run: |
+          PY="$(python -c 'import sys; print(sys.executable)')"
+          cmake --preset ${{ matrix.preset }} -DPython3_EXECUTABLE="${PY}"
+
+      - name: Assert the Windows link configuration
+        run: |
+          set -euo pipefail
+          CACHE="build-${{ matrix.preset }}/CMakeCache.txt"
+          grep -qx 'OPENEYE_USE_SHARED:BOOL=OFF' "${CACHE}" || {
+            echo "FAIL: expected the static OpenEye SDK"
+            grep '^OPENEYE_USE_SHARED' "${CACHE}" || true
+            exit 1
+          }
+          grep -qx 'CMAKE_MSVC_RUNTIME_LIBRARY:STRING=MultiThreadedDLL' "${CACHE}" || {
+            echo "FAIL: expected the release C runtime in every configuration"
+            grep '^CMAKE_MSVC_RUNTIME_LIBRARY' "${CACHE}" || true
+            exit 1
+          }
+
+      - name: Build from the preset
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+
+      - name: Run ctest from the preset
+        run: ctest --preset ${{ matrix.preset }}
