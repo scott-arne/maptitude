@@ -11,6 +11,17 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# OpenEye's Windows SDK ships static libraries built against the release C
+# runtime (/MD) only, and under _DEBUG Python's pyconfig.h links
+# python3XX_d.lib, which the python.org installer does not ship. A build on the
+# debug runtime (/MDd), which is what a Debug configuration defaults to, can
+# link neither, so every configuration uses the release runtime; Debug keeps /Od
+# and its debug information. A cache default, so it can still be overridden.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL" CACHE STRING
+        "MSVC C runtime for every configuration")
+endif()
+
 # Options
 option(MAPTITUDE_BUILD_TESTS "Build tests" ON)
 option(MAPTITUDE_BUILD_PYTHON "Build Python bindings" ON)
@@ -38,6 +49,15 @@ FetchContent_Declare(
     GIT_TAG v1.2.1
     GIT_SHALLOW TRUE
 )
+
+# nanoflann's examples and unit tests are not this project's to build or run.
+# Its tests also register with this project's ctest, and their build step names
+# no configuration, so under a multi-config generator a Release ctest run
+# reports nanoflann's unit_tests_run as Not Run. nanoflann declares CMake 3.5,
+# under which option() ignores a plain variable unless CMP0077 defaults to NEW.
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+set(NANOFLANN_BUILD_EXAMPLES OFF)
+set(NANOFLANN_BUILD_TESTS OFF)
 
 FetchContent_MakeAvailable(nanoflann cmake_openeye)
 list(APPEND CMAKE_MODULE_PATH "${cmake_openeye_SOURCE_DIR}")
@@ -67,7 +87,11 @@ if(MAPTITUDE_BUILD_PYTHON)
     endif()
 endif()
 
-if(OPENEYE_USE_SHARED)
+# cmake-openeye forces OPENEYE_USE_SHARED OFF on Windows, where neither the SDK
+# nor the openeye-toolkits wheel ships MSVC import libraries, but it does so
+# inside find_package(OpenEye) below. Checked here first, the preset's ON would
+# make a Windows configure require an openeye-toolkits the build never uses.
+if(OPENEYE_USE_SHARED AND NOT WIN32)
     find_package(OpenEyePython REQUIRED)
 endif()
 
