@@ -5,6 +5,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
+## [Unreleased]
+
+### Fixed
+
+- A source install asks for CMake 3.26 or newer. `pyproject.toml` asked
+  scikit-build-core for 3.21, so a system CMake 3.21 to 3.25 was accepted and
+  the configure then failed, because cmake-openeye refuses the default
+  stable-ABI bindings below 3.26. The published wheels are unaffected.
+
 ## [0.6.3]
 
 A Windows release. In the Windows wheel, `write_map` no longer follows a
