@@ -1544,17 +1544,17 @@ TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo)
     // FILE_FLAG_OPEN_REPARSE_POINT.
     ScratchPath out(".ccp4");
     const std::filesystem::path dest(out.Str());
-    // The dangling target is removed up front and named per process: a file
-    // left there by a create that followed the link on an earlier run would
-    // make the link resolve, and the case would pass whichever create is used.
-    const std::filesystem::path absent =
-        dest.parent_path() /
-        ("maptitude_absent_link_target_" + std::to_string(TestProcessId()));
-    std::filesystem::remove(absent);
+    // Both files are ScratchPaths, so each is removed before use and on every
+    // exit, including a failed ASSERT below. Removing the dangling target up
+    // front matters: a file left there by a create that followed the link on
+    // an earlier run would make the link resolve, and the case would pass
+    // whichever create is used.
+    ScratchPath absent_file(".absent_link_target");
+    const std::filesystem::path absent(absent_file.Str());
     ASSERT_FALSE(std::filesystem::exists(absent))
         << "cannot clear the dangling link's target: " << absent.string();
-    const std::filesystem::path target =
-        dest.parent_path() / ("maptitude_link_target_" + std::to_string(TestProcessId()));
+    ScratchPath target_file(".link_target");
+    const std::filesystem::path target(target_file.Str());
     {
         std::ofstream planted(target, std::ios::binary);
         planted << "target";
@@ -1581,7 +1581,6 @@ TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo)
         // which an unelevated account without Developer Mode does not hold.
         // That says nothing about the reservation, so it is a skip.
         if (link_error) {
-            std::filesystem::remove(target);
             GTEST_SKIP() << "cannot create a symlink here: "
                          << link_error.message();
         }
@@ -1604,8 +1603,86 @@ TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo)
         << "the create followed the link onto its target";
     EXPECT_FALSE(std::filesystem::exists(absent))
         << "the create followed the dangling link and made its target";
-    std::filesystem::remove(absent);
-    std::filesystem::remove(target);
+}
+
+TEST(MapIoWriteTest, ReservationSkipsADirectoryAtTheCandidate) {
+    // POSIX refuses an exclusive create over any existing name, a directory
+    // included, so the loop draws again. Windows creates through CreateFileW
+    // with CREATE_NEW, whose result for a directory at the name was not
+    // measured before this case; both shapes are covered: a directory, and a
+    // symlink onto one.
+    //
+    // ScratchPath removes with std::remove, which leaves directories alone on
+    // Windows, so the directories here get a remove_all guard of their own;
+    // each guard runs on every exit, a failed ASSERT included.
+    struct RemoveAllOnExit {
+        std::filesystem::path path;
+        ~RemoveAllOnExit() {
+            std::error_code ignored;
+            std::filesystem::remove_all(path, ignored);
+        }
+    };
+    ScratchPath out(".ccp4");
+    const std::filesystem::path dest(out.Str());
+    const std::filesystem::path real_dir =
+        dest.parent_path() /
+        ("maptitude_candidate_dir_target_" + std::to_string(TestProcessId()));
+    std::filesystem::remove_all(real_dir);
+    const RemoveAllOnExit real_dir_guard{real_dir};
+    ASSERT_TRUE(std::filesystem::create_directory(real_dir));
+
+    struct Case {
+        unsigned int value;
+        const char* hex;
+        bool as_link;
+    };
+    const Case cases[] = {
+        {0xd1d1, "d1d1", false},
+        {0xd2d2, "d2d2", true},
+    };
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.hex);
+        const std::filesystem::path planted = CandidateBeside(dest, c.hex);
+        const std::filesystem::path free_name = CandidateBeside(dest, "beef");
+        std::filesystem::remove_all(planted);
+        std::filesystem::remove(free_name);
+        const RemoveAllOnExit planted_guard{planted};
+        const RemoveAllOnExit free_name_guard{free_name};
+        std::error_code plant_error;
+        if (c.as_link) {
+            std::filesystem::create_directory_symlink(real_dir, planted,
+                                                      plant_error);
+#ifdef _WIN32
+            // As in the symlink case: without SeCreateSymbolicLinkPrivilege
+            // the link cannot be planted, which says nothing about the
+            // reservation.
+            if (plant_error) {
+                GTEST_SKIP() << "cannot create a directory symlink here: "
+                             << plant_error.message();
+            }
+#endif
+        } else {
+            std::filesystem::create_directory(planted, plant_error);
+        }
+        ASSERT_FALSE(plant_error) << "cannot plant " << planted.string()
+                                  << ": " << plant_error.message();
+
+        const std::vector<unsigned int> draws = {c.value, 0xbeef};
+        std::size_t next = 0;
+        std::filesystem::path reserved;
+        try {
+            reserved = detail::reserve_temporary_sibling(
+                dest, [&] { return draws.at(next++); });
+        } catch (const GridError& error) {
+            ADD_FAILURE() << "the reservation threw instead of drawing again: "
+                          << error.what();
+        }
+
+        EXPECT_EQ(reserved, free_name);
+        EXPECT_EQ(next, 2u);
+        EXPECT_TRUE(std::filesystem::is_directory(planted))
+            << "the planted directory is gone";
+    }
 }
 
 TEST(MapIoWriteTest, ReservationGivesUpOnceEveryDrawHasCollided) {

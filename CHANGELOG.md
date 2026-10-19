@@ -17,6 +17,10 @@ This project is pre-1.0: breaking changes may land in a minor release.
   `MAX_ATTEMPTS`; the constant is `TEMPORARY_NAME_ATTEMPTS`. The comment on
   leftover temporaries now names the Windows collision codes beside EEXIST,
   and the README says its CMake 3.21.3 checks were configure-only, on macOS.
+- The symlink reservation test keeps its planted files in self-removing scratch
+  paths, so a failed assertion no longer leaves them behind. A new test plants
+  a directory, and a symlink onto one, at the temporary's candidate name and
+  checks that the reservation skips it as it skips a file.
 
 ## [0.6.3]
 
