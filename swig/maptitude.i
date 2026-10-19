@@ -672,7 +672,7 @@ CellError = _maptitude.CellError
 // ============================================================================
 #define MAPTITUDE_VERSION_MAJOR 0
 #define MAPTITUDE_VERSION_MINOR 6
-#define MAPTITUDE_VERSION_PATCH 2
+#define MAPTITUDE_VERSION_PATCH 3
 
 // ============================================================================
 // MapOp enum
@@ -1772,5 +1772,5 @@ def get_scattering_factor_table():
     return entries, len(entries)
 
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 %}

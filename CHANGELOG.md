@@ -5,7 +5,13 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
-## [Unreleased]
+## [0.6.3]
+
+A Windows release. In the Windows wheel, `write_map` no longer follows a
+dangling symlink at its temporary's name, and Windows builds from the CMake
+presets now link and run the C++ suite in CI. The API is unchanged, and on
+Linux and macOS the library's code is as it was in 0.6.2 apart from the
+version number: the source changes outside Windows-only blocks are comments.
 
 ### Fixed
 
