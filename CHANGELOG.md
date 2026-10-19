@@ -22,6 +22,12 @@ This project is pre-1.0: breaking changes may land in a minor release.
   a directory, and a symlink onto one, at the temporary's candidate name and
   checks that the reservation skips it as it skips a file.
 
+### Changed
+
+- The Windows C++ job reads its SWIG version from `build-wheels.yml` instead of
+  repeating the pin, so the two cannot drift, and no longer runs an MSVC
+  environment action that the Visual Studio generator does not need.
+
 ## [0.6.3]
 
 A Windows release. In the Windows wheel, `write_map` no longer follows a

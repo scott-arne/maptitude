@@ -11,9 +11,6 @@ on:
 env:
   GCS_BUCKET: openeye-sdks
   OPENEYE_VERSION: "2026.1.0"
-  # The Windows job builds from the presets, which build the Python bindings,
-  # so it needs SWIG. Same pin as build-wheels.yml.
-  SWIG_VERSION: "4.5.1"
 
 jobs:
   ctest:
@@ -170,9 +167,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      # ilammy/msvc-dev-cmd still ships with `using: node20`; see build-wheels.yml.
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v6
 
@@ -181,13 +175,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Setup MSVC dev environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
+      # build-wheels.yml holds the one SWIG pin. Reading it here, rather than
+      # repeating it, keeps this job building with the SWIG the wheels use.
+      # The checkout may carry CRLF line endings, so they are stripped first.
       - name: Install SWIG
-        run: python -m pip install "swig==${SWIG_VERSION}"
+        run: |
+          set -euo pipefail
+          SWIG_VERSION="$(tr -d '\r' < .github/workflows/build-wheels.yml \
+            | sed -n 's/^  SWIG_VERSION: "\(.*\)"$/\1/p')"
+          test -n "${SWIG_VERSION}" || {
+            echo "FAIL: no SWIG_VERSION in build-wheels.yml"
+            exit 1
+          }
+          echo "SWIG ${SWIG_VERSION}, from build-wheels.yml"
+          python -m pip install "swig==${SWIG_VERSION}"
 
       - name: Authenticate to Google Cloud
         id: gcp-auth

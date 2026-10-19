@@ -13,7 +13,8 @@ env:
   OPENEYE_VERSION: "2026.1.0"
   # One SWIG for every platform and every run. The generated maptitude.py must
   # come from the same SWIG as the compiled extension, and an unpinned
-  # install changes the build whenever SWIG publishes a release.
+  # install changes the build whenever SWIG publishes a release. cpp-tests.yml
+  # reads this line to pin its Windows job, so keep its exact shape.
   SWIG_VERSION: "4.5.1"
 
   # pypi.anaconda.org hosts the OpenEye channel and periodically stalls for
