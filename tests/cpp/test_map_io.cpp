@@ -33,6 +33,7 @@
 // below is where the two spellings meet.
 #ifdef _WIN32
 #include <process.h>
+#include <winerror.h>
 #else
 #include <unistd.h>
 #endif
@@ -1690,8 +1691,9 @@ TEST(MapIoWriteTest, ReservationReportsAccessDeniedWhenNothingIsAtTheCandidate) 
     // Access-denied counts as a collision only when something exists at the
     // name. A directory that refuses new files must still fail on the first
     // draw, not after TEMPORARY_NAME_ATTEMPTS draws as "no free temporary
-    // name". This passed before the fix too; it is here to fail if the fix
-    // ever treats every ERROR_ACCESS_DENIED as a collision.
+    // name". It would have passed before the fix too, when every
+    // ERROR_ACCESS_DENIED was reported on the first draw; it is here to fail
+    // if the fix ever treats every ERROR_ACCESS_DENIED as a collision.
     const std::filesystem::path dir =
         std::filesystem::path(::testing::TempDir()) /
         ("maptitude_no_add_file_" + std::to_string(TestProcessId()));
@@ -1700,7 +1702,8 @@ TEST(MapIoWriteTest, ReservationReportsAccessDeniedWhenNothingIsAtTheCandidate) 
     struct Cleanup {
         std::filesystem::path path;
         ~Cleanup() {
-            // The deny entry goes first, or it could block the removal.
+            // The deny entry is removed first, so a failed removal does not
+            // leave behind a directory that refuses new files.
             const std::string allow = "icacls \"" + path.string() +
                                       "\" /remove:d *S-1-1-0 >NUL 2>&1";
             std::system(allow.c_str());
@@ -1728,6 +1731,14 @@ TEST(MapIoWriteTest, ReservationReportsAccessDeniedWhenNothingIsAtTheCandidate) 
     } catch (const GridError& error) {
         const std::string what = error.what();
         EXPECT_NE(what.find("cannot create a temporary beside it"),
+                  std::string::npos)
+            << what;
+        // The guard discriminates only if the refusal really was
+        // ERROR_ACCESS_DENIED; any other icacls outcome would throw on draw 1
+        // under an over-broad fix as well.
+        EXPECT_NE(what.find(std::error_code(ERROR_ACCESS_DENIED,
+                                            std::system_category())
+                                .message()),
                   std::string::npos)
             << what;
     }
