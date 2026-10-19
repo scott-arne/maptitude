@@ -1685,6 +1685,56 @@ TEST(MapIoWriteTest, ReservationSkipsADirectoryAtTheCandidate) {
     }
 }
 
+#ifdef _WIN32
+TEST(MapIoWriteTest, ReservationReportsAccessDeniedWhenNothingIsAtTheCandidate) {
+    // Access-denied counts as a collision only when something exists at the
+    // name. A directory that refuses new files must still fail on the first
+    // draw, not after TEMPORARY_NAME_ATTEMPTS draws as "no free temporary
+    // name". This passed before the fix too; it is here to fail if the fix
+    // ever treats every ERROR_ACCESS_DENIED as a collision.
+    const std::filesystem::path dir =
+        std::filesystem::path(::testing::TempDir()) /
+        ("maptitude_no_add_file_" + std::to_string(TestProcessId()));
+    std::filesystem::remove_all(dir);
+    ASSERT_TRUE(std::filesystem::create_directory(dir));
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            // The deny entry goes first, or it could block the removal.
+            const std::string allow = "icacls \"" + path.string() +
+                                      "\" /remove:d *S-1-1-0 >NUL 2>&1";
+            std::system(allow.c_str());
+            std::error_code ignored;
+            std::filesystem::remove_all(path, ignored);
+        }
+    } const cleanup{dir};
+    // Deny "write data / add file" (WD) to Everyone (S-1-1-0); a deny entry
+    // applies to an elevated runner account as well.
+    const std::string deny =
+        "icacls \"" + dir.string() + "\" /deny *S-1-1-0:(WD) >NUL 2>&1";
+    if (std::system(deny.c_str()) != 0) {
+        GTEST_SKIP() << "icacls could not deny file creation in "
+                     << dir.string();
+    }
+
+    const std::filesystem::path dest = dir / "out.ccp4";
+    std::size_t draws = 0;
+    try {
+        detail::reserve_temporary_sibling(dest, [&] {
+            ++draws;
+            return 0xa11du;
+        });
+        FAIL() << "expected GridError for a directory that refuses new files";
+    } catch (const GridError& error) {
+        const std::string what = error.what();
+        EXPECT_NE(what.find("cannot create a temporary beside it"),
+                  std::string::npos)
+            << what;
+    }
+    EXPECT_EQ(draws, 1u) << "a real refusal was retried as a collision";
+}
+#endif
+
 TEST(MapIoWriteTest, ReservationGivesUpOnceEveryDrawHasCollided) {
     ScratchPath out(".ccp4");
     const std::filesystem::path dest(out.Str());

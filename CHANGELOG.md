@@ -21,6 +21,11 @@ This project is pre-1.0: breaking changes may land in a minor release.
   paths, so a failed assertion no longer leaves them behind. A new test plants
   a directory, and a symlink onto one, at the temporary's candidate name and
   checks that the reservation skips it as it skips a file.
+- On Windows, `write_map` skips a directory, or a symlink onto one, at its
+  temporary's name and draws another name, as it does under POSIX. CreateFileW
+  failed on both with ERROR_ACCESS_DENIED, which the reservation reported as an
+  error, so the write failed. Access-denied now counts as a collision when
+  something exists at the name and is still reported when nothing does.
 
 ### Changed
 

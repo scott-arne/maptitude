@@ -470,9 +470,13 @@ long ProcessId() {
 /// points to. The reservation tests measured three shapes on windows-latest: a
 /// regular file at the candidate name, a link onto an existing file and a
 /// dangling link are each skipped and the next name is drawn, as EEXIST makes
-/// it happen under POSIX. A directory at the name, or a link to one, was not
-/// measured. The code treats ERROR_FILE_EXISTS and ERROR_ALREADY_EXISTS alike
-/// as the collision; any other error is reported, not retried.
+/// it happen under POSIX.
+/// A directory at the name, and a symlink onto one, each made CREATE_NEW fail
+/// with ERROR_ACCESS_DENIED on windows-latest, so the loop also counts that
+/// error as a collision when something exists at the name; with nothing there
+/// it is a real refusal and is reported. ERROR_FILE_EXISTS and
+/// ERROR_ALREADY_EXISTS are collisions as before, and any other error is
+/// reported, not retried.
 ///
 /// A temporary left behind by a crashed or killed run is covered by the same
 /// collision -- skipped rather than truncated, as EEXIST under POSIX and as
@@ -786,11 +790,12 @@ std::filesystem::path detail::reserve_temporary_sibling(
         // FILE_FLAG_OPEN_REPARSE_POINT makes CREATE_NEW test the name itself,
         // so a symlink there is a collision. That is measured for a link onto
         // an existing file and for a dangling one, the shape std::fopen's "x"
-        // mode followed. Only ERROR_FILE_EXISTS and ERROR_ALREADY_EXISTS are
-        // collisions; any other error is reported rather than retried. See the
-        // doc comment on MakeTemporarySibling. The last error is read once,
-        // before anything else runs, for the reason the POSIX branch reads
-        // errno once.
+        // mode followed. ERROR_FILE_EXISTS and ERROR_ALREADY_EXISTS are
+        // collisions, and so is ERROR_ACCESS_DENIED when something is at the
+        // name (see below); any other error is reported rather than retried.
+        // See the doc comment on MakeTemporarySibling. The last error is read
+        // once, before anything else runs, for the reason the POSIX branch
+        // reads errno once.
         const HANDLE reserved = ::CreateFileW(
             candidate.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
@@ -799,7 +804,17 @@ std::filesystem::path detail::reserve_temporary_sibling(
             ::CloseHandle(reserved);
             return candidate;
         }
-        if (failure != ERROR_FILE_EXISTS && failure != ERROR_ALREADY_EXISTS) {
+        // CREATE_NEW over a directory fails with ERROR_ACCESS_DENIED rather
+        // than a collision code (measured on windows-latest), so access-denied
+        // counts as a collision when something is at the name. With nothing
+        // there it is a real refusal and is reported, so a directory the
+        // process cannot create files in still fails on the first draw.
+        const bool collision =
+            failure == ERROR_FILE_EXISTS || failure == ERROR_ALREADY_EXISTS ||
+            (failure == ERROR_ACCESS_DENIED &&
+             ::GetFileAttributesW(candidate.c_str()) !=
+                 INVALID_FILE_ATTRIBUTES);
+        if (!collision) {
             throw GridError(
                 "Cannot write '" + dest.string() +
                 "': cannot create a temporary beside it: " +
