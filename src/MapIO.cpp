@@ -450,9 +450,10 @@ long ProcessId() {
 /// already held comes back as EEXIST under POSIX, measured here and what POSIX
 /// specifies for that mode, and the loop draws another; on Windows the same
 /// collision is ERROR_FILE_EXISTS or ERROR_ALREADY_EXISTS from CreateFileW.
-/// The GridError at the bottom is what a run of TEMPORARY_NAME_ATTEMPTS collisions raises.
-/// Any other errno, or any other Windows error, is not a collision, so it is
-/// reported as itself instead of being retried into that message.
+/// The GridError at the bottom is what a run of TEMPORARY_NAME_ATTEMPTS
+/// collisions raises. Any other errno, or any other Windows error, is not a
+/// collision, so it is reported as itself instead of being retried into that
+/// message.
 ///
 /// A symlink sitting at the candidate name does not redirect the create. POSIX
 /// specifies that O_CREAT|O_EXCL fails on an existing path even where that path
