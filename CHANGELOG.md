@@ -13,6 +13,10 @@ This project is pre-1.0: breaking changes may land in a minor release.
   scikit-build-core for 3.21, so a system CMake 3.21 to 3.25 was accepted and
   the configure then failed, because cmake-openeye refuses the default
   stable-ABI bindings below 3.26. The published wheels are unaffected.
+- A comment in `src/MapIO.cpp` named the reservation's attempt limit
+  `MAX_ATTEMPTS`; the constant is `TEMPORARY_NAME_ATTEMPTS`. The comment on
+  leftover temporaries now names the Windows collision codes beside EEXIST,
+  and the README says its CMake 3.21.3 checks were configure-only, on macOS.
 
 ## [0.6.3]
 

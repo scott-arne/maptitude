@@ -46,10 +46,10 @@ Python 3.13 or newer.
 
 CMake 3.26 is what the default stable-ABI build needs: it links the
 `Python3::SABIModule` target, which arrives in 3.26, and cmake-openeye stops
-the configure on anything older. Configuring on CMake 3.21.3 succeeded with
-`-DMAPTITUDE_USE_STABLE_ABI=OFF`, and for a C++-only build with
-`-DMAPTITUDE_BUILD_PYTHON=OFF` (through the presets, also
-`-DOPENEYE_USE_SHARED=OFF`).
+the configure on anything older. On macOS, a configure with CMake 3.21.3
+(configure only, not a build) succeeded with `-DMAPTITUDE_USE_STABLE_ABI=OFF`,
+and for a C++-only build with `-DMAPTITUDE_BUILD_PYTHON=OFF` (through the
+presets, also `-DOPENEYE_USE_SHARED=OFF`).
 
 On Linux, editable builds also need `patchelf`, so they can add the OpenEye
 library directories to the extension's RPATH;

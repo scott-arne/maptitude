@@ -450,7 +450,7 @@ long ProcessId() {
 /// already held comes back as EEXIST under POSIX, measured here and what POSIX
 /// specifies for that mode, and the loop draws another; on Windows the same
 /// collision is ERROR_FILE_EXISTS or ERROR_ALREADY_EXISTS from CreateFileW.
-/// The GridError at the bottom is what a run of MAX_ATTEMPTS collisions raises.
+/// The GridError at the bottom is what a run of TEMPORARY_NAME_ATTEMPTS collisions raises.
 /// Any other errno, or any other Windows error, is not a collision, so it is
 /// reported as itself instead of being retried into that message.
 ///
@@ -474,10 +474,11 @@ long ProcessId() {
 /// as the collision; any other error is reported, not retried.
 ///
 /// A temporary left behind by a crashed or killed run is covered by the same
-/// EEXIST -- skipped rather than truncated -- which is what the old existence
-/// check was there for. Pids are reused, so the name space a leftover sits in
-/// does not retire with the process that made it; the exclusive create, not the
-/// pid, is what makes that harmless.
+/// collision -- skipped rather than truncated, as EEXIST under POSIX and as
+/// ERROR_FILE_EXISTS or ERROR_ALREADY_EXISTS from CreateFileW on Windows --
+/// which is what the old existence check was there for. Pids are reused, so the
+/// name space a leftover sits in does not retire with the process that made it;
+/// the exclusive create, not the pid, is what makes that harmless.
 ///
 /// Under POSIX, std::fopen creates at 0666 before the umask, so the process
 /// umask narrows the temporary as it narrows an ordinary create. ISO C fixes no
