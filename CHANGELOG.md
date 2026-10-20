@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
+## [Unreleased]
+
+### Changed
+
+- The README points at the `SWIG_VERSION` pin in `build-wheels.yml` instead of
+  naming a SWIG version that goes stale at the next pin change.
+- The reservation test also plants a dangling directory symlink, and on
+  Windows a junction, at the temporary's candidate name, and checks that the
+  reservation skips each without touching what it points to.
+
 ## [0.6.4]
 
 A Windows and build release. In the Windows wheel, `write_map` now skips a

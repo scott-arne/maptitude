@@ -1608,10 +1608,13 @@ TEST(MapIoWriteTest, ReservationSkipsASymlinkAtTheCandidateWhateverItResolvesTo)
 
 TEST(MapIoWriteTest, ReservationSkipsADirectoryAtTheCandidate) {
     // POSIX refuses an exclusive create over any existing name, a directory
-    // included, so the loop draws again. Windows creates through CreateFileW
-    // with CREATE_NEW, whose result for a directory at the name was not
-    // measured before this case; both shapes are covered: a directory, and a
-    // symlink onto one.
+    // included, so the loop draws again. On Windows, CreateFileW with
+    // CREATE_NEW fails over a directory with ERROR_ACCESS_DENIED, which the
+    // reservation counts as a collision when something is at the name. The
+    // shapes: a directory, a symlink onto one, a dangling directory symlink,
+    // and, on Windows only, a junction. For each, the reservation must draw
+    // the next name and leave the planted entry, and whatever it points to,
+    // as they were.
     //
     // ScratchPath removes with std::remove, which leaves directories alone on
     // Windows, so the directories here get a remove_all guard of their own;
@@ -1631,15 +1634,34 @@ TEST(MapIoWriteTest, ReservationSkipsADirectoryAtTheCandidate) {
     std::filesystem::remove_all(real_dir);
     const RemoveAllOnExit real_dir_guard{real_dir};
     ASSERT_TRUE(std::filesystem::create_directory(real_dir));
+    // The dangling link's target: removed up front and guarded, so a create
+    // that followed the link on an earlier run cannot make it resolve.
+    const std::filesystem::path missing_dir =
+        dest.parent_path() /
+        ("maptitude_candidate_missing_dir_" + std::to_string(TestProcessId()));
+    std::filesystem::remove_all(missing_dir);
+    const RemoveAllOnExit missing_dir_guard{missing_dir};
+    ASSERT_FALSE(std::filesystem::exists(missing_dir))
+        << "cannot clear the dangling link's target: " << missing_dir.string();
 
+    enum class Shape {
+        Directory,
+        DirectoryLink,
+        DanglingDirectoryLink,
+        Junction,
+    };
     struct Case {
         unsigned int value;
         const char* hex;
-        bool as_link;
+        Shape shape;
     };
     const Case cases[] = {
-        {0xd1d1, "d1d1", false},
-        {0xd2d2, "d2d2", true},
+        {0xd1d1, "d1d1", Shape::Directory},
+        {0xd2d2, "d2d2", Shape::DirectoryLink},
+        {0xd3d3, "d3d3", Shape::DanglingDirectoryLink},
+#ifdef _WIN32
+        {0xd4d4, "d4d4", Shape::Junction},
+#endif
     };
     for (const Case& c : cases) {
         SCOPED_TRACE(c.hex);
@@ -1650,9 +1672,15 @@ TEST(MapIoWriteTest, ReservationSkipsADirectoryAtTheCandidate) {
         const RemoveAllOnExit planted_guard{planted};
         const RemoveAllOnExit free_name_guard{free_name};
         std::error_code plant_error;
-        if (c.as_link) {
-            std::filesystem::create_directory_symlink(real_dir, planted,
-                                                      plant_error);
+        switch (c.shape) {
+        case Shape::Directory:
+            std::filesystem::create_directory(planted, plant_error);
+            break;
+        case Shape::DirectoryLink:
+        case Shape::DanglingDirectoryLink:
+            std::filesystem::create_directory_symlink(
+                c.shape == Shape::DirectoryLink ? real_dir : missing_dir,
+                planted, plant_error);
 #ifdef _WIN32
             // As in the symlink case: without SeCreateSymbolicLinkPrivilege
             // the link cannot be planted, which says nothing about the
@@ -1662,8 +1690,26 @@ TEST(MapIoWriteTest, ReservationSkipsADirectoryAtTheCandidate) {
                              << plant_error.message();
             }
 #endif
-        } else {
-            std::filesystem::create_directory(planted, plant_error);
+            break;
+        case Shape::Junction:
+#ifdef _WIN32
+        {
+            // A junction needs no privilege, unlike a symlink. mklink is a
+            // cmd.exe builtin, which std::system runs; make_preferred keeps
+            // a forward slash from being read as a switch.
+            const std::string mklink =
+                "mklink /J \"" +
+                std::filesystem::path(planted).make_preferred().string() +
+                "\" \"" +
+                std::filesystem::path(real_dir).make_preferred().string() +
+                "\" >NUL";
+            if (std::system(mklink.c_str()) != 0) {
+                plant_error =
+                    std::make_error_code(std::errc::operation_not_permitted);
+            }
+        }
+#endif
+            break;
         }
         ASSERT_FALSE(plant_error) << "cannot plant " << planted.string()
                                   << ": " << plant_error.message();
@@ -1681,8 +1727,48 @@ TEST(MapIoWriteTest, ReservationSkipsADirectoryAtTheCandidate) {
 
         EXPECT_EQ(reserved, free_name);
         EXPECT_EQ(next, 2u);
-        EXPECT_TRUE(std::filesystem::is_directory(planted))
-            << "the planted directory is gone";
+        // The planted entry must still be the same kind of thing, pointing
+        // where it pointed: a plain directory, or a link to the same target.
+        const std::filesystem::file_status planted_status =
+            std::filesystem::symlink_status(planted);
+        switch (c.shape) {
+        case Shape::Directory:
+            EXPECT_EQ(planted_status.type(),
+                      std::filesystem::file_type::directory)
+                << "the planted directory was replaced";
+            break;
+        case Shape::DirectoryLink:
+        case Shape::DanglingDirectoryLink: {
+            EXPECT_TRUE(std::filesystem::is_symlink(planted_status))
+                << "the planted link was replaced";
+            // The error_code overload keeps a replaced link a failed check
+            // here instead of an exception that ends the loop.
+            std::error_code link_error;
+            EXPECT_EQ(std::filesystem::read_symlink(planted, link_error),
+                      c.shape == Shape::DirectoryLink ? real_dir
+                                                      : missing_dir)
+                << "the planted link now points elsewhere";
+            break;
+        }
+        case Shape::Junction: {
+#ifdef _MSC_VER
+            // MSVC's standard library reports a junction as its own
+            // file_type rather than as a symlink.
+            EXPECT_EQ(planted_status.type(),
+                      std::filesystem::file_type::junction)
+                << "the planted junction was replaced";
+            std::error_code target_error;
+            EXPECT_TRUE(
+                std::filesystem::equivalent(planted, real_dir, target_error))
+                << "the planted junction now points elsewhere";
+#endif
+            break;
+        }
+        }
+        EXPECT_TRUE(std::filesystem::is_empty(real_dir))
+            << "the create went through a link into its target";
+        EXPECT_FALSE(std::filesystem::exists(missing_dir))
+            << "the create followed the dangling link and made its target";
     }
 }
 
