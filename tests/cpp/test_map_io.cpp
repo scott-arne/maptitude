@@ -1655,13 +1655,16 @@ TEST(MapIoWriteTest, ReservationSkipsADirectoryAtTheCandidate) {
         const char* hex;
         Shape shape;
     };
+    // Shapes that need no privilege run first: a link case skips the whole
+    // test when symlinks cannot be created, and a junction needs no
+    // privilege, so it must not sit behind one.
     const Case cases[] = {
         {0xd1d1, "d1d1", Shape::Directory},
-        {0xd2d2, "d2d2", Shape::DirectoryLink},
-        {0xd3d3, "d3d3", Shape::DanglingDirectoryLink},
 #ifdef _WIN32
         {0xd4d4, "d4d4", Shape::Junction},
 #endif
+        {0xd2d2, "d2d2", Shape::DirectoryLink},
+        {0xd3d3, "d3d3", Shape::DanglingDirectoryLink},
     };
     for (const Case& c : cases) {
         SCOPED_TRACE(c.hex);
