@@ -5,7 +5,14 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
-## [Unreleased]
+## [0.6.4]
+
+A Windows and build release. In the Windows wheel, `write_map` now skips a
+directory, or a symlink onto one, at its temporary's name instead of failing
+the write, and a source install asks for the CMake 3.26 its default build
+needs. The API is unchanged, and on Linux and macOS the library's code is as it
+was in 0.6.3 apart from the version number: the source changes outside
+Windows-only blocks are comments.
 
 ### Fixed
 
