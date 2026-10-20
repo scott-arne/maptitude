@@ -5,7 +5,13 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project is pre-1.0: breaking changes may land in a minor release.
 
-## [Unreleased]
+## [0.6.5]
+
+A test and documentation release. The reservation test now measures two more
+shapes at the temporary's name, a dangling directory symlink and, on Windows, a
+junction, and the README points at the SWIG version CI pins. The API is
+unchanged, and the library's code is as it was in 0.6.4 apart from the version
+number: the source changes are comments.
 
 ### Changed
 
