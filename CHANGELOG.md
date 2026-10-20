@@ -14,6 +14,9 @@ This project is pre-1.0: breaking changes may land in a minor release.
 - The reservation test also plants a dangling directory symlink, and on
   Windows a junction, at the temporary's candidate name, and checks that the
   reservation skips each without touching what it points to.
+- The `src/MapIO.cpp` comment on the Windows reservation names all seven shapes
+  the tests measured at the temporary's name, and no longer breaks a sentence
+  across a short line.
 
 ## [0.6.4]
 

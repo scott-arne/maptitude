@@ -467,16 +467,17 @@ long ProcessId() {
 /// created the file the link pointed to and returned the link's own name as
 /// reserved, so the write would have gone through the link. CreateFileW with
 /// CREATE_NEW and FILE_FLAG_OPEN_REPARSE_POINT opens a link rather than what it
-/// points to. The reservation tests measured three shapes on windows-latest: a
-/// regular file at the candidate name, a link onto an existing file and a
-/// dangling link are each skipped and the next name is drawn, as EEXIST makes
-/// it happen under POSIX.
-/// A directory at the name, and a symlink onto one, each made CREATE_NEW fail
-/// with ERROR_ACCESS_DENIED on windows-latest, so the loop also counts that
-/// error as a collision when something exists at the name; with nothing there
-/// it is a real refusal and is reported. ERROR_FILE_EXISTS and
-/// ERROR_ALREADY_EXISTS are collisions as before, and any other error is
-/// reported, not retried.
+/// points to. The reservation tests measured seven shapes at the candidate
+/// name on windows-latest, and each is skipped for the next name, as EEXIST
+/// makes it happen under POSIX. A regular file, a link onto an existing file
+/// and a dangling link are refused as an existing name. A directory and a
+/// symlink onto one each made CREATE_NEW fail with ERROR_ACCESS_DENIED, so the
+/// loop also counts that error as a collision when something exists at the
+/// name; with nothing there it is a real refusal and is reported. A dangling
+/// directory symlink and a junction are skipped as well; the tests show that
+/// they are skipped, not which of those two rules catches them.
+/// ERROR_FILE_EXISTS and ERROR_ALREADY_EXISTS are collisions, and any other
+/// error is reported, not retried.
 ///
 /// A temporary left behind by a crashed or killed run is covered by the same
 /// collision -- skipped rather than truncated, as EEXIST under POSIX and as
