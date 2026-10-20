@@ -1769,7 +1769,7 @@ TEST(MapIoWriteTest, ReservationSkipsADirectoryAtTheCandidate) {
         }
         }
         EXPECT_TRUE(std::filesystem::is_empty(real_dir))
-            << "the create went through a link into its target";
+            << "the link target directory is no longer empty";
         EXPECT_FALSE(std::filesystem::exists(missing_dir))
             << "the create followed the dangling link and made its target";
     }

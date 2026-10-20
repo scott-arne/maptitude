@@ -476,8 +476,9 @@ long ProcessId() {
 /// name; with nothing there it is a real refusal and is reported. A dangling
 /// directory symlink and a junction are skipped as well; the tests show that
 /// they are skipped, not which of those two rules catches them.
-/// ERROR_FILE_EXISTS and ERROR_ALREADY_EXISTS are collisions, and any other
-/// error is reported, not retried.
+/// ERROR_FILE_EXISTS and ERROR_ALREADY_EXISTS are collisions, as is
+/// ERROR_ACCESS_DENIED with something at the name; any other error is
+/// reported, not retried.
 ///
 /// A temporary left behind by a crashed or killed run is covered by the same
 /// collision -- skipped rather than truncated, as EEXIST under POSIX and as
